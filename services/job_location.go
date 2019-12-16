@@ -65,7 +65,7 @@ func RegisterJobFlags(c *cli.App) {
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   JOB_NODE_AFFINITY_VALUE,
-		Usage:  "Node Affinity Key",
+		Usage:  "Node Affinity Value",
 		Value:  "",
 		EnvVar: "JOB_NODE_AFFINITY_VALUE",
 	})
