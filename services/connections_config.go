@@ -1,5 +1,7 @@
 package services
 
+import "github.com/urfave/cli"
+
 type ConnectionType int
 
 const (
@@ -64,16 +66,64 @@ func (s *JobConfig) CheckIgnorePaths(name string) bool {
 	return false
 }
 
-func NewConnectionsConfig() *ConnectionsConfig {
+const (
+	SEEDER_IMAGE            = "seeder-image"
+	SEEDER_CPU_REQUESTS     = "seeder-cpu-requests"
+	SEEDER_CPU_LIMITS       = "seeder-cpu-limits"
+	TRANSCODER_IMAGE        = "transcoder-image"
+	TRANSCODER_CPU_REQUESTS = "transcoder-cpu-requests"
+	TRANSCODER_CPU_LIMITS   = "transcoder-cpu-limits"
+)
+
+func RegisterConnectionConfigFlags(c *cli.App) {
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_IMAGE,
+		Usage:  "Seeder image",
+		Value:  "webtor/torrent-web-seeder:latest",
+		EnvVar: "SEEDER_IMAGE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_CPU_REQUESTS,
+		Usage:  "Seeder CPU Requests",
+		Value:  "",
+		EnvVar: "SEEDER_CPU_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_CPU_LIMITS,
+		Usage:  "Seeder CPU Limits",
+		Value:  "",
+		EnvVar: "SEEDER_CPU_LIMITS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_IMAGE,
+		Usage:  "Transcoder image",
+		Value:  "webtor/content-transcoder:latest",
+		EnvVar: "TRANSCODER_IMAGE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_CPU_REQUESTS,
+		Usage:  "Transcoder CPU Requests",
+		Value:  "",
+		EnvVar: "TRANSCODER_CPU_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_CPU_LIMITS,
+		Usage:  "Transcoder CPU Limits",
+		Value:  "",
+		EnvVar: "TRANSCODER_CPU_LIMITS",
+	})
+}
+
+func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 	return &ConnectionsConfig{
 		"default": &ConnectionConfig{
 			Name:           "Torrent Web Seeder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
 				Name:         "seeder",
-				Image:        "gcr.io/vibrant-arcanum-201111/torrent-web-seeder:1cc43a28cfa3ca672b1c4c49ffe21881815c1237",
-				CPURequests:  "75m",
-				CPULimits:    "200m",
+				Image:        c.String(SEEDER_IMAGE),
+				CPURequests:  c.String(SEEDER_CPU_REQUESTS),
+				CPULimits:    c.String(SEEDER_CPU_LIMITS),
 				Grace:        JOB_GRACE,
 				IgnoredPaths: []string{"/TorrentWebSeeder/StatStream"},
 			},
@@ -83,9 +133,9 @@ func NewConnectionsConfig() *ConnectionsConfig {
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
 				Name:        "transcoder",
-				Image:       "gcr.io/vibrant-arcanum-201111/content-transcoder:af16e6458defdd73cb462ca45000550560617d6b",
-				CPURequests: "100m",
-				CPULimits:   "200m",
+				Image:       c.String(TRANSCODER_IMAGE),
+				CPURequests: c.String(TRANSCODER_CPU_REQUESTS),
+				CPULimits:   c.String(TRANSCODER_CPU_LIMITS),
 				Grace:       JOB_GRACE,
 			},
 		},

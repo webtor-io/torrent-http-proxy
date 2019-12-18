@@ -31,6 +31,8 @@ bitbucket.org/vintikzzzz/torrent-controller v0.0.0-20191114165226-3a855bab602d h
 bitbucket.org/vintikzzzz/torrent-controller v0.0.0-20191114165226-3a855bab602d/go.mod h1:klYCfN8hk5j1nb2CUiA7C2ap0DhV78BzVGxSVQ0MEro=
 bitbucket.org/vintikzzzz/torrent-controller v0.0.0-20191115002440-c81b52fc220b h1:mpfP/dlDWgwg+14zc7luJtYu31QZzRKby23uaGL0ZzQ=
 bitbucket.org/vintikzzzz/torrent-controller v0.0.0-20191115002440-c81b52fc220b/go.mod h1:klYCfN8hk5j1nb2CUiA7C2ap0DhV78BzVGxSVQ0MEro=
+bitbucket.org/vintikzzzz/torrent-http-proxy v0.0.0-20191216104757-e5227a49fa31 h1:ff88Q7FMaZbwJrM8B3OZjTcxIMREDdV8XnX4gdrh1yg=
+bitbucket.org/vintikzzzz/torrent-http-proxy v0.0.0-20191216104757-e5227a49fa31/go.mod h1:6c+gl/oZTdPzxgXmFzAEeo5Hq/91kJHu6qRNHDkjGJ0=
 bitbucket.org/vintikzzzz/torrent-store v0.0.0-20190725113508-d66766d93380 h1:ypPEQ8tu5ppAV/Diy50ynEZ24GzmUOo+N5CPkG6jFYs=
 bitbucket.org/vintikzzzz/torrent-store v0.0.0-20190725113508-d66766d93380/go.mod h1:r1vJpF+/DnYvjDm8ZH272jVxMVKEGRnLoysZ3DEuU+M=
 bitbucket.org/vintikzzzz/video-info v0.0.0-20191116111208-82af6b5f5e7e h1:3oKjJ4xrDnzhxnS8mFB8qON3WwDyUziw7nLCyLlQdIY=

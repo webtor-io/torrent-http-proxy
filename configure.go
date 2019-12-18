@@ -14,6 +14,7 @@ func configure(app *cli.App) {
 	s.RegisterClaimsFlags(app)
 	s.RegisterRedisClientFlags(app)
 	s.RegisterJobFlags(app)
+	s.RegisterConnectionConfigFlags(app)
 	cs.RegisterProbeFlags(app)
 
 	app.Action = run
@@ -24,7 +25,7 @@ func run(c *cli.Context) error {
 	baseURL := s.GetBaseURL()
 
 	// Setting Config
-	config := s.NewConnectionsConfig()
+	config := s.NewConnectionsConfig(c)
 
 	// Setting URL Parser
 	urlParser := s.NewURLParser(config)
