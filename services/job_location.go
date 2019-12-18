@@ -204,6 +204,41 @@ func (s *JobLocation) WaitReady(timeout <-chan time.Time) (*corev1.Pod, error) {
 	}
 }
 
+func (s *JobLocation) makeResources() corev1.ResourceRequirements {
+	res := corev1.ResourceRequirements{}
+	if s.cfg.CPURequests != "" {
+		res.Requests = corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse(s.cfg.CPURequests),
+		}
+	}
+	if s.cfg.CPULimits != "" {
+		res.Limits = corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse(s.cfg.CPURequests),
+		}
+	}
+	return res
+
+}
+
+func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
+	aff := []corev1.PreferredSchedulingTerm{}
+	if s.naKey != "" && s.naVal != "" {
+		aff = append(aff, corev1.PreferredSchedulingTerm{
+			Weight: 1,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      s.naKey,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{s.naVal},
+					},
+				},
+			},
+		})
+	}
+	return aff
+}
+
 func (s *JobLocation) get() (*Location, error) {
 	s.logger.Info("Job initialization started")
 	start := time.Now()
@@ -301,21 +336,7 @@ func (s *JobLocation) get() (*Location, error) {
 	}()
 	ttl := int32(600)
 	addStart := time.Now()
-	aff := []corev1.PreferredSchedulingTerm{}
-	if s.naKey != "" && s.naVal != "" {
-		aff = append(aff, corev1.PreferredSchedulingTerm{
-			Weight: 1,
-			Preference: corev1.NodeSelectorTerm{
-				MatchExpressions: []corev1.NodeSelectorRequirement{
-					{
-						Key:      s.naKey,
-						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{s.naVal},
-					},
-				},
-			},
-		})
-	}
+
 	_, err = cl.BatchV1().Jobs(s.namespace).Create(&batchv1.Job{
 		ObjectMeta: meta,
 		Spec: batchv1.JobSpec{
@@ -326,20 +347,7 @@ func (s *JobLocation) get() (*Location, error) {
 				Spec: corev1.PodSpec{
 					Affinity: &corev1.Affinity{
 						NodeAffinity: &corev1.NodeAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: aff,
-							// RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-							// 	NodeSelectorTerms: []corev1.NodeSelectorTerm{
-							// 		{
-							// 			MatchExpressions: []corev1.NodeSelectorRequirement{
-							// 				{
-							// 					Key:      s.cfg.Affinity,
-							// 					Operator: corev1.NodeSelectorOpIn,
-							// 					Values:   []string{"default"},
-							// 				},
-							// 			},
-							// 		},
-							// 	},
-							// },
+							PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
 						},
 					},
 					Containers: []corev1.Container{
@@ -348,14 +356,7 @@ func (s *JobLocation) get() (*Location, error) {
 							Image:           s.cfg.Image,
 							Env:             env,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU: resource.MustParse(s.cfg.CPURequests),
-								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceCPU: resource.MustParse(s.cfg.CPULimits),
-								},
-							},
+							Resources:       s.makeResources(),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
