@@ -1,9 +1,9 @@
 FROM golang:latest
 
 # copy the source files
-COPY . /go/src/bitbucket.org/vintikzzzz/torrent-http-proxy
+COPY . /go/src/github.com/webtor-io/torrent-http-proxy
 
-WORKDIR /go/src/bitbucket.org/vintikzzzz/torrent-http-proxy
+WORKDIR /go/src/github.com/webtor-io/torrent-http-proxy
 
 # enable modules
 ENV GO111MODULE=on
@@ -20,7 +20,7 @@ RUN go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
 FROM scratch
 
 # copy our static linked library
-COPY --from=0 /go/src/bitbucket.org/vintikzzzz/torrent-http-proxy/server .
+COPY --from=0 /go/src/github.com/webtor-io/torrent-http-proxy/server .
 
 # tell we are exposing our service on port 8080
 EXPOSE 8080
