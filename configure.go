@@ -1,9 +1,9 @@
 package main
 
 import (
-	cs "bitbucket.org/vintikzzzz/common-services"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	cs "github.com/webtor-io/common-services"
 	s "github.com/webtor-io/torrent-http-proxy/services"
 )
 
