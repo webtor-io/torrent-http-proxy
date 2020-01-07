@@ -4,19 +4,19 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"sync"
+	"time"
 
 	"github.com/urfave/cli"
-
-	"github.com/pkg/errors"
 
 	"github.com/sirupsen/logrus"
 )
 
 type JobLocationPool struct {
-	cl *K8SClient
-	l  *Locker
-	sm sync.Map
-	c  *cli.Context
+	cl    *K8SClient
+	l     *Locker
+	sm    sync.Map
+	c     *cli.Context
+	locks sync.Map
 }
 
 func NewJobLocationPool(c *cli.Context, cl *K8SClient, l *Locker) *JobLocationPool {
@@ -50,14 +50,32 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	if !params.RunIfNotExists {
 		_, ok := s.sm.Load(key)
 		if !ok {
-			return &Location{Unavailable: true}, nil
+			expire := 10 * time.Minute
+			al, loaded := s.locks.LoadOrStore(key, NewAccessLock(expire))
+			if loaded {
+				al.(*AccessLock).Reset()
+			}
+			logger.Info("Setting lock")
+			select {
+			case <-time.After(expire):
+				break
+			case <-al.(*AccessLock).Unlocked():
+				logger.Info("Unlocked")
+				if !loaded {
+					logger.Info("Lock deleted")
+					s.locks.Delete(key)
+				}
+				break
+			}
+			l, ok := s.sm.Load(key)
+			if !ok {
+				return &Location{Unavailable: true}, nil
+			}
+			return l.(*JobLocation).Get(false)
 		}
 	}
 
 	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l))
-	if !loaded && !params.RunIfNotExists {
-		return nil, errors.Errorf("Running new job not allowed")
-	}
 	l, err := v.(*JobLocation).Get(purge)
 
 	if !loaded {
@@ -74,6 +92,10 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 				s.sm.Delete(key)
 				logger.Info("Job deleted from pool")
 			}()
+			al, ok := s.locks.Load(key)
+			if ok {
+				al.(*AccessLock).Unlock()
+			}
 		}
 	}
 	return l, err

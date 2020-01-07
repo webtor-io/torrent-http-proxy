@@ -1,12 +1,13 @@
 FROM golang:latest
 
-# copy the source files
-COPY . /go/src/github.com/webtor-io/torrent-http-proxy
+# set work dir
+WORKDIR /app
 
-WORKDIR /go/src/github.com/webtor-io/torrent-http-proxy
+# copy the source files
+COPY . .
 
 # enable modules
-ENV GO111MODULE=on
+# ENV GO111MODULE=on
 
 # disable crosscompiling 
 ENV CGO_ENABLED=0
@@ -20,7 +21,7 @@ RUN go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
 FROM scratch
 
 # copy our static linked library
-COPY --from=0 /go/src/github.com/webtor-io/torrent-http-proxy/server .
+COPY --from=0 /app/server .
 
 # tell we are exposing our service on port 8080
 EXPOSE 8080
