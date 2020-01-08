@@ -54,17 +54,18 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			al, loaded := s.locks.LoadOrStore(key, NewAccessLock(expire))
 			if loaded {
 				al.(*AccessLock).Reset()
+			} else {
+				go func() {
+					<-al.(*AccessLock).Unlocked()
+					logger.Info("Lock deleted")
+					s.locks.Delete(key)
+				}()
 			}
 			logger.Info("Setting lock")
 			select {
 			case <-time.After(expire):
-				break
 			case <-al.(*AccessLock).Unlocked():
 				logger.Info("Unlocked")
-				if !loaded {
-					logger.Info("Lock deleted")
-					s.locks.Delete(key)
-				}
 				break
 			}
 			l, ok := s.sm.Load(key)
