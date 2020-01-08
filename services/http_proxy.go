@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,6 +28,7 @@ type HTTPProxy struct {
 	inited bool
 	reloc  func() (*Location, string, error)
 	mux    sync.Mutex
+	err    error
 }
 
 func NewHTTPProxy(locw *LocationWrapper, logger *logrus.Entry) *HTTPProxy {
@@ -49,15 +52,6 @@ func modifyResponse(r *http.Response) error {
 }
 
 func (s *HTTPProxy) dial(network, addr string) (net.Conn, error) {
-	if !s.locw.Location().Active {
-		s.logger.Warn("Current location is not active, try to referesh it")
-		loc, err := s.locw.Refresh(s.logger)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to get new location")
-			return nil, err
-		}
-		addr = fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
-	}
 	s.logger.Info("Dialing proxy backend")
 	timeout := time.Duration(HTTP_PROXY_DIAL_TIMEOUT) * time.Second
 	conn, err := (&net.Dialer{
@@ -101,8 +95,11 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	}, nil
 }
 
-func (s *HTTPProxy) get() *httputil.ReverseProxy {
-	loc := s.locw.Location()
+func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
+	loc, err := s.locw.GetLocation(s.logger)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get location")
+	}
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
 		Scheme: "http",
@@ -120,16 +117,16 @@ func (s *HTTPProxy) get() *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
-	return p
+	return p, nil
 }
 
-func (s *HTTPProxy) Get() *httputil.ReverseProxy {
+func (s *HTTPProxy) Get() (*httputil.ReverseProxy, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.inited {
-		return s.proxy
+		return s.proxy, s.err
 	}
-	s.proxy = s.get()
+	s.proxy, s.err = s.get()
 	s.inited = true
-	return s.proxy
+	return s.proxy, s.err
 }

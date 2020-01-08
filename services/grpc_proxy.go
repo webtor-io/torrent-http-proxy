@@ -55,7 +55,11 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		loc := s.locw.Location()
+		loc, err := s.locw.GetLocation(s.logger)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to get location")
+			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
+		}
 		if loc.Unavailable {
 			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
 		}

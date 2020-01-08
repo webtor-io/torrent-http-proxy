@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,8 +24,14 @@ func NewHTTPProxyPool() *HTTPProxyPool {
 	return &HTTPProxyPool{expire: time.Duration(HTTP_PROXY_TTL) * time.Second}
 }
 
-func (s *HTTPProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) *httputil.ReverseProxy {
-	loc := locw.Location()
+func (s *HTTPProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
+	loc, err := locw.GetLocation(logger)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get location")
+	}
+	if loc.HTTP == 0 {
+		return nil, nil
+	}
 
 	key := "default"
 

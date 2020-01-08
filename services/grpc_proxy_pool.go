@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	"github.com/sirupsen/logrus"
 )
@@ -24,11 +26,17 @@ func NewGRPCProxyPool(claims *Claims) *GRPCProxyPool {
 	return &GRPCProxyPool{claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second}
 }
 
-func (s *GRPCProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) *grpcweb.WrappedGrpcServer {
-	loc := locw.Location()
+func (s *GRPCProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {
+	loc, err := locw.GetLocation(logger)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get location")
+	}
 	key := "default"
 	if !loc.Unavailable {
 		key = fmt.Sprintf("%s%v", loc.IP.String(), loc.GRPC)
+	}
+	if loc.GRPC == 0 {
+		return nil, nil
 	}
 
 	v, _ := s.sm.LoadOrStore(key, NewGRPCPRoxy(locw, s.claims, logger))
@@ -44,5 +52,5 @@ func (s *GRPCProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) *grpcwe
 		timer.Reset(s.expire)
 	}
 
-	return v.(*GRPCProxy).Get()
+	return v.(*GRPCProxy).Get(), nil
 }

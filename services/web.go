@@ -67,7 +67,17 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, loc
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
-	pr := s.pr.Get(locw, logger)
+	pr, err := s.pr.Get(locw, logger)
+
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to get proxy")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if pr == nil {
+		w.WriteHeader(http.StatusNotImplemented)
+		return
+	}
 	pr.ServeHTTP(w, r)
 }
 
@@ -109,19 +119,7 @@ func (s *Web) Serve() error {
 			return
 		}
 
-		loc, err := s.r.Resolve(src, logger, false)
-
-		if err != nil {
-			logger.WithError(err).Error("Failed to resolve url")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		locw := NewLocationWrapper(src, s.r, loc)
-
-		logger = logger.WithFields(logrus.Fields{
-			"DestinationIP": loc.IP.String(),
-		})
+		locw := NewLocationWrapper(src, s.r)
 
 		if src.Mod != nil {
 			r.URL.Path = src.Mod.Path
@@ -129,8 +127,15 @@ func (s *Web) Serve() error {
 			r.URL.Path = src.Path
 		}
 
-		if loc.GRPC != 0 || loc.Unavailable {
-			ws := s.grpc.Get(locw, logger)
+		ws, err := s.grpc.Get(locw, logger)
+
+		if err != nil {
+			logger.WithError(err).Error("Failed to get GRPC proxy")
+			w.WriteHeader(500)
+			return
+		}
+
+		if ws != nil {
 			if ws.IsGrpcWebRequest(r) {
 				logger.Info("Handling GRPC Web Request")
 				ws.HandleGrpcWebRequest(w, r)
@@ -142,10 +147,9 @@ func (s *Web) Serve() error {
 				return
 			}
 		}
-		if loc.HTTP != 0 || loc.Unavailable {
-			logger.Info("Handling HTTP")
-			s.proxyHTTP(w, r, src, locw, logger)
-		}
+
+		logger.Info("Handling HTTP")
+		s.proxyHTTP(w, r, src, locw, logger)
 
 	})
 	logrus.Infof("Serving Web at %v", addr)
