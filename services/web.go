@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/sirupsen/logrus"
 
@@ -46,15 +47,19 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
-func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, locw *LocationWrapper, logger *logrus.Entry) {
+func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry) {
 	claims, err := s.claims.Get(r.URL.Query().Get("token"))
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get claims")
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+	invoke := true
+	if r.URL.Query().Get("invoke") == "false" {
+		invoke = false
+	}
 	headers := map[string]string{
-		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token,
+		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token + "&invoke=" + strconv.FormatBool(invoke),
 		"X-Proxy-Url":  s.baseURL,
 		"X-Info-Hash":  src.InfoHash,
 		"X-Path":       src.Path,
@@ -67,7 +72,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, loc
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
-	pr, err := s.pr.Get(locw, logger)
+
+	pr, err := s.pr.Get(src, logger, invoke)
 
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get proxy")
@@ -119,15 +125,13 @@ func (s *Web) Serve() error {
 			return
 		}
 
-		locw := NewLocationWrapper(src, s.r)
-
 		if src.Mod != nil {
 			r.URL.Path = src.Mod.Path
 		} else {
 			r.URL.Path = src.Path
 		}
 
-		ws, err := s.grpc.Get(locw, logger)
+		ws, err := s.grpc.Get(src, logger)
 
 		if err != nil {
 			logger.WithError(err).Error("Failed to get GRPC proxy")
@@ -149,7 +153,7 @@ func (s *Web) Serve() error {
 		}
 
 		logger.Info("Handling HTTP")
-		s.proxyHTTP(w, r, src, locw, logger)
+		s.proxyHTTP(w, r, src, logger)
 
 	})
 	logrus.Infof("Serving Web at %v", addr)

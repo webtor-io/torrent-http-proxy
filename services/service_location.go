@@ -58,8 +58,7 @@ func (s *ServiceLocation) get() (*Location, error) {
 		return nil, errors.Wrap(err, "Failed to get probe port")
 	}
 	return &Location{
-		IP:     ip,
-		Active: true,
+		IP: ip,
 		Ports: Ports{
 			HTTP:  http,
 			GRPC:  grpc,

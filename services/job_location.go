@@ -100,8 +100,7 @@ func isPodReady(pod *corev1.Pod) bool {
 
 func podToLocation(pod *corev1.Pod) *Location {
 	return &Location{
-		IP:     net.ParseIP(pod.Status.PodIP),
-		Active: true,
+		IP: net.ParseIP(pod.Status.PodIP),
 		Ports: Ports{
 			HTTP:  PORT_HTTP,
 			GRPC:  PORT_GRPC,

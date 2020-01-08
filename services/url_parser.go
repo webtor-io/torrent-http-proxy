@@ -27,6 +27,14 @@ type Source struct {
 	Mod      *Mod
 }
 
+func (s *Source) GetKey() string {
+	key := s.InfoHash + s.Type
+	if s.Mod != nil {
+		key = key + s.Path + s.Mod.Type + s.Mod.Extra
+	}
+	return key
+}
+
 func checkHash(hash string) bool {
 	match, _ := regexp.MatchString("[0-9a-f]{5,40}", hash)
 	return match

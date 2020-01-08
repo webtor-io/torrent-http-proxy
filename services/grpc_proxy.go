@@ -21,16 +21,17 @@ import (
 )
 
 type GRPCProxy struct {
-	locw   *LocationWrapper
 	grpc   *grpcweb.WrappedGrpcServer
 	claims *Claims
 	inited bool
 	mux    sync.Mutex
 	logger *logrus.Entry
+	r      *Resolver
+	src    *Source
 }
 
-func NewGRPCPRoxy(locw *LocationWrapper, claims *Claims, logger *logrus.Entry) *GRPCProxy {
-	return &GRPCProxy{locw: locw, claims: claims, inited: false, logger: logger}
+func NewGRPCProxy(claims *Claims, r *Resolver, src *Source, logger *logrus.Entry) *GRPCProxy {
+	return &GRPCProxy{claims: claims, r: r, inited: false, src: src, logger: logger}
 }
 
 func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
@@ -47,6 +48,11 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "Failed to get claims")
 		}
+
+		invoke := true
+		if len(md.Get("invoke")) != 0 && md.Get("invoke")[0] == "false" {
+			invoke = false
+		}
 		outCtx, _ := context.WithCancel(ctx)
 		mdCopy := md.Copy()
 		delete(mdCopy, "user-agent")
@@ -55,7 +61,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		loc, err := s.locw.GetLocation(s.logger)
+		loc, err := s.r.Resolve(s.src, s.logger, false, invoke)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to get location")
 			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
@@ -67,7 +73,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 			grpc.WithCodec(proxy.Codec()), grpc.WithInsecure())
 		if err != nil {
 			s.logger.Warn("Failed to dial location, try to refresh it")
-			loc, err := s.locw.Refresh(s.logger)
+			loc, err := s.r.Resolve(s.src, s.logger, true, invoke)
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to get new location")
 				return nil, nil, err

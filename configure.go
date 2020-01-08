@@ -54,13 +54,13 @@ func run(c *cli.Context) error {
 	defer probe.Close()
 
 	// Setting HTTP Proxy Pool
-	httpProxyPool := s.NewHTTPProxyPool()
+	httpProxyPool := s.NewHTTPProxyPool(resolver)
 
 	// Setting Claims
 	claims := s.NewClaims(c)
 
 	// Setting GRPC Proxy Pool
-	grpcProxyPool := s.NewGRPCProxyPool(claims)
+	grpcProxyPool := s.NewGRPCProxyPool(claims, resolver)
 
 	// Setting WebService
 	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims)

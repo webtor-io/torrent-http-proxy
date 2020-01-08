@@ -1,12 +1,11 @@
 package services
 
 import (
-	"fmt"
 	"net/http/httputil"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -18,28 +17,16 @@ type HTTPProxyPool struct {
 	sm     sync.Map
 	timers sync.Map
 	expire time.Duration
+	r      *Resolver
 }
 
-func NewHTTPProxyPool() *HTTPProxyPool {
-	return &HTTPProxyPool{expire: time.Duration(HTTP_PROXY_TTL) * time.Second}
+func NewHTTPProxyPool(r *Resolver) *HTTPProxyPool {
+	return &HTTPProxyPool{expire: time.Duration(HTTP_PROXY_TTL) * time.Second, r: r}
 }
 
-func (s *HTTPProxyPool) Get(locw *LocationWrapper, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	loc, err := locw.GetLocation(logger)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get location")
-	}
-	if loc.HTTP == 0 {
-		return nil, nil
-	}
-
-	key := "default"
-
-	if !loc.Unavailable {
-		key = fmt.Sprintf("%s%v", loc.IP.String(), loc.HTTP)
-	}
-
-	v, _ := s.sm.LoadOrStore(key, NewHTTPProxy(locw, logger))
+func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool) (*httputil.ReverseProxy, error) {
+	key := src.GetKey() + strconv.FormatBool(invoke)
+	v, _ := s.sm.LoadOrStore(key, NewHTTPProxy(s.r, src, logger, invoke))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {

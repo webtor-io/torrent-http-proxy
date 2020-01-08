@@ -40,14 +40,14 @@ func MakeJobID(cfg *JobConfig, params *InitParams) string {
 	return name
 }
 
-func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool) (*Location, error) {
+func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool, invoke bool) (*Location, error) {
 	key := MakeJobID(cfg, params)
 	logger = logger.WithFields(logrus.Fields{
 		"jobID":   key,
 		"jobName": cfg.Name,
 	})
 	// return &Location{Unavailable: true}, nil
-	if !params.RunIfNotExists {
+	if !params.RunIfNotExists || invoke == false {
 		_, ok := s.sm.Load(key)
 		if !ok {
 			expire := 10 * time.Minute
@@ -89,7 +89,6 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 				if err != nil {
 					logger.WithError(err).Error("Failed to wait for pod finish")
 				}
-				l.Active = false
 				s.sm.Delete(key)
 				logger.Info("Job deleted from pool")
 			}()
