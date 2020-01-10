@@ -55,19 +55,16 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			if loaded {
 				al.(*AccessLock).Reset()
 			} else {
+				logger.Info("Setting lock")
 				go func() {
 					<-al.(*AccessLock).Unlocked()
 					logger.Info("Lock deleted")
 					s.locks.Delete(key)
 				}()
 			}
-			logger.Info("Setting lock")
-			select {
-			case <-time.After(expire):
-			case <-al.(*AccessLock).Unlocked():
-				logger.Info("Unlocked")
-				break
-			}
+			logger.Info("Wait to unlock")
+			<-al.(*AccessLock).Unlocked()
+			logger.Info("Unlocked")
 			l, ok := s.sm.Load(key)
 			if !ok {
 				return &Location{Unavailable: true}, nil
@@ -92,10 +89,11 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 				s.sm.Delete(key)
 				logger.Info("Job deleted from pool")
 			}()
-			al, ok := s.locks.Load(key)
-			if ok {
-				al.(*AccessLock).Unlock()
-			}
+		}
+		al, ok := s.locks.Load(key)
+		if ok {
+			logger.Info("Unlocking")
+			al.(*AccessLock).Unlock()
 		}
 	}
 	return l, err

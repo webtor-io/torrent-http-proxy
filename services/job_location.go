@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli"
 
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -98,7 +99,25 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func podToLocation(pod *corev1.Pod) *Location {
+func (s *JobLocation) podToLocation(pod *corev1.Pod, cl *kubernetes.Clientset) *Location {
+	extIP := ""
+	nodeName := pod.Spec.NodeName
+	nodes, err := cl.CoreV1().Nodes().List(metav1.ListOptions{
+		FieldSelector: fields.OneTermEqualSelector("metadata.name", nodeName).String(),
+	})
+	if err != nil {
+		s.logger.WithError(err).Errorf("Failed to get node with name=%s", nodeName)
+	}
+	if len(nodes.Items) == 0 {
+		s.logger.Warnf("No nodes found by name=%s", nodeName)
+	}
+	if err == nil && len(nodes.Items) > 0 {
+		for _, a := range nodes.Items[0].Status.Addresses {
+			if a.Type == corev1.NodeExternalIP {
+				extIP = a.Address
+			}
+		}
+	}
 	return &Location{
 		IP: net.ParseIP(pod.Status.PodIP),
 		Ports: Ports{
@@ -106,6 +125,7 @@ func podToLocation(pod *corev1.Pod) *Location {
 			GRPC:  PORT_GRPC,
 			Probe: PORT_PROBE,
 		},
+		HostIP:      net.ParseIP(extIP),
 		Unavailable: false,
 	}
 }
@@ -268,7 +288,7 @@ func (s *JobLocation) get() (*Location, error) {
 		s.pod = p
 		if isPodReady(p) {
 			s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready already!")
-			return podToLocation(p), nil
+			return s.podToLocation(p, cl), nil
 		}
 		if !isPodFinished(p) {
 			s.logger.Info("Starting pod found, waiting...")
@@ -278,7 +298,7 @@ func (s *JobLocation) get() (*Location, error) {
 			}
 			s.pod = wp
 			s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready at last!")
-			return podToLocation(wp), nil
+			return s.podToLocation(wp, cl), nil
 		}
 	}
 	if wasLocked {
@@ -419,7 +439,7 @@ func (s *JobLocation) get() (*Location, error) {
 	case pod := <-watchSuccess:
 		s.pod = pod
 		s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready!")
-		return podToLocation(pod), nil
+		return s.podToLocation(pod, cl), nil
 	}
 }
 

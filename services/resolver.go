@@ -18,6 +18,7 @@ type Location struct {
 	Ports
 	IP          net.IP
 	Unavailable bool
+	HostIP      net.IP
 }
 
 type Resolver struct {
