@@ -1,6 +1,6 @@
 module github.com/webtor-io/torrent-http-proxy
 
-go 1.12
+go 1.13
 
 require (
 	github.com/bsm/redislock v0.4.0

@@ -57,7 +57,8 @@ func (s *HTTPProxy) dial(network, addr string) (net.Conn, error) {
 	s.logger.Info("Dialing proxy backend")
 	timeout := time.Duration(HTTP_PROXY_DIAL_TIMEOUT) * time.Second
 	conn, err := (&net.Dialer{
-		Timeout: timeout,
+		Timeout:   timeout,
+		KeepAlive: time.Duration(HTTP_PROXY_TTL) * time.Second,
 	}).Dial(network, addr)
 	if err != nil {
 		s.logger.Warn("Failed to dial location, try to refresh it")
@@ -68,7 +69,8 @@ func (s *HTTPProxy) dial(network, addr string) (net.Conn, error) {
 		}
 		addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
 		conn, err := (&net.Dialer{
-			Timeout: timeout,
+			Timeout:   timeout,
+			KeepAlive: time.Duration(HTTP_PROXY_TTL) * time.Second,
 		}).Dial(network, addr)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to dial with new address")

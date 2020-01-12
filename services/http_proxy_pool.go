@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	HTTP_PROXY_TTL = 60
+	HTTP_PROXY_TTL = 60 * 5
 )
 
 type HTTPProxyPool struct {
