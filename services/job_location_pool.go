@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"sync"
-	"time"
 
 	"github.com/urfave/cli"
 
@@ -50,15 +49,24 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	if !params.RunIfNotExists || invoke == false {
 		_, ok := s.sm.Load(key)
 		if !ok {
-			expire := 10 * time.Minute
-			al, loaded := s.locks.LoadOrStore(key, NewAccessLock(expire))
-			if loaded {
-				al.(*AccessLock).Reset()
-			} else {
+			al, loaded := s.locks.LoadOrStore(key, NewAccessLock())
+			if !loaded {
 				logger.Info("Setting lock")
 				go func() {
-					<-al.(*AccessLock).Unlocked()
-					logger.Info("Lock deleted")
+					jl := NewJobLocation(s.c, cfg, params, s.cl, logger, s.l)
+					l, err := jl.Wait()
+					if err != nil || l == nil {
+						logger.Info("Failed to wait for job location")
+					} else {
+						s.sm.LoadOrStore(key, jl)
+						go func() {
+							<-l.Expire
+							s.sm.Delete(key)
+							logger.Info("Job deleted from pool")
+						}()
+					}
+					logger.Info("Unlocking")
+					al.(*AccessLock).Unlock()
 					s.locks.Delete(key)
 				}()
 			}
@@ -69,12 +77,12 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			if !ok {
 				return &Location{Unavailable: true}, nil
 			}
-			return l.(*JobLocation).Get(false)
+			return l.(*JobLocation).Get()
 		}
 	}
 
 	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l))
-	l, err := v.(*JobLocation).Get(purge)
+	l, err := v.(*JobLocation).Invoke(purge)
 
 	if !loaded {
 		if err != nil || l == nil {
@@ -82,18 +90,10 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			logger.Info("Failed to get job location")
 		} else {
 			go func() {
-				err := v.(*JobLocation).WaitFinish()
-				if err != nil {
-					logger.WithError(err).Error("Failed to wait for pod finish")
-				}
+				<-l.Expire
 				s.sm.Delete(key)
 				logger.Info("Job deleted from pool")
 			}()
-		}
-		al, ok := s.locks.Load(key)
-		if ok {
-			logger.Info("Unlocking")
-			al.(*AccessLock).Unlock()
 		}
 	}
 	return l, err

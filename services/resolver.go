@@ -19,6 +19,7 @@ type Location struct {
 	IP          net.IP
 	Unavailable bool
 	HostIP      net.IP
+	Expire      chan bool
 }
 
 type Resolver struct {
@@ -92,6 +93,6 @@ func (s *Resolver) Resolve(src *Source, logger *logrus.Entry, purge bool, invoke
 		logger.WithError(err).Error("Failed to resolve location")
 		return nil, errors.Wrap(err, "Failed to resolve location")
 	}
-	logger.WithField("location", l).Info("Location resolved")
+	logger.WithField("location", l.IP).Info("Location resolved")
 	return l, nil
 }

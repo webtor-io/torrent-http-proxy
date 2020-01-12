@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 	"github.com/urfave/cli"
 
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -44,6 +44,7 @@ type JobLocation struct {
 	id        string
 	cl        *K8SClient
 	loc       *Location
+	finish    chan error
 	cfg       *JobConfig
 	pod       *corev1.Pod
 	params    *InitParams
@@ -99,7 +100,11 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func (s *JobLocation) podToLocation(pod *corev1.Pod, cl *kubernetes.Clientset) *Location {
+func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
+	cl, err := s.cl.Get()
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get K8S client")
+	}
 	extIP := ""
 	nodeName := pod.Spec.NodeName
 	nodes, err := cl.CoreV1().Nodes().List(metav1.ListOptions{
@@ -118,6 +123,11 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod, cl *kubernetes.Clientset) *
 			}
 		}
 	}
+
+	w, err := s.waitFinish(pod)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to init expire channel")
+	}
 	return &Location{
 		IP: net.ParseIP(pod.Status.PodIP),
 		Ports: Ports{
@@ -127,24 +137,21 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod, cl *kubernetes.Clientset) *
 		},
 		HostIP:      net.ParseIP(extIP),
 		Unavailable: false,
-	}
+		Expire:      w,
+	}, nil
 }
 
-func (s *JobLocation) WaitFinish() error {
-	if s.pod == nil {
-		return errors.Errorf("No pod to wait for finish")
-	}
+func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
-		return errors.Wrap(err, "Failed to get K8S client")
+		return nil, errors.Wrap(err, "Failed to get K8S client")
 	}
 	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("metadata.name", s.pod.Name).String(),
+		FieldSelector: fields.OneTermEqualSelector("metadata.name", pod.Name).String(),
 	})
 	if err != nil {
-		return errors.Wrap(err, "Failed to create watcher")
+		return nil, errors.Wrap(err, "Failed to create watcher")
 	}
-	defer watcher.Stop()
 	watchSuccess := make(chan *corev1.Pod)
 	go func() {
 		for event := range watcher.ResultChan() {
@@ -164,7 +171,7 @@ func (s *JobLocation) WaitFinish() error {
 			Timeout: time.Second * HEALTH_CHECK_TIMEOUT,
 		}
 		for {
-			url := fmt.Sprintf("http://%s:%d%s", s.pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
+			url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
 			// s.logger.Infof("Checking url=%s", url)
 			res, err := netClient.Get(url)
 			if err != nil {
@@ -180,25 +187,27 @@ func (s *JobLocation) WaitFinish() error {
 			time.Sleep(time.Second * HEALTH_CHECK_INTERVAL)
 		}
 	}()
-	select {
-	case <-watchSuccess:
-		s.logger.Info("Pod finished")
-	case <-httpHealthCheck:
-		s.logger.Info("Job health check failed")
-	}
-	return nil
+	resCh := make(chan bool)
+	go func() {
+		select {
+		case <-watchSuccess:
+			s.logger.Info("Pod finished")
+		case <-httpHealthCheck:
+			s.logger.Info("Job health check failed")
+		}
+		watcher.Stop()
+		close(resCh)
+	}()
+	return resCh, nil
 }
 
-func (s *JobLocation) WaitReady(timeout <-chan time.Time) (*corev1.Pod, error) {
-	if s.pod == nil {
-		return nil, errors.Errorf("No pod to wait for ready")
-	}
+func (s *JobLocation) waitReady(pod *corev1.Pod, ctx context.Context) (*corev1.Pod, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get K8S client")
 	}
 	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("metadata.name", s.pod.Name).String(),
+		FieldSelector: fields.OneTermEqualSelector("metadata.name", pod.Name).String(),
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create watcher")
@@ -210,14 +219,14 @@ func (s *JobLocation) WaitReady(timeout <-chan time.Time) (*corev1.Pod, error) {
 			pod := event.Object.(*corev1.Pod)
 
 			if isPodReady(pod) {
-				s.logger.Info("Pod finished!")
+				s.logger.Info("Pod ready!")
 				watchSuccess <- pod
 			}
 		}
 	}()
 	select {
-	case <-timeout:
-		return nil, errors.Errorf("Got timeout")
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case p := <-watchSuccess:
 		return p, nil
 	}
@@ -258,7 +267,75 @@ func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 	return aff
 }
 
-func (s *JobLocation) get() (*Location, error) {
+func (s *JobLocation) isInited() (bool, error) {
+	cl, err := s.cl.Get()
+	if err != nil {
+		return false, errors.Wrap(err, "Failed to get K8S client")
+	}
+	opts := metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-id=%v", s.id),
+	}
+	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
+	if err != nil {
+		return false, errors.Wrap(err, "Failed to find active job")
+	}
+	return len(pods.Items) > 0, nil
+
+}
+
+func (s *JobLocation) waitForPod(ctx context.Context) (*corev1.Pod, error) {
+	cl, err := s.cl.Get()
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get K8S client")
+	}
+	opts := metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-id=%v", s.id),
+	}
+	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to find active job")
+	}
+	for _, p := range pods.Items {
+		if isPodReady(&p) {
+			s.logger.Info("Pod ready already!")
+			return &p, nil
+		}
+	}
+	for _, p := range pods.Items {
+		if !isPodFinished(&p) {
+			s.logger.Info("Starting pod found, waiting...")
+			wp, err := s.waitReady(&p, ctx)
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to wait for pod")
+			}
+			s.logger.Info("Pod ready at last!")
+			return wp, nil
+		}
+	}
+	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create watcher")
+	}
+	defer watcher.Stop()
+	watchSuccess := make(chan *corev1.Pod)
+	go func() {
+		for event := range watcher.ResultChan() {
+			pod := event.Object.(*corev1.Pod)
+			s.logger.Info(pod.Status.Phase)
+			if isPodReady(pod) {
+				watchSuccess <- pod
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case pod := <-watchSuccess:
+		return pod, nil
+	}
+}
+
+func (s *JobLocation) invoke() (*Location, error) {
 	s.logger.Info("Job initialization started")
 	start := time.Now()
 	cl, err := s.cl.Get()
@@ -276,30 +353,22 @@ func (s *JobLocation) get() (*Location, error) {
 	} else {
 		defer l.Release()
 	}
-	timeout := time.After(5 * time.Minute)
-	pods, err := cl.CoreV1().Pods(s.namespace).List(metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("job-id=%v", s.id),
-	})
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Minute)
+	isInited, err := s.isInited()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to find active job")
+		return nil, errors.Wrap(err, "Failed to check is there any inited job")
 	}
-	if len(pods.Items) > 0 {
-		p := &pods.Items[0]
-		s.pod = p
-		if isPodReady(p) {
-			s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready already!")
-			return s.podToLocation(p, cl), nil
+	if isInited {
+		pod, err := s.waitForPod(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "Failed to wait for pod")
 		}
-		if !isPodFinished(p) {
-			s.logger.Info("Starting pod found, waiting...")
-			wp, err := s.WaitReady(timeout)
-			if err != nil {
-				return nil, errors.Wrap(err, "Failed to wait for pod")
-			}
-			s.pod = wp
-			s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready at last!")
-			return s.podToLocation(wp, cl), nil
+		loc, err := s.podToLocation(pod)
+
+		if err != nil {
+			return nil, errors.Wrap(err, "Failed to convert pod to location")
 		}
+		return loc, nil
 	}
 	if wasLocked {
 		return nil, errors.Errorf("Failed to allocate existent pod")
@@ -334,25 +403,6 @@ func (s *JobLocation) get() (*Location, error) {
 			Value: v,
 		})
 	}
-	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("job-name=%v", jobName),
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create watcher")
-	}
-	defer watcher.Stop()
-	watchSuccess := make(chan *corev1.Pod)
-	go func() {
-		for event := range watcher.ResultChan() {
-			pod := event.Object.(*corev1.Pod)
-			s.logger.Info(pod.Status.Phase)
-			s.pod = pod
-
-			if isPodReady(pod) {
-				watchSuccess <- pod
-			}
-		}
-	}()
 	ttl := int32(600)
 	addStart := time.Now()
 
@@ -428,22 +478,66 @@ func (s *JobLocation) get() (*Location, error) {
 		return nil, errors.Wrap(err, "Failed to create job")
 	}
 
-	select {
-	case <-timeout:
+	pod, err := s.waitForPod(ctx)
+
+	if err != nil {
 		_ = cl.BatchV1().Jobs(s.namespace).Delete(jobName, &metav1.DeleteOptions{})
-		if s.pod != nil {
-			_ = cl.CoreV1().Pods(s.namespace).Delete(s.pod.Name, &metav1.DeleteOptions{})
-		}
-		s.logger.WithField("duration", time.Since(start).Milliseconds()).Error("Failed to initialize job by timeout")
-		return nil, errors.Errorf("Got timeout")
-	case pod := <-watchSuccess:
-		s.pod = pod
-		s.logger.WithField("duration", time.Since(start).Milliseconds()).Info("Pod ready!")
-		return s.podToLocation(pod, cl), nil
+		s.logger.WithError(err).WithField("duration", time.Since(start).Milliseconds()).Error("Failed to initialize job")
+		return nil, errors.Wrap(err, "Failed to initialize job")
 	}
+
+	loc, err := s.podToLocation(pod)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to convert pod to location")
+	}
+	return loc, nil
+
 }
 
-func (s *JobLocation) Get(purge bool) (*Location, error) {
+func (s *JobLocation) wait() (*Location, error) {
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Minute)
+
+	pod, err := s.waitForPod(ctx)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to initialize job")
+	}
+
+	loc, err := s.podToLocation(pod)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to convert pod to location")
+	}
+	return loc, nil
+}
+
+func (s *JobLocation) Wait() (*Location, error) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.inited {
+		return s.loc, s.err
+	}
+	s.loc, s.err = s.wait()
+	if s.err != nil {
+		s.logger.WithError(s.err).Info("Failed to get job location")
+	} else {
+		s.logger.WithField("location", s.loc.IP).Info("Got job location")
+	}
+	s.inited = true
+	return s.loc, s.err
+}
+
+func (s *JobLocation) Get() (*Location, error) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.inited {
+		return s.loc, s.err
+	}
+	return nil, errors.Errorf("JobLocation not inited yet")
+}
+
+func (s *JobLocation) Invoke(purge bool) (*Location, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if purge {
@@ -452,11 +546,11 @@ func (s *JobLocation) Get(purge bool) (*Location, error) {
 	if s.inited {
 		return s.loc, s.err
 	}
-	s.loc, s.err = s.get()
+	s.loc, s.err = s.invoke()
 	if s.err != nil {
 		s.logger.WithError(s.err).Info("Failed to get job location")
 	} else {
-		s.logger.WithField("location", s.loc).Info("Got job location")
+		s.logger.WithField("location", s.loc.IP).Info("Got job location")
 	}
 	s.inited = true
 	return s.loc, s.err
