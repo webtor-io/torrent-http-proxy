@@ -164,6 +164,25 @@ func (s *Web) Serve() error {
 	if s.redirect {
 		logrus.Infof("Redirecting enabled with prefix=%s", s.redirectPrefix)
 	}
+
+	var ip net.IP
+	ifaces, _ := net.Interfaces()
+	for _, i := range ifaces {
+		addrs, _ := i.Addrs()
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+		}
+	}
+
+	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
+		fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		logger := logrus.WithFields(logrus.Fields{
 			"URL":  r.URL.String(),
