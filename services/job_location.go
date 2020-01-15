@@ -279,17 +279,27 @@ func (s *JobLocation) isInited() (bool, error) {
 	if err != nil {
 		return false, errors.Wrap(err, "Failed to find active job")
 	}
-	return len(pods.Items) > 0, nil
+	for _, p := range pods.Items {
+		if !isPodFinished(&p) {
+			return true, nil
+		}
+	}
+	return false, nil
 
 }
 
-func (s *JobLocation) waitForPod(ctx context.Context) (*corev1.Pod, error) {
+func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get K8S client")
 	}
+
+	selector := fmt.Sprintf("job-id=%v", s.id)
+	if name != "" {
+		selector = fmt.Sprintf("job-name=%v", name)
+	}
 	opts := metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("job-id=%v", s.id),
+		LabelSelector: selector,
 	}
 	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
 	if err != nil {
@@ -359,7 +369,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		return nil, errors.Wrap(err, "Failed to check is there any inited job")
 	}
 	if isInited {
-		pod, err := s.waitForPod(ctx)
+		pod, err := s.waitForPod(ctx, "")
 		if err != nil {
 			return nil, errors.Wrap(err, "Failed to wait for pod")
 		}
@@ -493,7 +503,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		return nil, errors.Wrap(err, "Failed to create job")
 	}
 
-	pod, err := s.waitForPod(ctx)
+	pod, err := s.waitForPod(ctx, jobName)
 
 	if err != nil {
 		_ = cl.BatchV1().Jobs(s.namespace).Delete(jobName, &metav1.DeleteOptions{})
@@ -513,7 +523,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 func (s *JobLocation) wait() (*Location, error) {
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Minute)
 
-	pod, err := s.waitForPod(ctx)
+	pod, err := s.waitForPod(ctx, "")
 
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to initialize job")
