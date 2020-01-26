@@ -1,4 +1,9 @@
-FROM golang:latest
+FROM alpine:latest as certs
+
+# getting certs
+RUN apk update && apk upgrade && apk add --no-cache ca-certificates
+
+FROM golang:latest as build
 
 # set work dir
 WORKDIR /app
@@ -21,7 +26,10 @@ RUN go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
 FROM scratch
 
 # copy our static linked library
-COPY --from=0 /app/server .
+COPY --from=build /app/server .
+
+# copy certs
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # tell we are exposing our service on port 8080
 EXPOSE 8080

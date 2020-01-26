@@ -68,7 +68,7 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
-func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry, originalPath string, invoke bool) (string, error) {
+func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool) (string, error) {
 	if !s.redirect {
 		return "", nil
 	}
@@ -99,11 +99,20 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 		}
 		u.Host = s.redirectPrefix + hexIP + strings.TrimLeft(h, newHexIP)
 	}
+	u.Path = "/liveness"
+	u.Scheme = "https"
+	pu := u.String()
+	resp, err := http.Get(pu)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		u.Path = newPath
+		logger.WithError(err).WithField("probe_url", pu).Error("Liveness probe is not OK")
+		return "", nil
+	}
 	u.Path = originalPath
 	return u.String(), nil
 }
 
-func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string) {
+func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
 	claims, err := s.claims.Get(r.URL.Query().Get("token"))
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get claims")
@@ -114,7 +123,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	ru, err := s.getRedirectURL(r, src, logger, originalPath, invoke)
+	ru, err := s.getRedirectURL(r, src, logger, originalPath, newPath, invoke)
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get redirect url")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -183,6 +192,9 @@ func (s *Web) Serve() error {
 		fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
 		fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
 	})
+	mux.HandleFunc("/liveness", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		logger := logrus.WithFields(logrus.Fields{
 			"URL":  r.URL.String(),
@@ -216,11 +228,14 @@ func (s *Web) Serve() error {
 
 		originalPath := r.URL.Path
 
+		newPath := ""
+
 		if src.Mod != nil {
-			r.URL.Path = src.Mod.Path
+			newPath = src.Mod.Path
 		} else {
-			r.URL.Path = src.Path
+			newPath = src.Path
 		}
+		r.URL.Path = newPath
 
 		ws, err := s.grpc.Get(src, logger)
 
@@ -244,7 +259,7 @@ func (s *Web) Serve() error {
 		}
 
 		logger.Info("Handling HTTP")
-		s.proxyHTTP(w, r, src, logger, originalPath)
+		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
 
 	})
 	logrus.Infof("Serving Web at %v", addr)
