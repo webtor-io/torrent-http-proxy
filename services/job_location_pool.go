@@ -47,7 +47,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	})
 	// return &Location{Unavailable: true}, nil
 	if !params.RunIfNotExists || invoke == false {
-		_, ok := s.sm.Load(key)
+		l, ok := s.sm.Load(key)
 		if !ok {
 			al, loaded := s.locks.LoadOrStore(key, NewAccessLock())
 			if !loaded {
@@ -79,6 +79,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			}
 			return l.(*JobLocation).Get()
 		}
+		return l.(*JobLocation).Get()
 	}
 
 	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l))
