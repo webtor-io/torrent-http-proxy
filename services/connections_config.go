@@ -146,6 +146,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "SRT2VTT",
 			},
 		},
+		"ext": &ConnectionConfig{
+			Name:           "External Proxy",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "EXTERNAL_PROXY",
+			},
+		},
 		"arch": &ConnectionConfig{
 			Name:           "ZIP Archiver",
 			ConnectionType: ConnectionType_SERVICE,
