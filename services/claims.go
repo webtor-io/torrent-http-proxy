@@ -3,39 +3,30 @@ package services
 import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
-	"github.com/urfave/cli"
 )
-
-const (
-	JWT_SECRET_FLAG     = "jwt-secret"
-	JWT_TOKEN_GET_PARAM = "token"
-)
-
-func RegisterClaimsFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JWT_SECRET_FLAG,
-		Usage:  "JWT Secret",
-		Value:  "",
-		EnvVar: "SECRET",
-	})
-}
 
 type Claims struct {
-	JWTSecret string
+	cs *Clients
 }
 
-func NewClaims(c *cli.Context) *Claims {
-	return &Claims{JWTSecret: c.String(JWT_SECRET_FLAG)}
+func NewClaims(cs *Clients) *Claims {
+	return &Claims{cs: cs}
 }
 
-func (s *Claims) Get(tokenString string) (jwt.MapClaims, error) {
+func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client, error) {
 
-	if s.JWTSecret == "" {
-		return jwt.MapClaims{}, nil
+	if s.cs.Empty() {
+		return jwt.MapClaims{}, nil, nil
 	}
 
 	if tokenString == "" {
-		return nil, errors.Errorf("Failed to get token")
+		return nil, nil, errors.Errorf("Failed to get token")
+	}
+
+	cl := s.cs.Get(apiKey)
+
+	if cl == nil {
+		return nil, nil, errors.Errorf("Failed to find secret by API key %v", apiKey)
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -44,14 +35,14 @@ func (s *Claims) Get(tokenString string) (jwt.MapClaims, error) {
 			return nil, errors.Errorf("Unexpected signing method=%v", token.Header["alg"])
 		}
 		// hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
-		return []byte(s.JWTSecret), nil
+		return []byte(cl.Secret), nil
 	})
 	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to parse token")
+		return nil, nil, errors.Wrapf(err, "Failed to parse token")
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
-		return nil, errors.Wrapf(err, "Failed to validate token")
+		return nil, nil, errors.Wrapf(err, "Failed to validate token")
 	}
-	return claims, nil
+	return claims, cl, nil
 }

@@ -56,6 +56,7 @@ type JobLocation struct {
 	naKey     string
 	naVal     string
 	namespace string
+	acl       *Client
 }
 
 func RegisterJobFlags(c *cli.App) {
@@ -79,7 +80,7 @@ func RegisterJobFlags(c *cli.App) {
 	})
 }
 
-func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker) *JobLocation {
+func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false,
 		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE), namespace: c.String(JOB_NAMESPACE)}
@@ -383,6 +384,10 @@ func (s *JobLocation) invoke() (*Location, error) {
 	if wasLocked {
 		return nil, errors.Errorf("Failed to allocate existent pod")
 	}
+	clientName := "default"
+	if s.acl != nil {
+		clientName = s.acl.Name
+	}
 	annotations := map[string]string{
 		"job-id":     s.id,
 		"job-type":   s.cfg.Name,
@@ -391,6 +396,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		"source-url": s.params.SourceURL,
 		"extra":      s.params.Extra,
 		"grace":      fmt.Sprintf("%d", s.cfg.Grace),
+		"client":     clientName,
 	}
 	validLabelValue := regexp.MustCompile(`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`)
 	labels := map[string]string{}

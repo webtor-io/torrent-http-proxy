@@ -14,9 +14,11 @@ require (
 	github.com/pkg/errors v0.8.1
 	github.com/rs/cors v1.7.0 // indirect
 	github.com/sirupsen/logrus v1.4.2
+	github.com/spf13/viper v1.6.2 // indirect
 	github.com/urfave/cli v1.22.1
 	github.com/webtor-io/common-services v0.0.0-20200102124507-e840419c0302
 	google.golang.org/grpc v1.25.1
+	gopkg.in/yaml.v2 v2.2.4
 	k8s.io/api v0.0.0-20191115135540-bbc9463b57e5
 	k8s.io/apimachinery v0.0.0-20191115015347-3c7067801da2
 	k8s.io/client-go v0.0.0-20190620085101-78d2af792bab

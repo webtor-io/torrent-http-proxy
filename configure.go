@@ -11,7 +11,6 @@ func configure(app *cli.App) {
 	app.Flags = []cli.Flag{}
 
 	s.RegisterWebFlags(app)
-	s.RegisterClaimsFlags(app)
 	s.RegisterRedisClientFlags(app)
 	s.RegisterJobFlags(app)
 	s.RegisterConnectionConfigFlags(app)
@@ -21,6 +20,15 @@ func configure(app *cli.App) {
 }
 
 func run(c *cli.Context) error {
+
+	// Setting Clients
+	clients, err := s.NewClients()
+
+	if err != nil {
+		log.WithError(err).Error("Got clients error")
+		return err
+	}
+
 	// Setting Base URL
 	baseURL := s.GetBaseURL()
 
@@ -57,7 +65,12 @@ func run(c *cli.Context) error {
 	httpProxyPool := s.NewHTTPProxyPool(resolver)
 
 	// Setting Claims
-	claims := s.NewClaims(c)
+	claims := s.NewClaims(clients)
+
+	if err != nil {
+		log.WithError(err).Error("Got claim error")
+		return err
+	}
 
 	// Setting GRPC Proxy Pool
 	grpcProxyPool := s.NewGRPCProxyPool(claims, resolver)
@@ -70,7 +83,7 @@ func run(c *cli.Context) error {
 	serve := cs.NewServe(probe, web)
 
 	// And SERVE!
-	err := serve.Serve()
+	err = serve.Serve()
 	if err != nil {
 		log.WithError(err).Error("Got serve error")
 	}

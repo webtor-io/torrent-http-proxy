@@ -24,9 +24,9 @@ func NewHTTPProxyPool(r *Resolver) *HTTPProxyPool {
 	return &HTTPProxyPool{expire: time.Duration(HTTP_PROXY_TTL) * time.Second, r: r}
 }
 
-func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool) (*httputil.ReverseProxy, error) {
+func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool, cl *Client) (*httputil.ReverseProxy, error) {
 	key := src.GetKey() + strconv.FormatBool(invoke)
-	v, _ := s.sm.LoadOrStore(key, NewHTTPProxy(s.r, src, logger, invoke))
+	v, _ := s.sm.LoadOrStore(key, NewHTTPProxy(s.r, src, logger, invoke, cl))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {

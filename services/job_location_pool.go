@@ -39,11 +39,17 @@ func MakeJobID(cfg *JobConfig, params *InitParams) string {
 	return name
 }
 
-func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool, invoke bool) (*Location, error) {
+func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	key := MakeJobID(cfg, params)
+	clientName := "default"
+	if cl != nil {
+		clientName = cl.Name
+
+	}
 	logger = logger.WithFields(logrus.Fields{
-		"jobID":   key,
-		"jobName": cfg.Name,
+		"jobID":      key,
+		"jobName":    cfg.Name,
+		"clientName": clientName,
 	})
 	// return &Location{Unavailable: true}, nil
 	if !params.RunIfNotExists || invoke == false {
@@ -53,7 +59,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 			if !loaded {
 				logger.Info("Setting lock")
 				go func() {
-					jl := NewJobLocation(s.c, cfg, params, s.cl, logger, s.l)
+					jl := NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl)
 					l, err := jl.Wait()
 					if err != nil || l == nil {
 						logger.Info("Failed to wait for job location")
@@ -82,7 +88,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 		return l.(*JobLocation).Get()
 	}
 
-	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l))
+	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl))
 	l, err := v.(*JobLocation).Invoke(purge)
 
 	if !loaded {

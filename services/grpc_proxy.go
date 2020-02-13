@@ -44,7 +44,11 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		if len(md.Get("token")) == 0 || md.Get("token")[0] == "" {
 			return nil, nil, errors.Errorf("No token provided")
 		}
-		_, err := s.claims.Get(md.Get("token")[0])
+		apiKey := ""
+		if len(md.Get("api-key")) != 0 {
+			apiKey = md.Get("api-key")[0]
+		}
+		_, cl, err := s.claims.Get(md.Get("token")[0], apiKey)
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "Failed to get claims")
 		}
@@ -61,7 +65,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		loc, err := s.r.Resolve(s.src, s.logger, false, invoke)
+		loc, err := s.r.Resolve(s.src, s.logger, false, invoke, cl)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to get location")
 			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
@@ -73,7 +77,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 			grpc.WithCodec(proxy.Codec()), grpc.WithInsecure())
 		if err != nil {
 			s.logger.Warn("Failed to dial location, try to refresh it")
-			loc, err := s.r.Resolve(s.src, s.logger, true, invoke)
+			loc, err := s.r.Resolve(s.src, s.logger, true, invoke, cl)
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to get new location")
 				return nil, nil, err

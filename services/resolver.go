@@ -77,18 +77,18 @@ func (s *Resolver) getInit(src *Source) *Init {
 	return init
 }
 
-func (s *Resolver) process(i *Init, logger *logrus.Entry, purge bool, invoke bool) (*Location, error) {
+func (s *Resolver) process(i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	if i.ConnectionConfig.ConnectionType == ConnectionType_SERVICE {
 		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, purge)
 	} else {
-		return s.jobLocPool.Get(&i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke)
+		return s.jobLocPool.Get(&i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)
 	}
 }
 
-func (s *Resolver) Resolve(src *Source, logger *logrus.Entry, purge bool, invoke bool) (*Location, error) {
+func (s *Resolver) Resolve(src *Source, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	logger = logger.WithField("purge", purge)
 	init := s.getInit(src)
-	l, err := s.process(init, logger, purge, invoke)
+	l, err := s.process(init, logger, purge, invoke, cl)
 	if err != nil {
 		logger.WithError(err).Error("Failed to resolve location")
 		return nil, errors.Wrap(err, "Failed to resolve location")

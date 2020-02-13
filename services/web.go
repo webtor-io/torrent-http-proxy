@@ -68,7 +68,7 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
-func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool) (string, error) {
+func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool, cl *Client) (string, error) {
 	if !s.redirect {
 		return "", nil
 	}
@@ -78,7 +78,7 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 	if net.ParseIP(parts[0]) != nil {
 		return "", nil
 	}
-	loc, err := s.r.Resolve(src, logger, false, invoke)
+	loc, err := s.r.Resolve(src, logger, false, invoke, cl)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to resolve location")
 	}
@@ -113,7 +113,8 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 }
 
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
-	claims, err := s.claims.Get(r.URL.Query().Get("token"))
+	apiKey := r.URL.Query().Get("api-key")
+	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get claims")
 		w.WriteHeader(http.StatusForbidden)
@@ -123,7 +124,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	ru, err := s.getRedirectURL(r, src, logger, originalPath, newPath, invoke)
+	ru, err := s.getRedirectURL(r, src, logger, originalPath, newPath, invoke, cl)
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get redirect url")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -133,12 +134,18 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		http.Redirect(w, r, ru, 302)
 		return
 	}
+	clientName := "default"
+	if cl != nil {
+		clientName = cl.Name
+	}
 	headers := map[string]string{
-		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token + "&invoke=" + strconv.FormatBool(invoke),
+		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token + "&api-key=" + apiKey + "&invoke=" + strconv.FormatBool(invoke),
 		"X-Proxy-Url":  s.baseURL,
 		"X-Info-Hash":  src.InfoHash,
 		"X-Path":       src.Path,
 		"X-Token":      src.Token,
+		"X-Api-Key":    apiKey,
+		"X-Client":     clientName,
 	}
 	rate, ok := claims["rate"].(string)
 	if ok {
@@ -148,7 +155,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		r.Header.Set(k, v)
 	}
 
-	pr, err := s.pr.Get(src, logger, invoke)
+	pr, err := s.pr.Get(src, logger, invoke, cl)
 
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get proxy")
@@ -220,7 +227,7 @@ func (s *Web) Serve() error {
 		}
 
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id,, Token, X-Grpc-Web")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id,, Token, X-Grpc-Web, Api-Key")
 			w.Header().Set("Access-Control-Allow-Methods", "POST")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			return

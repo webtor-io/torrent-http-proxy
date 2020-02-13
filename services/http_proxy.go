@@ -31,10 +31,11 @@ type HTTPProxy struct {
 	r      *Resolver
 	src    *Source
 	invoke bool
+	cl     *Client
 }
 
-func NewHTTPProxy(r *Resolver, src *Source, logger *logrus.Entry, invoke bool) *HTTPProxy {
-	return &HTTPProxy{r: r, src: src, inited: false, logger: logger, invoke: invoke}
+func NewHTTPProxy(r *Resolver, src *Source, logger *logrus.Entry, invoke bool, cl *Client) *HTTPProxy {
+	return &HTTPProxy{r: r, src: src, inited: false, logger: logger, invoke: invoke, cl: cl}
 }
 
 var corsHeaders = []string{
@@ -62,7 +63,7 @@ func (s *HTTPProxy) dial(network, addr string) (net.Conn, error) {
 	}).Dial(network, addr)
 	if err != nil {
 		s.logger.Warn("Failed to dial location, try to refresh it")
-		loc, err := s.r.Resolve(s.src, s.logger, true, s.invoke)
+		loc, err := s.r.Resolve(s.src, s.logger, true, s.invoke, s.cl)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to get new location")
 			return nil, err
@@ -100,7 +101,7 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 }
 
 func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
-	loc, err := s.r.Resolve(s.src, s.logger, false, s.invoke)
+	loc, err := s.r.Resolve(s.src, s.logger, false, s.invoke, s.cl)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get location")
 	}
