@@ -82,7 +82,7 @@ func RegisterJobFlags(c *cli.App) {
 
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
-	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false,
+	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
 		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE), namespace: c.String(JOB_NAMESPACE)}
 }
 
