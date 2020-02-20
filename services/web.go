@@ -21,7 +21,7 @@ type Web struct {
 	r              *Resolver
 	pr             *HTTPProxyPool
 	parser         *URLParser
-	grpc           *GRPCProxyPool
+	grpc           *HTTPGRPCProxyPool
 	baseURL        string
 	claims         *Claims
 	redirect       bool
@@ -37,7 +37,7 @@ const (
 
 var hexIPPattern = regexp.MustCompile(`[^\.]*`)
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *GRPCProxyPool, claims *Claims) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims) *Web {
 	return &Web{host: c.String(WEB_HOST_FLAG), port: c.Int(WEB_PORT_FLAG),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
 		redirect:       c.Bool(WEB_ORIGIN_HOST_REDIRECT_FLAG),

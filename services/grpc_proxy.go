@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"net/url"
 	"sync"
 
 	"google.golang.org/grpc/codes"
@@ -16,25 +16,24 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-
-	"github.com/improbable-eng/grpc-web/go/grpcweb"
 )
 
 type GRPCProxy struct {
-	grpc   *grpcweb.WrappedGrpcServer
+	grpc   *grpc.Server
 	claims *Claims
 	inited bool
 	mux    sync.Mutex
 	logger *logrus.Entry
 	r      *Resolver
 	src    *Source
+	parser *URLParser
 }
 
-func NewGRPCProxy(claims *Claims, r *Resolver, src *Source, logger *logrus.Entry) *GRPCProxy {
+func NewGRPCProxy(claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
 	return &GRPCProxy{claims: claims, r: r, inited: false, src: src, logger: logger}
 }
 
-func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
+func (s *GRPCProxy) get() *grpc.Server {
 	// logger := logrus.NewEntry(logrus.StandardLogger())
 	// grpc.EnableTracing = true
 	// grpc_logrus.ReplaceGrpcLogger(logger)
@@ -48,9 +47,23 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		if len(md.Get("api-key")) != 0 {
 			apiKey = md.Get("api-key")[0]
 		}
+		path := ""
+		if len(md.Get("path")) != 0 {
+			path = md.Get("path")[0]
+		}
 		_, cl, err := s.claims.Get(md.Get("token")[0], apiKey)
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "Failed to get claims")
+		}
+		src := s.src
+		if path != "" && s.src == nil && s.parser != nil {
+			nu := &url.URL{
+				Path: path,
+			}
+			src, err = s.parser.Parse(nu)
+			if err != nil {
+				return nil, nil, errors.Wrap(err, "Failed to parse path from metadata")
+			}
 		}
 
 		invoke := true
@@ -65,7 +78,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		loc, err := s.r.Resolve(s.src, s.logger, false, invoke, cl)
+		loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to get location")
 			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
@@ -77,7 +90,7 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 			grpc.WithCodec(proxy.Codec()), grpc.WithInsecure())
 		if err != nil {
 			s.logger.Warn("Failed to dial location, try to refresh it")
-			loc, err := s.r.Resolve(s.src, s.logger, true, invoke, cl)
+			loc, err := s.r.Resolve(src, s.logger, true, invoke, cl)
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to get new location")
 				return nil, nil, err
@@ -104,16 +117,10 @@ func (s *GRPCProxy) get() *grpcweb.WrappedGrpcServer {
 		// grpc_prometheus.StreamServerInterceptor,
 		),
 	)
-	w := grpcweb.WrapServer(g,
-		grpcweb.WithWebsockets(true),
-		grpcweb.WithOriginFunc(makeHttpOriginFunc()),
-		grpcweb.WithWebsocketOriginFunc(makeWebsocketOriginFunc()),
-		grpcweb.WithCorsForRegisteredEndpointsOnly(false),
-	)
-	return w
+	return g
 }
 
-func (s *GRPCProxy) Get() *grpcweb.WrappedGrpcServer {
+func (s *GRPCProxy) Get() *grpc.Server {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.inited {
@@ -122,15 +129,4 @@ func (s *GRPCProxy) Get() *grpcweb.WrappedGrpcServer {
 	s.grpc = s.get()
 	s.inited = true
 	return s.grpc
-}
-
-func makeHttpOriginFunc() func(origin string) bool {
-	return func(origin string) bool {
-		return true
-	}
-}
-func makeWebsocketOriginFunc() func(req *http.Request) bool {
-	return func(req *http.Request) bool {
-		return true
-	}
 }

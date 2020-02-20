@@ -26,7 +26,7 @@ func NewK8SClient() *K8SClient {
 
 func (s *K8SClient) get() (*kubernetes.Clientset, error) {
 	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	log.Infof("Checking local kubekinfig path=%s", kubeconfig)
+	log.Infof("Checking local kubeconfig path=%s", kubeconfig)
 	var config *rest.Config
 	if _, err := os.Stat(kubeconfig); err == nil {
 		log.WithField("kubeconfig", kubeconfig).Info("Loading config from file (local mode)")

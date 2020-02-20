@@ -12,7 +12,7 @@ const (
 	GRPC_PROXY_TTL = 60
 )
 
-type GRPCProxyPool struct {
+type HTTPGRPCProxyPool struct {
 	sm     sync.Map
 	timers sync.Map
 	claims *Claims
@@ -20,13 +20,13 @@ type GRPCProxyPool struct {
 	r      *Resolver
 }
 
-func NewGRPCProxyPool(claims *Claims, r *Resolver) *GRPCProxyPool {
-	return &GRPCProxyPool{claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second, r: r}
+func NewHTTPGRPCProxyPool(claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
+	return &HTTPGRPCProxyPool{claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second, r: r}
 }
 
-func (s *GRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {
+func (s *HTTPGRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {
 	key := src.GetKey()
-	v, _ := s.sm.LoadOrStore(key, NewGRPCProxy(s.claims, s.r, src, logger))
+	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.claims, s.r, src, nil, logger)))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {
@@ -39,5 +39,5 @@ func (s *GRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.Wrapped
 		timer.Reset(s.expire)
 	}
 
-	return v.(*GRPCProxy).Get(), nil
+	return v.(*HTTPGRPCProxy).Get(), nil
 }

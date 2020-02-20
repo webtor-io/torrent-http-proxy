@@ -11,6 +11,7 @@ func configure(app *cli.App) {
 	app.Flags = []cli.Flag{}
 
 	s.RegisterWebFlags(app)
+	s.RegisterGRPCFlags(app)
 	s.RegisterRedisClientFlags(app)
 	s.RegisterJobFlags(app)
 	s.RegisterConnectionConfigFlags(app)
@@ -73,14 +74,21 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting GRPC Proxy Pool
-	grpcProxyPool := s.NewGRPCProxyPool(claims, resolver)
+	grpcProxyPool := s.NewHTTPGRPCProxyPool(claims, resolver)
 
 	// Setting WebService
 	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims)
 	defer web.Close()
 
+	// Setting GRPC Proxy
+	grpcProxy := s.NewGRPCProxy(claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
+
+	// Setting GRPC Server
+	grpcServer := s.NewGRPCServer(c, grpcProxy)
+	defer grpcServer.Close()
+
 	// Setting ServeService
-	serve := cs.NewServe(probe, web)
+	serve := cs.NewServe(probe, web, grpcServer)
 
 	// And SERVE!
 	err = serve.Serve()

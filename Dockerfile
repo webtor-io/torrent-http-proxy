@@ -32,7 +32,7 @@ COPY --from=build /app/server .
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # tell we are exposing our service on port 8080
-EXPOSE 8080
+EXPOSE 8080 8081 50051
 
 # run it!
 CMD ["./server"]
