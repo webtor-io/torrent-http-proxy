@@ -30,7 +30,7 @@ type GRPCProxy struct {
 }
 
 func NewGRPCProxy(claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
-	return &GRPCProxy{claims: claims, r: r, inited: false, src: src, logger: logger}
+	return &GRPCProxy{claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
 }
 
 func (s *GRPCProxy) get() *grpc.Server {
@@ -64,6 +64,9 @@ func (s *GRPCProxy) get() *grpc.Server {
 			if err != nil {
 				return nil, nil, errors.Wrap(err, "Failed to parse path from metadata")
 			}
+		}
+		if src == nil {
+			return nil, nil, errors.Errorf("Failed to find path")
 		}
 
 		invoke := true
