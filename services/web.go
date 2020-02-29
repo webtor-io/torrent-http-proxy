@@ -91,13 +91,6 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 	if !strings.HasPrefix(h, s.redirectPrefix) {
 		u := r.URL
 		u.Host = s.redirectPrefix + hexIP + "." + h
-	} else {
-		h = strings.TrimLeft(h, s.redirectPrefix)
-		newHexIP := string(hexIPPattern.Find([]byte(h)))
-		if hexIP == newHexIP {
-			return "", nil
-		}
-		u.Host = s.redirectPrefix + hexIP + strings.TrimLeft(h, newHexIP)
 	}
 	u.Path = "/liveness"
 	u.Scheme = "https"
