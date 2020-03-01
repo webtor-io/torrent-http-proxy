@@ -249,6 +249,14 @@ func (s *JobLocation) makeResources() corev1.ResourceRequirements {
 
 }
 
+func (s *JobLocation) makeNodeSelector() map[string]string {
+	res := map[string]string{}
+	if s.naKey != "" && s.naVal != "" {
+		res[s.naKey] = s.naVal
+	}
+	return res
+}
+
 func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 	aff := []corev1.PreferredSchedulingTerm{}
 	if s.naKey != "" && s.naVal != "" {
@@ -430,6 +438,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: meta,
 				Spec: corev1.PodSpec{
+					NodeSelector: s.makeNodeSelector(),
 					Affinity: &corev1.Affinity{
 						PodAffinity: &corev1.PodAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
@@ -446,9 +455,9 @@ func (s *JobLocation) invoke() (*Location, error) {
 								},
 							},
 						},
-						NodeAffinity: &corev1.NodeAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
-						},
+						// NodeAffinity: &corev1.NodeAffinity{
+						// 	PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
+						// },
 					},
 					Containers: []corev1.Container{
 						{
