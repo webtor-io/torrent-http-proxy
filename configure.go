@@ -12,7 +12,7 @@ func configure(app *cli.App) {
 
 	s.RegisterWebFlags(app)
 	s.RegisterGRPCFlags(app)
-	s.RegisterRedisClientFlags(app)
+	cs.RegisterRedisClientFlags(app)
 	s.RegisterJobFlags(app)
 	s.RegisterConnectionConfigFlags(app)
 	cs.RegisterProbeFlags(app)
@@ -43,7 +43,7 @@ func run(c *cli.Context) error {
 	k8sClient := s.NewK8SClient()
 
 	// Setting Redis client
-	redisClient := s.NewRedisClient(c)
+	redisClient := cs.NewRedisClient(c)
 	defer redisClient.Close()
 
 	// Setting Locker

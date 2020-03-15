@@ -4,16 +4,18 @@ import (
 	"sync"
 
 	"github.com/bsm/redislock"
+
+	cs "github.com/webtor-io/common-services"
 )
 
 type Locker struct {
 	value  *redislock.Client
-	r      *RedisClient
+	r      *cs.RedisClient
 	inited bool
 	mux    sync.Mutex
 }
 
-func NewLocker(r *RedisClient) *Locker {
+func NewLocker(r *cs.RedisClient) *Locker {
 	return &Locker{r: r, inited: false}
 }
 
