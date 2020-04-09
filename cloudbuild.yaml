@@ -1,7 +1,7 @@
 steps:
 - name: "gcr.io/cloud-builders/docker"
   entrypoint: "bash"
-  args: ["-c", "docker login rg.fr-par.scw.cloud/webtor  -u nologin -p $$PASSWORD"]
+  args: ["-c", "docker login rg.fr-par.scw.cloud/webtor -u nologin -p $$PASSWORD"]
   secretEnv: ["PASSWORD"]
 - name: 'gcr.io/cloud-builders/docker'
   args: ["build", "-t", "rg.fr-par.scw.cloud/webtor/$REPO_NAME:$REVISION_ID", "."]

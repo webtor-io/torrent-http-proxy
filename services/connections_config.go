@@ -8,7 +8,7 @@ const (
 	ConnectionType_SERVICE ConnectionType = 0
 	ConnectionType_JOB     ConnectionType = 1
 	JOB_AFFINITY                          = "cloud.scaleway.com/scw-poolname"
-	JOB_GRACE                             = 600
+	JOB_GRACE                             = 3600
 )
 
 type ServiceConfig struct {
