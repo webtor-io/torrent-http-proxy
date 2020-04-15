@@ -419,7 +419,28 @@ func (s *JobLocation) invoke() (*Location, error) {
 		Labels:      labels,
 		Annotations: annotations,
 	}
-	env := []corev1.EnvVar{}
+	env := []corev1.EnvVar{
+		{
+			Name:  "USE_SNAPSHOT",
+			Value: s.cfg.UseSnapshot,
+		},
+		{
+			Name:  "RESTIC_PASSWORD",
+			Value: s.cfg.ResticPassword,
+		},
+		{
+			Name:  "RESTIC_REPOSITORY",
+			Value: s.cfg.ResticRepository,
+		},
+		{
+			Name:  "AWS_ACCESS_KEY_ID",
+			Value: s.cfg.AWSAccessKeyID,
+		},
+		{
+			Name:  "AWS_SECRET_ACCESS_KEY",
+			Value: s.cfg.AWSSecretAccessKey,
+		},
+	}
 	for k, v := range annotations {
 		envName := strings.Replace(strings.ToUpper(k), "-", "_", -1)
 		env = append(env, corev1.EnvVar{
@@ -427,6 +448,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: v,
 		})
 	}
+
 	ttl := int32(600)
 	addStart := time.Now()
 

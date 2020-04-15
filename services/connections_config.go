@@ -7,8 +7,6 @@ type ConnectionType int
 const (
 	ConnectionType_SERVICE ConnectionType = 0
 	ConnectionType_JOB     ConnectionType = 1
-	JOB_AFFINITY                          = "cloud.scaleway.com/scw-poolname"
-	JOB_GRACE                             = 3600
 )
 
 type ServiceConfig struct {
@@ -16,12 +14,17 @@ type ServiceConfig struct {
 }
 
 type JobConfig struct {
-	Name         string
-	Image        string
-	CPURequests  string
-	CPULimits    string
-	Grace        int
-	IgnoredPaths []string
+	Name               string
+	Image              string
+	CPURequests        string
+	CPULimits          string
+	Grace              int
+	IgnoredPaths       []string
+	UseSnapshot        string
+	ResticPassword     string
+	ResticRepository   string
+	AWSAccessKeyID     string
+	AWSSecretAccessKey string
 }
 
 type ConnectionConfig struct {
@@ -67,15 +70,29 @@ func (s *JobConfig) CheckIgnorePaths(name string) bool {
 }
 
 const (
+	JOB_PREFIX              = "job-prefix"
 	SEEDER_IMAGE            = "seeder-image"
 	SEEDER_CPU_REQUESTS     = "seeder-cpu-requests"
 	SEEDER_CPU_LIMITS       = "seeder-cpu-limits"
+	SEEDER_GRACE            = "seeder-grace"
 	TRANSCODER_IMAGE        = "transcoder-image"
 	TRANSCODER_CPU_REQUESTS = "transcoder-cpu-requests"
 	TRANSCODER_CPU_LIMITS   = "transcoder-cpu-limits"
+	TRANSCODER_GRACE        = "transcoder-grace"
+	USE_SNAPSHOT            = "use-snapshot"
+	RESTIC_PASSWORD         = "restic-pasword"
+	RESTIC_REPOSITORY       = "restic-repository"
+	AWS_ACCESS_KEY_ID       = "aws-access-key-id"
+	AWS_SECRET_ACCESS_KEY   = "aws-secret-access-key"
 )
 
 func RegisterConnectionConfigFlags(c *cli.App) {
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   JOB_PREFIX,
+		Usage:  "Job prefix",
+		Value:  "",
+		EnvVar: "JOB_PREFIX",
+	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   SEEDER_IMAGE,
 		Usage:  "Seeder image",
@@ -93,6 +110,12 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "Seeder CPU Limits",
 		Value:  "",
 		EnvVar: "SEEDER_CPU_LIMITS",
+	})
+	c.Flags = append(c.Flags, cli.IntFlag{
+		Name:   SEEDER_GRACE,
+		Usage:  "Seeder Grace (sec)",
+		Value:  600,
+		EnvVar: "SEEDER_GRACE",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   TRANSCODER_IMAGE,
@@ -112,6 +135,41 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  "",
 		EnvVar: "TRANSCODER_CPU_LIMITS",
 	})
+	c.Flags = append(c.Flags, cli.IntFlag{
+		Name:   TRANSCODER_GRACE,
+		Usage:  "Transcoder Grace (sec)",
+		Value:  600,
+		EnvVar: "TRANSCODER_GRACE",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   USE_SNAPSHOT,
+		Usage:  "use snapshot",
+		EnvVar: "USE_SNAPSHOT",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   RESTIC_PASSWORD,
+		Usage:  "restic password",
+		Value:  "",
+		EnvVar: "RESTIC_PASSWORD",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   RESTIC_REPOSITORY,
+		Usage:  "restic repository",
+		Value:  "",
+		EnvVar: "RESTIC_REPOSITORY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   AWS_ACCESS_KEY_ID,
+		Usage:  "AWS Access Key ID",
+		Value:  "",
+		EnvVar: "AWS_ACCESS_KEY_ID",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   AWS_SECRET_ACCESS_KEY,
+		Usage:  "AWS Secret Access Key",
+		Value:  "",
+		EnvVar: "AWS_SECRET_ACCESS_KEY",
+	})
 }
 
 func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
@@ -120,23 +178,28 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "Torrent Web Seeder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
-				Name:         "seeder",
-				Image:        c.String(SEEDER_IMAGE),
-				CPURequests:  c.String(SEEDER_CPU_REQUESTS),
-				CPULimits:    c.String(SEEDER_CPU_LIMITS),
-				Grace:        JOB_GRACE,
-				IgnoredPaths: []string{"/TorrentWebSeeder/StatStream"},
+				Name:               c.String(JOB_PREFIX) + "seeder",
+				Image:              c.String(SEEDER_IMAGE),
+				CPURequests:        c.String(SEEDER_CPU_REQUESTS),
+				CPULimits:          c.String(SEEDER_CPU_LIMITS),
+				ResticPassword:     c.String(RESTIC_PASSWORD),
+				ResticRepository:   c.String(RESTIC_REPOSITORY),
+				AWSAccessKeyID:     c.String(AWS_ACCESS_KEY_ID),
+				AWSSecretAccessKey: c.String(AWS_SECRET_ACCESS_KEY),
+				UseSnapshot:        c.String(USE_SNAPSHOT),
+				Grace:              c.Int(SEEDER_GRACE),
+				IgnoredPaths:       []string{"/TorrentWebSeeder/StatStream"},
 			},
 		},
 		"hls": &ConnectionConfig{
 			Name:           "HLS Content Transcoder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
-				Name:        "transcoder",
+				Name:        c.String(JOB_PREFIX) + "transcoder",
 				Image:       c.String(TRANSCODER_IMAGE),
 				CPURequests: c.String(TRANSCODER_CPU_REQUESTS),
 				CPULimits:   c.String(TRANSCODER_CPU_LIMITS),
-				Grace:       JOB_GRACE,
+				Grace:       c.Int(TRANSCODER_GRACE),
 			},
 		},
 		"vtt": &ConnectionConfig{
