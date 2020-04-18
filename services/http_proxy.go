@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	HTTP_PROXY_DIAL_TIMEOUT int = 10
+	HTTP_PROXY_DIAL_TIMEOUT int = 5
 	MAX_IDLE_CONNECTIONS    int = 20 * 5
 )
 

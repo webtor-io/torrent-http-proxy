@@ -38,6 +38,18 @@ func (s *GRPCProxy) get() *grpc.Server {
 	// grpc.EnableTracing = true
 	// grpc_logrus.ReplaceGrpcLogger(logger)
 
+	// retryOpts := []grpcretry.CallOption{
+	// 	grpcretry.WithPerRetryTimeout(3 * time.Second),
+	// 	grpcretry.WithBackoff(grpcretry.BackoffLinear(500 * time.Millisecond)),
+	// 	grpcretry.WithMax(3),
+	// }
+	grpcOpts := []grpc.DialOption{
+		grpc.WithCodec(proxy.Codec()),
+		grpc.WithInsecure(),
+		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
+		// grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
+	}
+
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
 		if len(md.Get("token")) == 0 || md.Get("token")[0] == "" {
@@ -89,8 +101,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		if loc.Unavailable {
 			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
 		}
-		conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC),
-			grpc.WithCodec(proxy.Codec()), grpc.WithInsecure())
+		conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), grpcOpts...)
 		if err != nil {
 			s.logger.Warn("Failed to dial location, try to refresh it")
 			loc, err := s.r.Resolve(src, s.logger, true, invoke, cl)
@@ -98,8 +109,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 				s.logger.WithError(err).Error("Failed to get new location")
 				return nil, nil, err
 			}
-			conn, err = grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC),
-				grpc.WithCodec(proxy.Codec()), grpc.WithInsecure())
+			conn, err = grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), grpcOpts...)
 			if err != nil {
 				s.logger.WithError(err).Error("Failed to dial with new address")
 				return nil, nil, err
