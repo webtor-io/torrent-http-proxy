@@ -425,20 +425,24 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.UseSnapshot,
 		},
 		{
-			Name:  "RESTIC_PASSWORD",
-			Value: s.cfg.ResticPassword,
-		},
-		{
-			Name:  "RESTIC_REPOSITORY",
-			Value: s.cfg.ResticRepository,
-		},
-		{
 			Name:  "AWS_ACCESS_KEY_ID",
 			Value: s.cfg.AWSAccessKeyID,
 		},
 		{
 			Name:  "AWS_SECRET_ACCESS_KEY",
 			Value: s.cfg.AWSSecretAccessKey,
+		},
+		{
+			Name:  "AWS_REGION",
+			Value: s.cfg.AWSRegion,
+		},
+		{
+			Name:  "AWS_BUCKET",
+			Value: s.cfg.AWSBucket,
+		},
+		{
+			Name:  "AWS_ENDPOINT",
+			Value: s.cfg.AWSEndpoint,
 		},
 	}
 	for k, v := range annotations {

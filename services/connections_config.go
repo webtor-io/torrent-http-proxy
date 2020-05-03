@@ -25,6 +25,9 @@ type JobConfig struct {
 	ResticRepository   string
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
+	AWSEndpoint        string
+	AWSRegion          string
+	AWSBucket          string
 }
 
 type ConnectionConfig struct {
@@ -80,10 +83,11 @@ const (
 	TRANSCODER_CPU_LIMITS   = "transcoder-cpu-limits"
 	TRANSCODER_GRACE        = "transcoder-grace"
 	USE_SNAPSHOT            = "use-snapshot"
-	RESTIC_PASSWORD         = "restic-pasword"
-	RESTIC_REPOSITORY       = "restic-repository"
 	AWS_ACCESS_KEY_ID       = "aws-access-key-id"
 	AWS_SECRET_ACCESS_KEY   = "aws-secret-access-key"
+	AWS_BUCKET              = "aws-bucket"
+	AWS_REGION              = "aws-region"
+	AWS_ENDPOINT            = "aws-endpoint"
 )
 
 func RegisterConnectionConfigFlags(c *cli.App) {
@@ -147,18 +151,6 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		EnvVar: "USE_SNAPSHOT",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   RESTIC_PASSWORD,
-		Usage:  "restic password",
-		Value:  "",
-		EnvVar: "RESTIC_PASSWORD",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   RESTIC_REPOSITORY,
-		Usage:  "restic repository",
-		Value:  "",
-		EnvVar: "RESTIC_REPOSITORY",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   AWS_ACCESS_KEY_ID,
 		Usage:  "AWS Access Key ID",
 		Value:  "",
@@ -169,6 +161,24 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "AWS Secret Access Key",
 		Value:  "",
 		EnvVar: "AWS_SECRET_ACCESS_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   AWS_BUCKET,
+		Usage:  "AWS Bucket",
+		Value:  "",
+		EnvVar: "AWS_BUCKET",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   AWS_ENDPOINT,
+		Usage:  "AWS Endpoint",
+		Value:  "",
+		EnvVar: "AWS_ENDPOINT",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   AWS_REGION,
+		Usage:  "AWS Region",
+		Value:  "",
+		EnvVar: "AWS_REGION",
 	})
 }
 
@@ -182,10 +192,11 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				Image:              c.String(SEEDER_IMAGE),
 				CPURequests:        c.String(SEEDER_CPU_REQUESTS),
 				CPULimits:          c.String(SEEDER_CPU_LIMITS),
-				ResticPassword:     c.String(RESTIC_PASSWORD),
-				ResticRepository:   c.String(RESTIC_REPOSITORY),
 				AWSAccessKeyID:     c.String(AWS_ACCESS_KEY_ID),
 				AWSSecretAccessKey: c.String(AWS_SECRET_ACCESS_KEY),
+				AWSBucket:          c.String(AWS_BUCKET),
+				AWSEndpoint:        c.String(AWS_ENDPOINT),
+				AWSRegion:          c.String(AWS_REGION),
 				UseSnapshot:        c.String(USE_SNAPSHOT),
 				Grace:              c.Int(SEEDER_GRACE),
 				IgnoredPaths:       []string{"/TorrentWebSeeder/StatStream"},
@@ -228,6 +239,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "VIDEO_INFO",
+			},
+		},
+		"tc": &ConnectionConfig{
+			Name:           "Torrent Web Cache",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "TORRENT_WEB_CACHE",
 			},
 		},
 		"abuse": &ConnectionConfig{
