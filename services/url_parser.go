@@ -118,7 +118,7 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 	if len(p) > 1 {
 		path += p[1]
 	}
-	path = filepath.Clean(path)
+	// path = filepath.Clean(path)
 	newPath, mod, err := s.extractMod(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to extract mod from path=%s", path)

@@ -1,3 +1,14 @@
 .git
 telepresence.log
 torrent-http-proxy
+.github
+.vscode
+.dockerignore
+*Dockerfile*
+up.sh
+README.md
+Makefile
+LICENSE
+.DS_Store
+torrent-http-proxy
+__debug_bin
