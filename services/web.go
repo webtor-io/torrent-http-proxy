@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -132,7 +131,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		clientName = cl.Name
 	}
 	headers := map[string]string{
-		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token + "&api-key=" + apiKey + "&invoke=" + strconv.FormatBool(invoke),
+		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
 		"X-Proxy-Url":  s.baseURL,
 		"X-Info-Hash":  src.InfoHash,
 		"X-Path":       src.Path,

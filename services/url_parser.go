@@ -25,6 +25,7 @@ type Source struct {
 	Path     string `json:"path"`
 	Token    string `json:"token"`
 	ApiKey   string `json:"api_key"`
+	Query    string `json:"query"`
 	Mod      *Mod
 }
 
@@ -128,6 +129,7 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 		Path:     newPath,
 		Token:    url.Query().Get("token"),
 		ApiKey:   url.Query().Get("api-key"),
+		Query:    url.RawQuery,
 		Type:     sourceType,
 		Mod:      mod,
 	}

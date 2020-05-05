@@ -59,7 +59,7 @@ func (s *Resolver) getInit(src *Source) *Init {
 				InfoHash:       src.InfoHash,
 				Path:           src.Path,
 				Extra:          src.Mod.Extra,
-				SourceURL:      s.baseURL + "/" + src.InfoHash + src.Path + "?token=" + src.Token + "&api-key=" + src.ApiKey,
+				SourceURL:      s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
 				RunIfNotExists: !s.cfg.GetMod(src.Mod.Type).CheckIgnorePaths(src.Mod.Path),
 			},
 			ConnectionConfig: s.cfg.GetMod(src.Mod.Type),
