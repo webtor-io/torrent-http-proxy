@@ -213,14 +213,14 @@ func (s *Web) Serve() error {
 			"Path":     src.Path,
 		})
 
-		if r.Header.Get("Origin") != "" {
-			w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		}
+		// if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// w.Header().Set("Access-Control-Allow-Credentials", "true")
+		// }
 
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id, Token, X-Grpc-Web, Api-Key")
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id, Token, X-Grpc-Web, Api-Key, Range")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			return
 		}
