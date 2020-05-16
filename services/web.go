@@ -219,7 +219,7 @@ func (s *Web) Serve() error {
 		}
 
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id,, Token, X-Grpc-Web, Api-Key")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id, Token, X-Grpc-Web, Api-Key")
 			w.Header().Set("Access-Control-Allow-Methods", "POST")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			return
