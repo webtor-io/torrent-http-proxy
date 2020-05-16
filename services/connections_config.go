@@ -241,6 +241,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "VIDEO_INFO",
 			},
 		},
+		"tracker": &ConnectionConfig{
+			Name:           "WebTorrent Tracker",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "WEBTORRENT_TRACKER",
+			},
+		},
 		"tc": &ConnectionConfig{
 			Name:           "Torrent Web Cache",
 			ConnectionType: ConnectionType_SERVICE,
