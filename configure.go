@@ -77,7 +77,7 @@ func run(c *cli.Context) error {
 	grpcProxyPool := s.NewHTTPGRPCProxyPool(claims, resolver)
 
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, k8sClient)
 	defer web.Close()
 
 	// Setting GRPC Proxy

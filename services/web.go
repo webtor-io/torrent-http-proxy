@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
@@ -23,6 +26,7 @@ type Web struct {
 	grpc           *HTTPGRPCProxyPool
 	baseURL        string
 	claims         *Claims
+	k8s            *K8SClient
 	redirect       bool
 	redirectPrefix string
 }
@@ -36,9 +40,9 @@ const (
 
 var hexIPPattern = regexp.MustCompile(`[^\.]*`)
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, k8s *K8SClient) *Web {
 	return &Web{host: c.String(WEB_HOST_FLAG), port: c.Int(WEB_PORT_FLAG),
-		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
+		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims, k8s: k8s,
 		redirect:       c.Bool(WEB_ORIGIN_HOST_REDIRECT_FLAG),
 		redirectPrefix: c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX_FLAG)}
 }
@@ -193,6 +197,47 @@ func (s *Web) Serve() error {
 	})
 	mux.HandleFunc("/liveness", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
+	})
+	mux.HandleFunc("/subdomains.json", func(w http.ResponseWriter, r *http.Request) {
+		apiKey := r.URL.Query().Get("api-key")
+		_, _, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
+		if err != nil {
+			logrus.WithError(err).Errorf("Failed to get claims")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		cl, err := s.k8s.Get()
+		if err != nil {
+			logrus.WithError(err).Error("Failed to get node client")
+			w.WriteHeader(500)
+			return
+		}
+		opts := metav1.ListOptions{}
+		nodes, err := cl.CoreV1().Nodes().List(opts)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to get node client")
+			w.WriteHeader(500)
+			return
+		}
+		res := []string{}
+		for _, n := range nodes.Items {
+			for _, a := range n.Status.Addresses {
+				if a.Type == corev1.NodeExternalIP {
+					byteIP := net.ParseIP(a.Address)
+					hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
+					res = append(res, s.redirectPrefix+hexIP)
+				}
+			}
+		}
+		json, err := json.Marshal(res)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to get node client")
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(json)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		logger := logrus.WithFields(logrus.Fields{
