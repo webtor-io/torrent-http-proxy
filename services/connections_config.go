@@ -241,6 +241,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "VIDEO_INFO",
 			},
 		},
+		"vtg": &ConnectionConfig{
+			Name:           "Video Thumbnails Generator",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "VIDEO_THUMBNAILS_GENERATOR",
+			},
+		},
 		"tracker": &ConnectionConfig{
 			Name:           "WebTorrent Tracker",
 			ConnectionType: ConnectionType_SERVICE,
