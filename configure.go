@@ -74,14 +74,14 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting GRPC Proxy Pool
-	grpcProxyPool := s.NewHTTPGRPCProxyPool(claims, resolver)
+	grpcProxyPool := s.NewHTTPGRPCProxyPool(baseURL, claims, resolver)
 
 	// Setting WebService
 	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, k8sClient)
 	defer web.Close()
 
 	// Setting GRPC Proxy
-	grpcProxy := s.NewGRPCProxy(claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
+	grpcProxy := s.NewGRPCProxy(baseURL, claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
 
 	// Setting GRPC Server
 	grpcServer := s.NewGRPCServer(c, grpcProxy)

@@ -19,18 +19,19 @@ import (
 )
 
 type GRPCProxy struct {
-	grpc   *grpc.Server
-	claims *Claims
-	inited bool
-	mux    sync.Mutex
-	logger *logrus.Entry
-	r      *Resolver
-	src    *Source
-	parser *URLParser
+	grpc    *grpc.Server
+	claims  *Claims
+	inited  bool
+	mux     sync.Mutex
+	logger  *logrus.Entry
+	r       *Resolver
+	src     *Source
+	parser  *URLParser
+	baseURL string
 }
 
-func NewGRPCProxy(claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
-	return &GRPCProxy{claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
+func NewGRPCProxy(bu string, claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
+	return &GRPCProxy{baseURL: bu, claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
 }
 
 func (s *GRPCProxy) get() *grpc.Server {
@@ -55,6 +56,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		if len(md.Get("token")) == 0 || md.Get("token")[0] == "" {
 			return nil, nil, errors.Errorf("No token provided")
 		}
+		token := md.Get("token")[0]
 		apiKey := ""
 		if len(md.Get("api-key")) != 0 {
 			apiKey = md.Get("api-key")[0]
@@ -69,12 +71,13 @@ func (s *GRPCProxy) get() *grpc.Server {
 		}
 		src := s.src
 		if path != "" && s.src == nil && s.parser != nil {
-			nu := &url.URL{
-				Path: path,
+			nu, err := url.Parse(path)
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "Failed to parse url from path %v", path)
 			}
 			src, err = s.parser.Parse(nu)
 			if err != nil {
-				return nil, nil, errors.Wrap(err, "Failed to parse path from metadata")
+				return nil, nil, errors.Wrapf(err, "Failed to parse path from metadata %v", path)
 			}
 		}
 		if src == nil {
@@ -87,6 +90,13 @@ func (s *GRPCProxy) get() *grpc.Server {
 		}
 		outCtx, _ := context.WithCancel(ctx)
 		mdCopy := md.Copy()
+		md.Set("source-url", s.baseURL+"/"+src.InfoHash+src.Path+"?"+src.Query)
+		md.Set("proxy-url", s.baseURL)
+		md.Set("info-hash", src.InfoHash)
+		md.Set("path", src.Path)
+		md.Set("token", token)
+		md.Set("api-key", apiKey)
+		md.Set("client", cl.Name)
 		delete(mdCopy, "user-agent")
 		// If this header is present in the request from the web client,
 		// the actual connection to the backend will not be established.

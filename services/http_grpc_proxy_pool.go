@@ -13,20 +13,21 @@ const (
 )
 
 type HTTPGRPCProxyPool struct {
-	sm     sync.Map
-	timers sync.Map
-	claims *Claims
-	expire time.Duration
-	r      *Resolver
+	sm      sync.Map
+	timers  sync.Map
+	claims  *Claims
+	expire  time.Duration
+	r       *Resolver
+	baseURL string
 }
 
-func NewHTTPGRPCProxyPool(claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
-	return &HTTPGRPCProxyPool{claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second, r: r}
+func NewHTTPGRPCProxyPool(bu string, claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
+	return &HTTPGRPCProxyPool{baseURL: bu, claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second, r: r}
 }
 
 func (s *HTTPGRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {
 	key := src.GetKey()
-	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.claims, s.r, src, nil, logger)))
+	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.baseURL, s.claims, s.r, src, nil, logger)))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {

@@ -220,6 +220,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "SRT2VTT",
 			},
 		},
+		"cp": &ConnectionConfig{
+			Name:           "Content Prober",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "CONTENT_PROBER",
+			},
+		},
 		"ext": &ConnectionConfig{
 			Name:           "External Proxy",
 			ConnectionType: ConnectionType_SERVICE,
