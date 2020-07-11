@@ -90,13 +90,13 @@ func (s *GRPCProxy) get() *grpc.Server {
 		}
 		outCtx, _ := context.WithCancel(ctx)
 		mdCopy := md.Copy()
-		md.Set("source-url", s.baseURL+"/"+src.InfoHash+src.Path+"?"+src.Query)
-		md.Set("proxy-url", s.baseURL)
-		md.Set("info-hash", src.InfoHash)
-		md.Set("path", src.Path)
-		md.Set("token", token)
-		md.Set("api-key", apiKey)
-		md.Set("client", cl.Name)
+		mdCopy.Set("source-url", s.baseURL+"/"+src.InfoHash+src.Path+"?"+src.Query)
+		mdCopy.Set("proxy-url", s.baseURL)
+		mdCopy.Set("info-hash", src.InfoHash)
+		mdCopy.Set("path", src.Path)
+		mdCopy.Set("token", token)
+		mdCopy.Set("api-key", apiKey)
+		mdCopy.Set("client", cl.Name)
 		delete(mdCopy, "user-agent")
 		// If this header is present in the request from the web client,
 		// the actual connection to the backend will not be established.
