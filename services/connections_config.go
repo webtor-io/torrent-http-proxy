@@ -255,6 +255,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "VIDEO_THUMBNAILS_GENERATOR",
 			},
 		},
+		"it": &ConnectionConfig{
+			Name:           "Image Transformer",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "IMAGE_TRANSFORMER",
+			},
+		},
 		"tracker": &ConnectionConfig{
 			Name:           "WebTorrent Tracker",
 			ConnectionType: ConnectionType_SERVICE,
