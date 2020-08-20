@@ -96,7 +96,11 @@ func (s *GRPCProxy) get() *grpc.Server {
 		mdCopy.Set("path", src.Path)
 		mdCopy.Set("token", token)
 		mdCopy.Set("api-key", apiKey)
-		mdCopy.Set("client", cl.Name)
+		clientName := "default"
+		if cl != nil {
+			clientName = cl.Name
+		}
+		mdCopy.Set("client", clientName)
 		delete(mdCopy, "user-agent")
 		// If this header is present in the request from the web client,
 		// the actual connection to the backend will not be established.

@@ -44,7 +44,6 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	clientName := "default"
 	if cl != nil {
 		clientName = cl.Name
-
 	}
 	logger = logger.WithFields(logrus.Fields{
 		"jobID":      key,
