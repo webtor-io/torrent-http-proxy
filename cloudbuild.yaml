@@ -13,15 +13,15 @@ steps:
   args: ["push", "rg.fr-par.scw.cloud/webtor/$REPO_NAME:$REVISION_ID"]
 - name: 'gcr.io/cloud-builders/docker'
   args: ["push", "rg.fr-par.scw.cloud/webtor/$REPO_NAME:latest"]
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: 'bash'
-  args:
-  - '-c'
-  - |
-    gcloud components install kubectl
-    gsutil cp gs://kube-key/kubeconfig .
-    export KUBECONFIG=kubeconfig
-    kubectl set image daemonset/torrent-http-proxy --namespace=webtor torrent-http-proxy=rg.fr-par.scw.cloud/webtor/$REPO_NAME:$REVISION_ID || exit 0
+# - name: 'gcr.io/cloud-builders/gcloud'
+#   entrypoint: 'bash'
+#   args:
+#   - '-c'
+#   - |
+#     gcloud components install kubectl
+#     gsutil cp gs://kube-key/kubeconfig .
+#     export KUBECONFIG=kubeconfig
+#     kubectl set image daemonset/torrent-http-proxy --namespace=webtor torrent-http-proxy=rg.fr-par.scw.cloud/webtor/$REPO_NAME:$REVISION_ID || exit 0
 secrets:
 - kmsKeyName: "projects/vibrant-arcanum-201111/locations/global/keyRings/my/cryptoKeys/my"
   secretEnv:

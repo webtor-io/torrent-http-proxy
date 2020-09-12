@@ -441,6 +441,10 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.AWSBucket,
 		},
 		{
+			Name:  "AWS_BUCKET_SPREAD",
+			Value: s.cfg.AWSBucketSpread,
+		},
+		{
 			Name:  "AWS_ENDPOINT",
 			Value: s.cfg.AWSEndpoint,
 		},
