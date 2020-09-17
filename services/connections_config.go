@@ -29,6 +29,7 @@ type JobConfig struct {
 	AWSRegion          string
 	AWSBucket          string
 	AWSBucketSpread    string
+	AWSNoSSL           string
 }
 
 type ConnectionConfig struct {
@@ -88,6 +89,7 @@ const (
 	AWS_SECRET_ACCESS_KEY   = "aws-secret-access-key"
 	AWS_BUCKET              = "aws-bucket"
 	AWS_BUCKET_SPREAD       = "aws-bucket-spread"
+	AWS_NO_SSL              = "aws-no-ssl"
 	AWS_REGION              = "aws-region"
 	AWS_ENDPOINT            = "aws-endpoint"
 )
@@ -174,6 +176,10 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Name:   AWS_BUCKET_SPREAD,
 		EnvVar: "AWS_BUCKET_SPREAD",
 	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   AWS_NO_SSL,
+		EnvVar: "AWS_NO_SSL",
+	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   AWS_ENDPOINT,
 		Usage:  "AWS Endpoint",
@@ -202,6 +208,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				AWSSecretAccessKey: c.String(AWS_SECRET_ACCESS_KEY),
 				AWSBucket:          c.String(AWS_BUCKET),
 				AWSBucketSpread:    c.String(AWS_BUCKET_SPREAD),
+				AWSNoSSL:           c.String(AWS_NO_SSL),
 				AWSEndpoint:        c.String(AWS_ENDPOINT),
 				AWSRegion:          c.String(AWS_REGION),
 				UseSnapshot:        c.String(USE_SNAPSHOT),

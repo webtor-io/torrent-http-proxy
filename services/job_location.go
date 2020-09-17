@@ -445,6 +445,10 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.AWSBucketSpread,
 		},
 		{
+			Name:  "AWS_NO_SSL",
+			Value: s.cfg.AWSNoSSL,
+		},
+		{
 			Name:  "AWS_ENDPOINT",
 			Value: s.cfg.AWSEndpoint,
 		},
