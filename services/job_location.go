@@ -121,6 +121,8 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
 		for _, a := range nodes.Items[0].Status.Addresses {
 			if a.Type == corev1.NodeExternalIP {
 				extIP = a.Address
+			} else if a.Type == corev1.NodeInternalIP {
+				extIP = a.Address
 			}
 		}
 	}
