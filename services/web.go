@@ -226,10 +226,6 @@ func (s *Web) Serve() error {
 					byteIP := net.ParseIP(a.Address)
 					hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
 					res = append(res, s.redirectPrefix+hexIP)
-				} else if a.Type == corev1.NodeInternalIP {
-					byteIP := net.ParseIP(a.Address)
-					hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
-					res = append(res, s.redirectPrefix+hexIP)
 				}
 			}
 		}
