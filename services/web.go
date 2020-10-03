@@ -17,57 +17,66 @@ import (
 )
 
 type Web struct {
-	host           string
-	port           int
-	ln             net.Listener
-	r              *Resolver
-	pr             *HTTPProxyPool
-	parser         *URLParser
-	grpc           *HTTPGRPCProxyPool
-	baseURL        string
-	claims         *Claims
-	k8s            *K8SClient
-	redirect       bool
-	redirectPrefix string
+	host                string
+	port                int
+	ln                  net.Listener
+	r                   *Resolver
+	pr                  *HTTPProxyPool
+	parser              *URLParser
+	grpc                *HTTPGRPCProxyPool
+	baseURL             string
+	claims              *Claims
+	k8s                 *K8SClient
+	redirect            bool
+	redirectPrefix      string
+	redirectAddressType string
 }
 
 const (
-	WEB_HOST_FLAG                        = "host"
-	WEB_PORT_FLAG                        = "port"
-	WEB_ORIGIN_HOST_REDIRECT_FLAG        = "origin-host-redirect"
-	WEB_ORIGIN_HOST_REDIRECT_PREFIX_FLAG = "origin-host-redirect-prefix"
+	WEB_HOST                              = "host"
+	WEB_PORT                              = "port"
+	WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE = "origin-host-redirect-address-type"
+	WEB_ORIGIN_HOST_REDIRECT              = "origin-host-redirect"
+	WEB_ORIGIN_HOST_REDIRECT_PREFIX       = "origin-host-redirect-prefix"
 )
 
 var hexIPPattern = regexp.MustCompile(`[^\.]*`)
 
 func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, k8s *K8SClient) *Web {
-	return &Web{host: c.String(WEB_HOST_FLAG), port: c.Int(WEB_PORT_FLAG),
+	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims, k8s: k8s,
-		redirect:       c.Bool(WEB_ORIGIN_HOST_REDIRECT_FLAG),
-		redirectPrefix: c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX_FLAG)}
+		redirect:            c.Bool(WEB_ORIGIN_HOST_REDIRECT),
+		redirectPrefix:      c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX),
+		redirectAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE)}
 }
 
 func RegisterWebFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:  WEB_HOST_FLAG,
+		Name:  WEB_HOST,
 		Usage: "listening host",
 		Value: "",
 	})
 	c.Flags = append(c.Flags, cli.IntFlag{
-		Name:  WEB_PORT_FLAG,
+		Name:  WEB_PORT,
 		Usage: "http listening port",
 		Value: 8080,
 	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_FLAG,
+		Name:   WEB_ORIGIN_HOST_REDIRECT,
 		Usage:  "redirects requests to origin host",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_FLAG",
+		EnvVar: "WEB_ORIGIN_HOST_REDIRECT",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_PREFIX_FLAG,
+		Name:   WEB_ORIGIN_HOST_REDIRECT_PREFIX,
 		Usage:  "subdomain prefix of host to be redirected",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_PREFIX_FLAG",
+		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_PREFIX",
 		Value:  "abra--",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE,
+		Usage:  "preferred node address type",
+		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE",
+		Value:  "ExternalIP",
 	})
 }
 
@@ -222,7 +231,7 @@ func (s *Web) Serve() error {
 		res := []string{}
 		for _, n := range nodes.Items {
 			for _, a := range n.Status.Addresses {
-				if a.Type == corev1.NodeExternalIP {
+				if a.Type == corev1.NodeAddressType(s.redirectAddressType) {
 					byteIP := net.ParseIP(a.Address)
 					hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
 					res = append(res, s.redirectPrefix+hexIP)

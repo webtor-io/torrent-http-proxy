@@ -41,22 +41,23 @@ const (
 )
 
 type JobLocation struct {
-	id        string
-	cl        *K8SClient
-	loc       *Location
-	finish    chan error
-	cfg       *JobConfig
-	pod       *corev1.Pod
-	params    *InitParams
-	inited    bool
-	err       error
-	mux       sync.Mutex
-	logger    *logrus.Entry
-	l         *Locker
-	naKey     string
-	naVal     string
-	namespace string
-	acl       *Client
+	id             string
+	cl             *K8SClient
+	loc            *Location
+	finish         chan error
+	cfg            *JobConfig
+	pod            *corev1.Pod
+	params         *InitParams
+	inited         bool
+	err            error
+	mux            sync.Mutex
+	logger         *logrus.Entry
+	l              *Locker
+	naKey          string
+	naVal          string
+	namespace      string
+	extAddressType string
+	acl            *Client
 }
 
 func RegisterJobFlags(c *cli.App) {
@@ -83,7 +84,8 @@ func RegisterJobFlags(c *cli.App) {
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
-		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE), namespace: c.String(JOB_NAMESPACE)}
+		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
+		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE)}
 }
 
 func isPodFinished(pod *corev1.Pod) bool {
@@ -119,7 +121,7 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
 	}
 	if err == nil && len(nodes.Items) > 0 {
 		for _, a := range nodes.Items[0].Status.Addresses {
-			if a.Type == corev1.NodeExternalIP {
+			if a.Type == corev1.NodeAddressType(s.extAddressType) {
 				extIP = a.Address
 			}
 		}
