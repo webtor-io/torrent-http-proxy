@@ -230,6 +230,15 @@ func (s *Web) Serve() error {
 		}
 		res := []string{}
 		for _, n := range nodes.Items {
+			ready := false
+			for _, c := range n.Status.Conditions {
+				if c.Status == corev1.ConditionTrue && c.Type == corev1.NodeReady {
+					ready = true
+				}
+			}
+			if !ready {
+				continue
+			}
 			for _, a := range n.Status.Addresses {
 				if a.Type == corev1.NodeAddressType(s.redirectAddressType) {
 					byteIP := net.ParseIP(a.Address)
