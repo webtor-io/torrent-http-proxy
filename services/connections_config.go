@@ -14,22 +14,24 @@ type ServiceConfig struct {
 }
 
 type JobConfig struct {
-	Name               string
-	Image              string
-	CPURequests        string
-	CPULimits          string
-	Grace              int
-	IgnoredPaths       []string
-	UseSnapshot        string
-	ResticPassword     string
-	ResticRepository   string
-	AWSAccessKeyID     string
-	AWSSecretAccessKey string
-	AWSEndpoint        string
-	AWSRegion          string
-	AWSBucket          string
-	AWSBucketSpread    string
-	AWSNoSSL           string
+	Name                               string
+	Image                              string
+	CPURequests                        string
+	CPULimits                          string
+	Grace                              int
+	IgnoredPaths                       []string
+	UseSnapshot                        string
+	SnapshotStartFullDownloadThreshold float64
+	SnapshotStartThreshold             float64
+	ResticPassword                     string
+	ResticRepository                   string
+	AWSAccessKeyID                     string
+	AWSSecretAccessKey                 string
+	AWSEndpoint                        string
+	AWSRegion                          string
+	AWSBucket                          string
+	AWSBucketSpread                    string
+	AWSNoSSL                           string
 }
 
 type ConnectionConfig struct {
@@ -75,23 +77,25 @@ func (s *JobConfig) CheckIgnorePaths(name string) bool {
 }
 
 const (
-	JOB_PREFIX              = "job-prefix"
-	SEEDER_IMAGE            = "seeder-image"
-	SEEDER_CPU_REQUESTS     = "seeder-cpu-requests"
-	SEEDER_CPU_LIMITS       = "seeder-cpu-limits"
-	SEEDER_GRACE            = "seeder-grace"
-	TRANSCODER_IMAGE        = "transcoder-image"
-	TRANSCODER_CPU_REQUESTS = "transcoder-cpu-requests"
-	TRANSCODER_CPU_LIMITS   = "transcoder-cpu-limits"
-	TRANSCODER_GRACE        = "transcoder-grace"
-	USE_SNAPSHOT            = "use-snapshot"
-	AWS_ACCESS_KEY_ID       = "aws-access-key-id"
-	AWS_SECRET_ACCESS_KEY   = "aws-secret-access-key"
-	AWS_BUCKET              = "aws-bucket"
-	AWS_BUCKET_SPREAD       = "aws-bucket-spread"
-	AWS_NO_SSL              = "aws-no-ssl"
-	AWS_REGION              = "aws-region"
-	AWS_ENDPOINT            = "aws-endpoint"
+	JOB_PREFIX                             = "job-prefix"
+	SEEDER_IMAGE                           = "seeder-image"
+	SEEDER_CPU_REQUESTS                    = "seeder-cpu-requests"
+	SEEDER_CPU_LIMITS                      = "seeder-cpu-limits"
+	SEEDER_GRACE                           = "seeder-grace"
+	TRANSCODER_IMAGE                       = "transcoder-image"
+	TRANSCODER_CPU_REQUESTS                = "transcoder-cpu-requests"
+	TRANSCODER_CPU_LIMITS                  = "transcoder-cpu-limits"
+	TRANSCODER_GRACE                       = "transcoder-grace"
+	USE_SNAPSHOT                           = "use-snapshot"
+	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
+	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
+	AWS_ACCESS_KEY_ID                      = "aws-access-key-id"
+	AWS_SECRET_ACCESS_KEY                  = "aws-secret-access-key"
+	AWS_BUCKET                             = "aws-bucket"
+	AWS_BUCKET_SPREAD                      = "aws-bucket-spread"
+	AWS_NO_SSL                             = "aws-no-ssl"
+	AWS_REGION                             = "aws-region"
+	AWS_ENDPOINT                           = "aws-endpoint"
 )
 
 func RegisterConnectionConfigFlags(c *cli.App) {
@@ -154,6 +158,16 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "use snapshot",
 		EnvVar: "USE_SNAPSHOT",
 	})
+	c.Flags = append(c.Flags, cli.Float64Flag{
+		Name:   SNAPSHOT_START_THRESHOLD,
+		Value:  0.5,
+		EnvVar: "SNAPSHOT_START_THRESHOLD",
+	})
+	c.Flags = append(c.Flags, cli.Float64Flag{
+		Name:   SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD,
+		Value:  0.75,
+		EnvVar: "SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD",
+	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   AWS_ACCESS_KEY_ID,
 		Usage:  "AWS Access Key ID",
@@ -200,20 +214,22 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "Torrent Web Seeder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
-				Name:               c.String(JOB_PREFIX) + "seeder",
-				Image:              c.String(SEEDER_IMAGE),
-				CPURequests:        c.String(SEEDER_CPU_REQUESTS),
-				CPULimits:          c.String(SEEDER_CPU_LIMITS),
-				AWSAccessKeyID:     c.String(AWS_ACCESS_KEY_ID),
-				AWSSecretAccessKey: c.String(AWS_SECRET_ACCESS_KEY),
-				AWSBucket:          c.String(AWS_BUCKET),
-				AWSBucketSpread:    c.String(AWS_BUCKET_SPREAD),
-				AWSNoSSL:           c.String(AWS_NO_SSL),
-				AWSEndpoint:        c.String(AWS_ENDPOINT),
-				AWSRegion:          c.String(AWS_REGION),
-				UseSnapshot:        c.String(USE_SNAPSHOT),
-				Grace:              c.Int(SEEDER_GRACE),
-				IgnoredPaths:       []string{"/TorrentWebSeeder/StatStream"},
+				Name:                               c.String(JOB_PREFIX) + "seeder",
+				Image:                              c.String(SEEDER_IMAGE),
+				CPURequests:                        c.String(SEEDER_CPU_REQUESTS),
+				CPULimits:                          c.String(SEEDER_CPU_LIMITS),
+				AWSAccessKeyID:                     c.String(AWS_ACCESS_KEY_ID),
+				AWSSecretAccessKey:                 c.String(AWS_SECRET_ACCESS_KEY),
+				AWSBucket:                          c.String(AWS_BUCKET),
+				AWSBucketSpread:                    c.String(AWS_BUCKET_SPREAD),
+				AWSNoSSL:                           c.String(AWS_NO_SSL),
+				AWSEndpoint:                        c.String(AWS_ENDPOINT),
+				AWSRegion:                          c.String(AWS_REGION),
+				UseSnapshot:                        c.String(USE_SNAPSHOT),
+				SnapshotStartThreshold:             c.Float64(SNAPSHOT_START_THRESHOLD),
+				SnapshotStartFullDownloadThreshold: c.Float64(SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD),
+				Grace:                              c.Int(SEEDER_GRACE),
+				IgnoredPaths:                       []string{"/TorrentWebSeeder/StatStream"},
 			},
 		},
 		"hls": &ConnectionConfig{
