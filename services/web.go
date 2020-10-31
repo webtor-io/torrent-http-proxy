@@ -116,12 +116,26 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 	u.Path = originalPath
 	return u.String(), nil
 }
+func (s *Web) getIP(r *http.Request) string {
+	forwarded := r.Header.Get("X-FORWARDED-FOR")
+	if forwarded != "" {
+		return forwarded
+	}
+	return r.RemoteAddr
+}
 
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
 	apiKey := r.URL.Query().Get("api-key")
 	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get claims")
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	remoteAddress, raOK := claims["remoteAddress"].(string)
+	ua, uaOK := claims["agent"].(string)
+	if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
+		logger.Warningf("IP and UA changed, so deny access")
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
