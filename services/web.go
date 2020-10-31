@@ -132,12 +132,15 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	remoteAddress, raOK := claims["remoteAddress"].(string)
-	ua, uaOK := claims["agent"].(string)
-	if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
-		logger.Warningf("IP and UA changed, so deny access")
-		w.WriteHeader(http.StatusForbidden)
-		return
+	if r.Header.Get("X-FORWARDED-FOR") != "" {
+		remoteAddress, raOK := claims["remoteAddress"].(string)
+		ua, uaOK := claims["agent"].(string)
+		if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
+			logger.Warningf("IP and UA changed, got ua=%v ip=%v, expected ua=%v ip=%v so deny access",
+				r.Header.Get("User-Agent"), s.getIP(r), ua, remoteAddress)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 	}
 	invoke := true
 	if r.URL.Query().Get("invoke") == "false" {
