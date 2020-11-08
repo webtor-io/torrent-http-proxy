@@ -165,6 +165,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Proxy-Url":  s.baseURL,
 		"X-Info-Hash":  src.InfoHash,
 		"X-Path":       src.Path,
+		"X-Full-Path":  "/" + src.InfoHash + src.Path,
 		"X-Token":      src.Token,
 		"X-Api-Key":    apiKey,
 		"X-Client":     clientName,
