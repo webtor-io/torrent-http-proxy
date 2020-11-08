@@ -80,16 +80,12 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
-func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool, cl *Client) (string, error) {
+func (s *Web) getRedirectURL(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool, cl *Client) (string, error) {
 	if !s.redirect {
 		return "", nil
 	}
 	h := r.Host
 	parts := strings.Split(h, ":")
-	// Skip internal requests
-	if net.ParseIP(parts[0]) != nil {
-		return "", nil
-	}
 	loc, err := s.r.Resolve(src, logger, false, invoke, cl)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to resolve location")
@@ -99,6 +95,11 @@ func (s *Web) getRedirectURL(r *http.Request, src *Source, logger *logrus.Entry,
 	}
 	u := r.URL
 	ip := loc.HostIP
+	w.Header().Set("X-Job-Host-Ip", fmt.Sprintf("%v", ip))
+	// Skip internal requests
+	if net.ParseIP(parts[0]) != nil {
+		return "", nil
+	}
 	hexIP := fmt.Sprintf("%02x%02x%02x%02x", ip[12], ip[13], ip[14], ip[15])
 	if !strings.HasPrefix(h, s.redirectPrefix) {
 		u := r.URL
@@ -146,7 +147,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	ru, err := s.getRedirectURL(r, src, logger, originalPath, newPath, invoke, cl)
+	ru, err := s.getRedirectURL(w, r, src, logger, originalPath, newPath, invoke, cl)
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to get redirect url")
 		w.WriteHeader(http.StatusInternalServerError)
