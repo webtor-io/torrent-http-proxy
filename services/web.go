@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -166,7 +167,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Proxy-Url":  s.baseURL,
 		"X-Info-Hash":  src.InfoHash,
 		"X-Path":       src.Path,
-		"X-Full-Path":  "/" + src.InfoHash + src.Path,
+		"X-Full-Path":  "/" + src.InfoHash + "/" + url.PathEscape(strings.TrimPrefix(src.Path, "/")),
 		"X-Token":      src.Token,
 		"X-Api-Key":    apiKey,
 		"X-Client":     clientName,
