@@ -81,6 +81,19 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
+func (s *Web) setJobHostIPHeader(w http.ResponseWriter, r *http.Request, logger *logrus.Entry, src *Source, invoke bool, cl *Client) error {
+	loc, err := s.r.Resolve(src, logger, false, invoke, cl)
+	if err != nil {
+		return errors.Wrap(err, "Failed to resolve location")
+	}
+	if loc.Unavailable || loc.HostIP == nil {
+		return nil
+	}
+	ip := loc.HostIP
+	w.Header().Set("X-Job-Host-Ip", fmt.Sprintf("%v", ip))
+	return nil
+}
+
 func (s *Web) getRedirectURL(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool, cl *Client) (string, error) {
 	if !s.redirect {
 		return "", nil
@@ -148,16 +161,22 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	ru, err := s.getRedirectURL(w, r, src, logger, originalPath, newPath, invoke, cl)
+	err = s.setJobHostIPHeader(w, r, logger, src, invoke, cl)
 	if err != nil {
-		logger.WithError(err).Errorf("Failed to get redirect url")
+		logger.WithError(err).Errorf("Failed to set job host ip")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	if ru != "" {
-		http.Redirect(w, r, ru, 302)
-		return
-	}
+	// ru, err := s.getRedirectURL(w, r, src, logger, originalPath, newPath, invoke, cl)
+	// if err != nil {
+	// 	logger.WithError(err).Errorf("Failed to get redirect url")
+	// 	w.WriteHeader(http.StatusInternalServerError)
+	// 	return
+	// }
+	// if ru != "" {
+	// 	http.Redirect(w, r, ru, 302)
+	// 	return
+	// }
 	clientName := "default"
 	if cl != nil {
 		clientName = cl.Name
