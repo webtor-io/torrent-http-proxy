@@ -161,12 +161,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	err = s.setJobHostIPHeader(w, r, logger, src, invoke, cl)
-	if err != nil {
-		logger.WithError(err).Errorf("Failed to set job host ip")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	// err = s.setJobHostIPHeader(w, r, logger, src, invoke, cl)
+	// if err != nil {
+	// 	logger.WithError(err).Errorf("Failed to set job host ip")
+	// 	w.WriteHeader(http.StatusInternalServerError)
+	// 	return
+	// }
 	// ru, err := s.getRedirectURL(w, r, src, logger, originalPath, newPath, invoke, cl)
 	// if err != nil {
 	// 	logger.WithError(err).Errorf("Failed to get redirect url")
