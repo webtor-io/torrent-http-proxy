@@ -280,7 +280,7 @@ func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 	aff := []corev1.PreferredSchedulingTerm{}
 	if s.ra && s.nn != "" {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
-			Weight: 5,
+			Weight: 100,
 			Preference: corev1.NodeSelectorTerm{
 				MatchFields: []corev1.NodeSelectorRequirement{
 					{
@@ -520,7 +520,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 						PodAffinity: &corev1.PodAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
 								{
-									Weight: 10,
+									Weight: 50,
 									PodAffinityTerm: corev1.PodAffinityTerm{
 										LabelSelector: &metav1.LabelSelector{
 											MatchLabels: map[string]string{
