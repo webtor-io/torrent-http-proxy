@@ -31,6 +31,9 @@ type Web struct {
 	redirect            bool
 	redirectPrefix      string
 	redirectAddressType string
+	jobNamespace        string
+	naKey               string
+	naVal               string
 }
 
 const (
@@ -48,7 +51,11 @@ func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims, k8s: k8s,
 		redirect:            c.Bool(WEB_ORIGIN_HOST_REDIRECT),
 		redirectPrefix:      c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX),
-		redirectAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE)}
+		redirectAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		jobNamespace:        c.String(JOB_NAMESPACE),
+		naKey:               c.String(JOB_NODE_AFFINITY_KEY),
+		naVal:               c.String(JOB_NODE_AFFINITY_VALUE),
+	}
 }
 
 func RegisterWebFlags(c *cli.App) {
@@ -81,56 +88,6 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
-func (s *Web) setJobHostIPHeader(w http.ResponseWriter, r *http.Request, logger *logrus.Entry, src *Source, invoke bool, cl *Client) error {
-	loc, err := s.r.Resolve(src, logger, false, invoke, cl)
-	if err != nil {
-		return errors.Wrap(err, "Failed to resolve location")
-	}
-	if loc.Unavailable || loc.HostIP == nil {
-		return nil
-	}
-	ip := loc.HostIP
-	w.Header().Set("X-Job-Host-Ip", fmt.Sprintf("%v", ip))
-	return nil
-}
-
-func (s *Web) getRedirectURL(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string, invoke bool, cl *Client) (string, error) {
-	if !s.redirect {
-		return "", nil
-	}
-	h := r.Host
-	parts := strings.Split(h, ":")
-	loc, err := s.r.Resolve(src, logger, false, invoke, cl)
-	if err != nil {
-		return "", errors.Wrap(err, "Failed to resolve location")
-	}
-	if loc.Unavailable || loc.HostIP == nil {
-		return "", nil
-	}
-	u := r.URL
-	ip := loc.HostIP
-	w.Header().Set("X-Job-Host-Ip", fmt.Sprintf("%v", ip))
-	// Skip internal requests
-	if net.ParseIP(parts[0]) != nil {
-		return "", nil
-	}
-	hexIP := fmt.Sprintf("%02x%02x%02x%02x", ip[12], ip[13], ip[14], ip[15])
-	if !strings.HasPrefix(h, s.redirectPrefix) {
-		u := r.URL
-		u.Host = s.redirectPrefix + hexIP + "." + h
-	}
-	u.Path = "/liveness"
-	u.Scheme = "https"
-	pu := u.String()
-	resp, err := http.Get(pu)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		u.Path = newPath
-		logger.WithError(err).WithField("probe_url", pu).Error("Liveness probe is not OK")
-		return "", nil
-	}
-	u.Path = originalPath
-	return u.String(), nil
-}
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
@@ -161,22 +118,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-	// err = s.setJobHostIPHeader(w, r, logger, src, invoke, cl)
-	// if err != nil {
-	// 	logger.WithError(err).Errorf("Failed to set job host ip")
-	// 	w.WriteHeader(http.StatusInternalServerError)
-	// 	return
-	// }
-	// ru, err := s.getRedirectURL(w, r, src, logger, originalPath, newPath, invoke, cl)
-	// if err != nil {
-	// 	logger.WithError(err).Errorf("Failed to get redirect url")
-	// 	w.WriteHeader(http.StatusInternalServerError)
-	// 	return
-	// }
-	// if ru != "" {
-	// 	http.Redirect(w, r, ru, 302)
-	// 	return
-	// }
+
 	clientName := "default"
 	if cl != nil {
 		clientName = cl.Name
@@ -256,11 +198,29 @@ func (s *Web) Serve() error {
 		}
 		cl, err := s.k8s.Get()
 		if err != nil {
-			logrus.WithError(err).Error("Failed to get node client")
+			logrus.WithError(err).Error("Failed to get k8s client")
 			w.WriteHeader(500)
 			return
 		}
+		nodeNames := []string{}
+		if r.URL.Query().Get("infohash") != "" {
+			opts := metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("info-hash=%v", r.URL.Query().Get("infohash")),
+			}
+			pods, err := cl.CoreV1().Pods(s.jobNamespace).List(opts)
+			if err != nil {
+				logrus.WithError(err).Error("Failed to find active job")
+			}
+			for _, p := range pods.Items {
+				if p.Status.Phase != corev1.PodFailed {
+					nodeNames = append(nodeNames, p.Spec.NodeName)
+				}
+			}
+		}
 		opts := metav1.ListOptions{}
+		if s.naKey != "" && s.naVal != "" && len(nodeNames) == 0 {
+			opts.LabelSelector = fmt.Sprintf("%v=%v", s.naKey, s.naVal)
+		}
 		nodes, err := cl.CoreV1().Nodes().List(opts)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to get node client")
@@ -277,6 +237,17 @@ func (s *Web) Serve() error {
 			}
 			if !ready {
 				continue
+			}
+			if len(nodeNames) > 0 {
+				exist := false
+				for _, nn := range nodeNames {
+					if nn == n.Name {
+						exist = true
+					}
+				}
+				if !exist {
+					continue
+				}
 			}
 			for _, a := range n.Status.Addresses {
 				if a.Type == corev1.NodeAddressType(s.redirectAddressType) {

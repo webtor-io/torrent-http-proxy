@@ -38,6 +38,8 @@ const (
 	JOB_NODE_AFFINITY_KEY   = "job-node-affinity-key"
 	JOB_NODE_AFFINITY_VALUE = "job-node-affinity-value"
 	JOB_NAMESPACE           = "job-namespace"
+	JOB_REQUEST_AFFINITY    = "job-request-affinity"
+	MY_NODE_NAME            = "my-node-name"
 )
 
 type JobLocation struct {
@@ -58,6 +60,8 @@ type JobLocation struct {
 	namespace      string
 	extAddressType string
 	acl            *Client
+	ra             bool
+	nn             string
 }
 
 func RegisterJobFlags(c *cli.App) {
@@ -79,13 +83,26 @@ func RegisterJobFlags(c *cli.App) {
 		Value:  "webtor",
 		EnvVar: "JOB_NAMESPACE",
 	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   JOB_REQUEST_AFFINITY,
+		Usage:  "Job request affinity",
+		EnvVar: "JOB_REQUEST_AFFINITY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MY_NODE_NAME,
+		Usage:  "My node name",
+		Value:  "",
+		EnvVar: "MY_NODE_NAME",
+	})
 }
 
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
 		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
-		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE)}
+		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		ra: c.Bool(JOB_REQUEST_AFFINITY), nn: c.String(MY_NODE_NAME),
+	}
 }
 
 func isPodFinished(pod *corev1.Pod) bool {
@@ -261,20 +278,34 @@ func (s *JobLocation) makeNodeSelector() map[string]string {
 
 func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 	aff := []corev1.PreferredSchedulingTerm{}
-	if s.naKey != "" && s.naVal != "" {
+	if s.ra && s.nn != "" {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
-			Weight: 1,
+			Weight: 5,
 			Preference: corev1.NodeSelectorTerm{
-				MatchExpressions: []corev1.NodeSelectorRequirement{
+				MatchFields: []corev1.NodeSelectorRequirement{
 					{
-						Key:      s.naKey,
+						Key:      "metadata.name",
 						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{s.naVal},
+						Values:   []string{s.nn},
 					},
 				},
 			},
 		})
 	}
+	// if s.naKey != "" && s.naVal != "" {
+	// 	aff = append(aff, corev1.PreferredSchedulingTerm{
+	// 		Weight: 1,
+	// 		Preference: corev1.NodeSelectorTerm{
+	// 			MatchExpressions: []corev1.NodeSelectorRequirement{
+	// 				{
+	// 					Key:      s.naKey,
+	// 					Operator: corev1.NodeSelectorOpIn,
+	// 					Values:   []string{s.naVal},
+	// 				},
+	// 			},
+	// 		},
+	// 	})
+	// }
 	return aff
 }
 
@@ -489,7 +520,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 						PodAffinity: &corev1.PodAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
 								{
-									Weight: 5,
+									Weight: 10,
 									PodAffinityTerm: corev1.PodAffinityTerm{
 										LabelSelector: &metav1.LabelSelector{
 											MatchLabels: map[string]string{
@@ -501,9 +532,9 @@ func (s *JobLocation) invoke() (*Location, error) {
 								},
 							},
 						},
-						// NodeAffinity: &corev1.NodeAffinity{
-						// 	PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
-						// },
+						NodeAffinity: &corev1.NodeAffinity{
+							PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
+						},
 					},
 					Containers: []corev1.Container{
 						{
