@@ -49,7 +49,7 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 	index := strings.LastIndex(path, "~")
 	first := path[:index]
 	last := path[index+1:]
-	path = first
+	newPath := first
 	p := strings.SplitN(last, "/", 2)
 	t := p[0]
 	ee := strings.SplitN(t, ":", 2)
@@ -81,7 +81,7 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 		Path:  modPath,
 		Extra: e,
 	}
-	return path, m, nil
+	return newPath, m, nil
 }
 
 type URLParser struct {
