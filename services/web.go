@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -203,7 +205,8 @@ func (s *Web) Serve() error {
 			return
 		}
 		nodeNames := []string{}
-		if r.URL.Query().Get("infohash") != "" {
+		infoHash := r.URL.Query().Get("infohash")
+		if infoHash != "" {
 			opts := metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("info-hash=%v", r.URL.Query().Get("infohash")),
 			}
@@ -256,6 +259,26 @@ func (s *Web) Serve() error {
 					res = append(res, s.redirectPrefix+hexIP)
 				}
 			}
+		}
+		sort.Strings(res)
+		if len(nodeNames) == 0 && len(res) > 1 && infoHash != "" {
+			hex := infoHash[0:5]
+			num, err := strconv.ParseInt(hex, 16, 64)
+			if err != nil {
+				logrus.WithError(err).Errorf("Failed to parse hex from infohash=%v", infoHash)
+				w.WriteHeader(500)
+				return
+			}
+			total := 1048575
+			interval := int64(total / len(res))
+			t := 0
+			for i := 0; i < len(res); i++ {
+				if num < (int64(i)+1)*interval {
+					t = i
+					break
+				}
+			}
+			res = []string{res[t]}
 		}
 		json, err := json.Marshal(res)
 		if err != nil {
