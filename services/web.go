@@ -6,57 +6,36 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
 
 type Web struct {
-	host                string
-	port                int
-	ln                  net.Listener
-	r                   *Resolver
-	pr                  *HTTPProxyPool
-	parser              *URLParser
-	grpc                *HTTPGRPCProxyPool
-	baseURL             string
-	claims              *Claims
-	k8s                 *K8SClient
-	redirect            bool
-	redirectPrefix      string
-	redirectAddressType string
-	jobNamespace        string
-	naKey               string
-	naVal               string
+	host       string
+	port       int
+	ln         net.Listener
+	r          *Resolver
+	pr         *HTTPProxyPool
+	parser     *URLParser
+	grpc       *HTTPGRPCProxyPool
+	subdomains *SubdomainsPool
+	baseURL    string
+	claims     *Claims
 }
 
 const (
-	WEB_HOST                              = "host"
-	WEB_PORT                              = "port"
-	WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE = "origin-host-redirect-address-type"
-	WEB_ORIGIN_HOST_REDIRECT              = "origin-host-redirect"
-	WEB_ORIGIN_HOST_REDIRECT_PREFIX       = "origin-host-redirect-prefix"
+	WEB_HOST = "host"
+	WEB_PORT = "port"
 )
 
-var hexIPPattern = regexp.MustCompile(`[^\.]*`)
-
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, k8s *K8SClient) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
-		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims, k8s: k8s,
-		redirect:            c.Bool(WEB_ORIGIN_HOST_REDIRECT),
-		redirectPrefix:      c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX),
-		redirectAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
-		jobNamespace:        c.String(JOB_NAMESPACE),
-		naKey:               c.String(JOB_NODE_AFFINITY_KEY),
-		naVal:               c.String(JOB_NODE_AFFINITY_VALUE),
+		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
+		subdomains: subs,
 	}
 }
 
@@ -70,23 +49,6 @@ func RegisterWebFlags(c *cli.App) {
 		Name:  WEB_PORT,
 		Usage: "http listening port",
 		Value: 8080,
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT,
-		Usage:  "redirects requests to origin host",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_PREFIX,
-		Usage:  "subdomain prefix of host to be redirected",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_PREFIX",
-		Value:  "abra--",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE,
-		Usage:  "preferred node address type",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE",
-		Value:  "ExternalIP",
 	})
 }
 
@@ -165,9 +127,6 @@ func (s *Web) Serve() error {
 	}
 	s.ln = ln
 	mux := http.NewServeMux()
-	if s.redirect {
-		logrus.Infof("Redirecting enabled with prefix=%s", s.redirectPrefix)
-	}
 
 	var ip net.IP
 	ifaces, _ := net.Interfaces()
@@ -198,91 +157,15 @@ func (s *Web) Serve() error {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		cl, err := s.k8s.Get()
+		subs, err := s.subdomains.Get(r.URL.Query().Get("infohash"))
 		if err != nil {
-			logrus.WithError(err).Error("Failed to get k8s client")
+			logrus.WithError(err).Error("Failed to get subdomains")
 			w.WriteHeader(500)
 			return
 		}
-		nodeNames := []string{}
-		infoHash := r.URL.Query().Get("infohash")
-		if infoHash != "" {
-			opts := metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("info-hash=%v", r.URL.Query().Get("infohash")),
-			}
-			pods, err := cl.CoreV1().Pods(s.jobNamespace).List(opts)
-			if err != nil {
-				logrus.WithError(err).Error("Failed to find active job")
-			}
-			for _, p := range pods.Items {
-				if p.Status.Phase != corev1.PodFailed {
-					nodeNames = append(nodeNames, p.Spec.NodeName)
-				}
-			}
-		}
-		opts := metav1.ListOptions{}
-		if s.naKey != "" && s.naVal != "" && len(nodeNames) == 0 {
-			opts.LabelSelector = fmt.Sprintf("%v=%v", s.naKey, s.naVal)
-		}
-		nodes, err := cl.CoreV1().Nodes().List(opts)
+		json, err := json.Marshal(subs)
 		if err != nil {
-			logrus.WithError(err).Error("Failed to get node client")
-			w.WriteHeader(500)
-			return
-		}
-		res := []string{}
-		for _, n := range nodes.Items {
-			ready := false
-			for _, c := range n.Status.Conditions {
-				if c.Status == corev1.ConditionTrue && c.Type == corev1.NodeReady {
-					ready = true
-				}
-			}
-			if !ready {
-				continue
-			}
-			if len(nodeNames) > 0 {
-				exist := false
-				for _, nn := range nodeNames {
-					if nn == n.Name {
-						exist = true
-					}
-				}
-				if !exist {
-					continue
-				}
-			}
-			for _, a := range n.Status.Addresses {
-				if a.Type == corev1.NodeAddressType(s.redirectAddressType) {
-					byteIP := net.ParseIP(a.Address)
-					hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
-					res = append(res, s.redirectPrefix+hexIP)
-				}
-			}
-		}
-		sort.Strings(res)
-		if len(nodeNames) == 0 && len(res) > 1 && infoHash != "" {
-			hex := infoHash[0:5]
-			num, err := strconv.ParseInt(hex, 16, 64)
-			if err != nil {
-				logrus.WithError(err).Errorf("Failed to parse hex from infohash=%v", infoHash)
-				w.WriteHeader(500)
-				return
-			}
-			total := 1048575
-			interval := int64(total / len(res))
-			t := 0
-			for i := 0; i < len(res); i++ {
-				if num < (int64(i)+1)*interval {
-					t = i
-					break
-				}
-			}
-			res = []string{res[t]}
-		}
-		json, err := json.Marshal(res)
-		if err != nil {
-			logrus.WithError(err).Error("Failed to get node client")
+			logrus.WithError(err).Error("Failed to marshal subdomains")
 			w.WriteHeader(500)
 			return
 		}

@@ -16,6 +16,7 @@ func configure(app *cli.App) {
 	s.RegisterJobFlags(app)
 	s.RegisterConnectionConfigFlags(app)
 	cs.RegisterProbeFlags(app)
+	s.RegisterSubdomainsFlags(app)
 
 	app.Action = run
 }
@@ -76,8 +77,11 @@ func run(c *cli.Context) error {
 	// Setting GRPC Proxy Pool
 	grpcProxyPool := s.NewHTTPGRPCProxyPool(baseURL, claims, resolver)
 
+	// Setting Subdomains Pool
+	subdomainsPool := s.NewSubdomainsPool(c, k8sClient)
+
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, k8sClient)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool)
 	defer web.Close()
 
 	// Setting GRPC Proxy
