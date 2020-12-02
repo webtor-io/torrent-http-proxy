@@ -23,6 +23,8 @@ type JobConfig struct {
 	UseSnapshot                        string
 	SnapshotStartFullDownloadThreshold float64
 	SnapshotStartThreshold             float64
+	SnapshotDownloadRatio              float64
+	SnapshotTorrentSizeLimit           int64
 	ResticPassword                     string
 	ResticRepository                   string
 	AWSAccessKeyID                     string
@@ -89,6 +91,8 @@ const (
 	USE_SNAPSHOT                           = "use-snapshot"
 	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
 	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
+	SNAPSHOT_DOWNLOAD_RATIO                = "snapshot-download-ratio"
+	SNAPSHOT_TORRENT_SIZE_LIMIT            = "snapshot-torrent-size-limit"
 	AWS_ACCESS_KEY_ID                      = "aws-access-key-id"
 	AWS_SECRET_ACCESS_KEY                  = "aws-secret-access-key"
 	AWS_BUCKET                             = "aws-bucket"
@@ -168,6 +172,16 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  0.75,
 		EnvVar: "SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD",
 	})
+	c.Flags = append(c.Flags, cli.Float64Flag{
+		Name:   SNAPSHOT_DOWNLOAD_RATIO,
+		Value:  2.0,
+		EnvVar: "SNAPSHOT_DOWNLOAD_RATIO",
+	})
+	c.Flags = append(c.Flags, cli.Int64Flag{
+		Name:   SNAPSHOT_TORRENT_SIZE_LIMIT,
+		Value:  10,
+		EnvVar: "SNAPSHOT_TORRENT_SIZE_LIMIT",
+	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   AWS_ACCESS_KEY_ID,
 		Usage:  "AWS Access Key ID",
@@ -228,6 +242,8 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				UseSnapshot:                        c.String(USE_SNAPSHOT),
 				SnapshotStartThreshold:             c.Float64(SNAPSHOT_START_THRESHOLD),
 				SnapshotStartFullDownloadThreshold: c.Float64(SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD),
+				SnapshotDownloadRatio:              c.Float64(SNAPSHOT_DOWNLOAD_RATIO),
+				SnapshotTorrentSizeLimit:           c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
 				Grace:                              c.Int(SEEDER_GRACE),
 				IgnoredPaths:                       []string{"/TorrentWebSeeder/StatStream"},
 			},

@@ -468,6 +468,14 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: fmt.Sprintf("%f", s.cfg.SnapshotStartFullDownloadThreshold),
 		},
 		{
+			Name:  "SNAPSHOT_DOWNLOAD_RATIO",
+			Value: fmt.Sprintf("%f", s.cfg.SnapshotDownloadRatio),
+		},
+		{
+			Name:  "SNAPSHOT_TORRENT_SIZE_LIMIT",
+			Value: fmt.Sprintf("%d", s.cfg.SnapshotTorrentSizeLimit),
+		},
+		{
 			Name:  "AWS_ACCESS_KEY_ID",
 			Value: s.cfg.AWSAccessKeyID,
 		},
