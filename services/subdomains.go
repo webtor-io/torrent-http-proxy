@@ -144,7 +144,7 @@ func (s *Subdomains) get() ([]string, error) {
 				break
 			}
 		}
-		spread := 2
+		spread := 3
 		for n := -spread; n <= spread; n++ {
 			m := t + n
 			if m < 0 {
