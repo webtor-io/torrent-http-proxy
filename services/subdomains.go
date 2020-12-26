@@ -71,7 +71,7 @@ func (s *Subdomains) get() ([]string, error) {
 	}
 	nodeNames := []string{}
 	infoHash := s.infoHash
-	timeout := int64(1)
+	timeout := int64(5)
 	if infoHash != "" {
 		opts := metav1.ListOptions{
 			LabelSelector:  fmt.Sprintf("info-hash=%v", infoHash),
