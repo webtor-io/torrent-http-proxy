@@ -10,6 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -32,6 +33,16 @@ const (
 	WEB_PORT = "port"
 )
 
+var (
+	allowList = []string{
+		"/s-1-v1-a1.ts",
+		"/s-2-v1-a1.ts",
+		"/s-3-v1-a1.ts",
+		"/s-4-v1-a1.ts",
+		"/s-5-v1-a1.ts",
+	}
+)
+
 func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
@@ -52,6 +63,15 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
+func isAllowed(r *http.Request) bool {
+	for _, v := range allowList {
+		if strings.HasSuffix(r.URL.Path, v) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
@@ -62,11 +82,19 @@ func (s *Web) getIP(r *http.Request) string {
 
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
 	apiKey := r.URL.Query().Get("api-key")
-	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
-	if err != nil {
-		logger.WithError(err).Errorf("Failed to get claims")
-		w.WriteHeader(http.StatusForbidden)
-		return
+	claims := jwt.MapClaims{}
+	var cl *Client
+	var err error
+	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "" || isAllowed(r)) {
+		logger.Infof("Got allowed request %v", r.URL.Path)
+	} else {
+		claims, cl, err = s.claims.Get(r.URL.Query().Get("token"), apiKey)
+		if err != nil {
+			logger.WithError(err).Errorf("Failed to get claims")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
 	}
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
 		remoteAddress, raOK := claims["remoteAddress"].(string)
