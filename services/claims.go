@@ -8,9 +8,34 @@ import (
 type Claims struct {
 	cs *Clients
 }
+type StandardClaims struct {
+	Grace  int    `json:"grace"`
+	Preset string `json:"preset"`
+	Rate   string `json:"rate"`
+	jwt.StandardClaims
+}
 
 func NewClaims(cs *Clients) *Claims {
 	return &Claims{cs: cs}
+}
+
+func (s *Claims) Set(apiKey string, claims jwt.Claims) (string, error) {
+
+	if s.cs.Empty() {
+		return "", nil
+	}
+
+	cl := s.cs.Get(apiKey)
+	if cl == nil {
+		return "", errors.Errorf("Failed to find secret by API key %v", apiKey)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(cl.Secret))
+
+	if err != nil {
+		return "", errors.Wrapf(err, "auth token generation failed")
+	}
+	return tokenString, nil
 }
 
 func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client, error) {

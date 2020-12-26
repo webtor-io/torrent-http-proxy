@@ -10,7 +10,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -40,6 +39,10 @@ var (
 		"/s-3-v1-a1.ts",
 		"/s-4-v1-a1.ts",
 		"/s-5-v1-a1.ts",
+		".png",
+		".gif",
+		".jpg",
+		".jpeg",
 	}
 )
 
@@ -82,20 +85,28 @@ func (s *Web) getIP(r *http.Request) string {
 
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
 	apiKey := r.URL.Query().Get("api-key")
-	claims := jwt.MapClaims{}
-	var cl *Client
-	var err error
 	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "" || isAllowed(r)) {
-		logger.Infof("Got allowed request %v", r.URL.Path)
-	} else {
-		claims, cl, err = s.claims.Get(r.URL.Query().Get("token"), apiKey)
+		token, err := s.claims.Set(apiKey, StandardClaims{})
 		if err != nil {
-			logger.WithError(err).Errorf("Failed to get claims")
+			logger.WithError(err).Errorf("Failed to set claims")
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-
+		logger.Info(token)
+		if token != "" {
+			q, _ := url.ParseQuery(r.URL.RawQuery)
+			q.Add("token", token)
+			r.URL.RawQuery = q.Encode()
+		}
+		logger.Infof("Got allowed request %v", r.URL.Path)
 	}
+	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to get claims")
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
 		remoteAddress, raOK := claims["remoteAddress"].(string)
 		ua, uaOK := claims["agent"].(string)
