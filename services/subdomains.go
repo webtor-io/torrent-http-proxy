@@ -144,10 +144,14 @@ func (s *Subdomains) get() ([]string, error) {
 				break
 			}
 		}
-		for n := 0; n < 3; n++ {
+		spread := 1
+		for n := -spread; n <= spread; n++ {
 			m := t + n
-			if n >= len(res) {
-				m = m - len(res) + 1
+			if m < 0 {
+				m = len(res) + m
+			}
+			if m >= len(res) {
+				m = m - len(res)
 			}
 			res2 = append(res2, res[m])
 		}
