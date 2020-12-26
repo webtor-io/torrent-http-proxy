@@ -151,8 +151,9 @@ func (s *Subdomains) get() ([]string, error) {
 			}
 			res2 = append(res2, res[m])
 		}
+		res = res2
 	}
-	return res2, nil
+	return res, nil
 }
 
 func (s *Subdomains) Get() ([]string, error) {
