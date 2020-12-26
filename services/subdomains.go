@@ -124,6 +124,7 @@ func (s *Subdomains) get() ([]string, error) {
 		}
 	}
 	sort.Strings(res)
+	res2 := []string{}
 	if len(nodeNames) == 0 && len(res) > 1 && infoHash != "" {
 		hex := infoHash[0:5]
 		num, err := strconv.ParseInt(hex, 16, 64)
@@ -139,9 +140,15 @@ func (s *Subdomains) get() ([]string, error) {
 				break
 			}
 		}
-		res = []string{res[t]}
+		for n := 0; n < 3; n++ {
+			m := t + n
+			if n >= len(res) {
+				m = m - len(res) + 1
+			}
+			res2 = append(res2, res[m])
+		}
 	}
-	return res, nil
+	return res2, nil
 }
 
 func (s *Subdomains) Get() ([]string, error) {
