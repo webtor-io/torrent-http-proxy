@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	SUBDOMAINS_TTL = 30
+	SUBDOMAINS_TTL = 60
 )
 
 type SubdomainsPool struct {
