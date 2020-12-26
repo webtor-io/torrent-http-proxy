@@ -87,7 +87,9 @@ func (s *Subdomains) get() ([]string, error) {
 			}
 		}
 	}
-	opts := metav1.ListOptions{}
+	opts := metav1.ListOptions{
+		TimeoutSeconds: &timeout,
+	}
 	if s.naKey != "" && s.naVal != "" && len(nodeNames) == 0 {
 		opts.LabelSelector = fmt.Sprintf("%v=%v", s.naKey, s.naVal)
 	}
