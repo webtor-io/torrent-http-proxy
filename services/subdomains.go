@@ -20,6 +20,7 @@ const (
 	WEB_ORIGIN_HOST_REDIRECT              = "origin-host-redirect"
 	WEB_ORIGIN_HOST_REDIRECT_PREFIX       = "origin-host-redirect-prefix"
 	MAX_SUBDOMAINS                        = 3
+	INFOHASH_MAX_SPREAD                   = 1
 )
 
 var hexIPPattern = regexp.MustCompile(`[^\.]*`)
@@ -128,6 +129,7 @@ func (s *Subdomains) updateScoreByCPU(stats []NodeStatWithScore) []NodeStatWithS
 	}
 	return stats
 }
+
 func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeStatWithScore, error) {
 	if s.infoHash == "" {
 		return stats, nil
@@ -150,7 +152,10 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeSta
 		}
 	}
 
-	spread := 1
+	spread := int(math.Floor(float64(len(stats)) / 2))
+	if spread > INFOHASH_MAX_SPREAD {
+		spread = INFOHASH_MAX_SPREAD
+	}
 	for i, _ := range stats {
 		stats[i].Distance = spread + 1
 	}
@@ -216,7 +221,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 
 func (s *Subdomains) get() ([]string, error) {
 	stats, err := s.getScoredStats()
-	fmt.Printf("%+v", stats)
+	// fmt.Printf("%+v", stats)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get sorted nodes stat")
 	}
@@ -232,80 +237,6 @@ func (s *Subdomains) get() ([]string, error) {
 	}
 	return res[0:l], nil
 }
-
-// func (s *Subdomains) get() ([]string, error) {
-// 	opts := metav1.ListOptions{
-// 		TimeoutSeconds: &timeout,
-// 	}
-// 	if s.naKey != "" && s.naVal != "" && len(nodeNames) == 0 {
-// 		opts.LabelSelector = fmt.Sprintf("%v=%v", s.naKey, s.naVal)
-// 	}
-// 	nodes, err := cl.CoreV1().Nodes().List(opts)
-// 	if err != nil {
-// 		return nil, errors.Wrap(err, "Failed to get nodes")
-// 	}
-// 	res := []string{}
-// 	for _, n := range nodes.Items {
-// 		ready := false
-// 		for _, c := range n.Status.Conditions {
-// 			if c.Status == corev1.ConditionTrue && c.Type == corev1.NodeReady {
-// 				ready = true
-// 			}
-// 		}
-// 		if !ready {
-// 			continue
-// 		}
-// 		if len(nodeNames) > 0 {
-// 			exist := false
-// 			for _, nn := range nodeNames {
-// 				if nn == n.Name {
-// 					exist = true
-// 				}
-// 			}
-// 			if !exist {
-// 				continue
-// 			}
-// 		}
-// 		for _, a := range n.Status.Addresses {
-// 			if a.Type == corev1.NodeAddressType(s.redirectAddressType) {
-// 				byteIP := net.ParseIP(a.Address)
-// 				hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
-// 				res = append(res, s.redirectPrefix+hexIP)
-// 			}
-// 		}
-// 	}
-// 	sort.Strings(res)
-// 	res2 := []string{}
-// 	if len(nodeNames) == 0 && len(res) > 1 && infoHash != "" {
-// 		hex := infoHash[0:5]
-// 		num, err := strconv.ParseInt(hex, 16, 64)
-// 		if err != nil {
-// 			return nil, errors.Wrapf(err, "Failed to parse hex from infohash=%v", infoHash)
-// 		}
-// 		total := 1048575
-// 		interval := int64(total / len(res))
-// 		t := 0
-// 		for i := 0; i < len(res); i++ {
-// 			if num < (int64(i)+1)*interval {
-// 				t = i
-// 				break
-// 			}
-// 		}
-// 		spread := 1
-// 		for n := -spread; n <= spread; n++ {
-// 			m := t + n
-// 			if m < 0 {
-// 				m = len(res) + m
-// 			}
-// 			if m >= len(res) {
-// 				m = m - len(res)
-// 			}
-// 			res2 = append(res2, res[m])
-// 		}
-// 		res = res2
-// 	}
-// 	return res, nil
-// }
 
 func (s *Subdomains) Get() ([]string, error) {
 	s.mux.Lock()
