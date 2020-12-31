@@ -16,6 +16,8 @@ func configure(app *cli.App) {
 	s.RegisterJobFlags(app)
 	s.RegisterConnectionConfigFlags(app)
 	cs.RegisterProbeFlags(app)
+	s.RegisterNodesStatFlags(app)
+	s.RegisterPromFlags(app)
 	s.RegisterSubdomainsFlags(app)
 
 	app.Action = run
@@ -42,6 +44,9 @@ func run(c *cli.Context) error {
 
 	// Setting Kubernetes client
 	k8sClient := s.NewK8SClient()
+
+	// Setting Prometheus client
+	promClient := s.NewPromClient(c)
 
 	// Setting Redis client
 	redisClient := cs.NewRedisClient(c)
@@ -77,8 +82,11 @@ func run(c *cli.Context) error {
 	// Setting GRPC Proxy Pool
 	grpcProxyPool := s.NewHTTPGRPCProxyPool(baseURL, claims, resolver)
 
+	// Setting NodesStat Pool
+	nodesStatPool := s.NewNodesStatPool(c, promClient, k8sClient, log.NewEntry(log.StandardLogger()))
+
 	// Setting Subdomains Pool
-	subdomainsPool := s.NewSubdomainsPool(c, k8sClient)
+	subdomainsPool := s.NewSubdomainsPool(c, k8sClient, nodesStatPool)
 
 	// Setting WebService
 	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool)

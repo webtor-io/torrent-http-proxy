@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 )
 
 const (
-	SUBDOMAINS_TTL = 60
+	SUBDOMAINS_TTL = 30
 )
 
 type SubdomainsPool struct {
@@ -17,15 +18,16 @@ type SubdomainsPool struct {
 	expire time.Duration
 	c      *cli.Context
 	k8s    *K8SClient
+	nsp    *NodesStatPool
 }
 
-func NewSubdomainsPool(c *cli.Context, k8s *K8SClient) *SubdomainsPool {
-	return &SubdomainsPool{c: c, k8s: k8s, expire: time.Duration(SUBDOMAINS_TTL) * time.Second}
+func NewSubdomainsPool(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool) *SubdomainsPool {
+	return &SubdomainsPool{c: c, k8s: k8s, nsp: nsp, expire: time.Duration(SUBDOMAINS_TTL) * time.Second}
 }
 
-func (s *SubdomainsPool) Get(infoHash string) ([]string, error) {
-	key := infoHash
-	v, _ := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, infoHash))
+func (s *SubdomainsPool) Get(infoHash string, skipActiveJobSearch bool) ([]string, error) {
+	key := fmt.Sprintf("%v-%v", infoHash, skipActiveJobSearch)
+	v, _ := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, s.nsp, infoHash, skipActiveJobSearch))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {

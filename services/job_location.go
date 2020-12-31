@@ -282,9 +282,9 @@ func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
 			Weight: 100,
 			Preference: corev1.NodeSelectorTerm{
-				MatchFields: []corev1.NodeSelectorRequirement{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
 					{
-						Key:      "metadata.name",
+						Key:      "kubernetes.io/hostname",
 						Operator: corev1.NodeSelectorOpIn,
 						Values:   []string{s.nn},
 					},

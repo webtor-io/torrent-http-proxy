@@ -201,7 +201,7 @@ func (s *Web) Serve() error {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		subs, err := s.subdomains.Get(r.URL.Query().Get("infohash"))
+		subs, err := s.subdomains.Get(r.URL.Query().Get("infohash"), r.URL.Query().Get("skip-active-job-search") == "true")
 		if err != nil {
 			logrus.WithError(err).Error("Failed to get subdomains")
 			w.WriteHeader(500)
