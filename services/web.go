@@ -71,9 +71,21 @@ func RegisterWebFlags(c *cli.App) {
 	})
 }
 
+func stripMod(path string) string {
+	if !strings.Contains(path, "~") {
+		return path
+	}
+	modIndex := strings.LastIndex(path, "~")
+	dotIndex := strings.LastIndex(path, ".")
+	if dotIndex < modIndex {
+		return path[:modIndex]
+	}
+	return path
+}
+
 func isAllowed(r *http.Request) bool {
 	for _, v := range allowList {
-		if strings.HasSuffix(r.URL.Path, v) {
+		if strings.HasSuffix(stripMod(r.URL.Path), v) {
 			return true
 		}
 	}
