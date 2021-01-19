@@ -14,10 +14,10 @@ require (
 	github.com/prometheus/client_golang v1.9.0
 	github.com/prometheus/common v0.15.0
 	github.com/rs/cors v1.7.0 // indirect
-	github.com/sirupsen/logrus v1.6.0
+	github.com/sirupsen/logrus v1.7.0
 	github.com/spf13/viper v1.6.2 // indirect
-	github.com/urfave/cli v1.22.1
-	github.com/webtor-io/common-services v0.0.0-20200315170226-d438614cbc09
+	github.com/urfave/cli v1.22.5
+	github.com/webtor-io/common-services v0.0.0-20210119170420-36d4a5d7d2df
 	google.golang.org/grpc v1.26.0
 	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.0.0-20191115135540-bbc9463b57e5

@@ -31,7 +31,7 @@ const (
 	PORT_GRPC               = 50051
 	HEALTH_CHECK_TIMEOUT    = 3
 	HEALTH_CHECK_INTERVAL   = 5
-	POD_LOCK_DURATION       = 5
+	POD_LOCK_DURATION       = 30
 	POD_LOCK_STANDBY        = 1
 	POD_LIVENESS_PATH       = "/liveness"
 	POD_READINESS_PATH      = "/readiness"
