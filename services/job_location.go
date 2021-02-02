@@ -261,7 +261,7 @@ func (s *JobLocation) makeResources() corev1.ResourceRequirements {
 	}
 	if s.cfg.CPULimits != "" {
 		res.Limits = corev1.ResourceList{
-			corev1.ResourceCPU: resource.MustParse(s.cfg.CPURequests),
+			corev1.ResourceCPU: resource.MustParse(s.cfg.CPULimits),
 		}
 	}
 	return res
