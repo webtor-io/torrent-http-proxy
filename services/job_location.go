@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bsm/redislock"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli"
 
 	"k8s.io/apimachinery/pkg/fields"
@@ -41,6 +42,29 @@ const (
 	JOB_REQUEST_AFFINITY    = "job-request-affinity"
 	MY_NODE_NAME            = "my-node-name"
 )
+
+var (
+	promJobInvokeDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "job_invoke_duration_seconds",
+		Help: "Job invoke duration in seconds",
+	}, []string{"name"})
+	promJobInvokeCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "job_invoke_current",
+		Help: "Job invoke current",
+	}, []string{"name"})
+	promJobInvokeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "job_invoke_total",
+		Help: "Job invoke total",
+	}, []string{"name"})
+	promJobInvokeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "job_invoke_errors",
+		Help: "Job invoke errors",
+	}, []string{"name"})
+)
+
+func init() {
+	prometheus.MustRegister(promJobInvokeDuration)
+}
 
 type JobLocation struct {
 	id             string
@@ -671,9 +695,15 @@ func (s *JobLocation) Invoke(purge bool) (*Location, error) {
 	if s.inited {
 		return s.loc, s.err
 	}
+	now := time.Now()
+	promJobInvokeCurrent.WithLabelValues(s.cfg.Name).Inc()
+	promJobInvokeTotal.WithLabelValues(s.cfg.Name).Inc()
 	s.loc, s.err = s.invoke()
+	promJobInvokeCurrent.WithLabelValues(s.cfg.Name).Dec()
+	promJobInvokeDuration.WithLabelValues(s.cfg.Name).Observe(time.Since(now).Seconds())
 	if s.err != nil {
 		s.logger.WithError(s.err).Info("Failed to get job location")
+		promJobInvokeErrors.WithLabelValues(s.cfg.Name).Inc()
 	} else {
 		s.logger.WithField("location", s.loc.IP).Info("Got job location")
 	}

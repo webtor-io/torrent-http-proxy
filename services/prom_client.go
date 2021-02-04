@@ -12,7 +12,7 @@ const (
 	PROM_ADDR = "prom-addr"
 )
 
-func RegisterPromFlags(c *cli.App) {
+func RegisterPromClientFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   PROM_ADDR,
 		Usage:  "Prometheus connection address",

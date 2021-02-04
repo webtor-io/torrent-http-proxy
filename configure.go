@@ -18,6 +18,7 @@ func configure(app *cli.App) {
 	cs.RegisterProbeFlags(app)
 	s.RegisterNodesStatFlags(app)
 	s.RegisterPromFlags(app)
+	s.RegisterPromClientFlags(app)
 	s.RegisterSubdomainsFlags(app)
 
 	app.Action = run
@@ -68,6 +69,10 @@ func run(c *cli.Context) error {
 	probe := cs.NewProbe(c)
 	defer probe.Close()
 
+	// Setting Prom
+	prom := s.NewProm(c)
+	defer prom.Close()
+
 	// Setting HTTP Proxy Pool
 	httpProxyPool := s.NewHTTPProxyPool(resolver)
 
@@ -100,7 +105,7 @@ func run(c *cli.Context) error {
 	defer grpcServer.Close()
 
 	// Setting ServeService
-	serve := cs.NewServe(probe, web, grpcServer)
+	serve := cs.NewServe(probe, web, grpcServer, prom)
 
 	// And SERVE!
 	err = serve.Serve()

@@ -190,9 +190,6 @@ func (s *Web) Serve() error {
 		fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
 		fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
 	})
-	mux.HandleFunc("/liveness", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	})
 	mux.HandleFunc("/subdomains.json", func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.URL.Query().Get("api-key")
 		_, _, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
