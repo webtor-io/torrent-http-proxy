@@ -45,19 +45,19 @@ const (
 
 var (
 	promJobInvokeDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "job_invoke_duration_seconds",
+		Name: "webtor_job_invoke_duration_seconds",
 		Help: "Job invoke duration in seconds",
 	}, []string{"name"})
 	promJobInvokeCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "job_invoke_current",
+		Name: "webtor_job_invoke_current",
 		Help: "Job invoke current",
 	}, []string{"name"})
 	promJobInvokeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "job_invoke_total",
+		Name: "webtor_job_invoke_total",
 		Help: "Job invoke total",
 	}, []string{"name"})
 	promJobInvokeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "job_invoke_errors",
+		Name: "webtor_job_invoke_errors",
 		Help: "Job invoke errors",
 	}, []string{"name"})
 )
