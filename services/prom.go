@@ -47,7 +47,7 @@ func (s *Prom) Serve() error {
 	}
 	s.ln = ln
 	mux := http.NewServeMux()
-	mux.Handle("/", promhttp.Handler())
+	mux.Handle("/metrics", promhttp.Handler())
 	logrus.Infof("Serving Prom Metrics at %v", addr)
 	return http.Serve(ln, mux)
 }
