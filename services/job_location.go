@@ -64,6 +64,9 @@ var (
 
 func init() {
 	prometheus.MustRegister(promJobInvokeDuration)
+	prometheus.MustRegister(promJobInvokeCurrent)
+	prometheus.MustRegister(promJobInvokeTotal)
+	prometheus.MustRegister(promJobInvokeErrors)
 }
 
 type JobLocation struct {
