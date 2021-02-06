@@ -235,6 +235,9 @@ func (s *Web) Serve() error {
 
 		// if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// if f, ok := w.(http.Flusher); ok {
+		// 	f.Flush()
+		// }
 		// w.Header().Set("Access-Control-Allow-Credentials", "true")
 		// }
 

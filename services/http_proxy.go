@@ -17,7 +17,9 @@ import (
 )
 
 const (
-	HTTP_PROXY_DIAL_TIMEOUT int = 5
+	HTTP_PROXY_DIAL_TIMEOUT int = 3
+	HTTP_PROXY_DIAL_TRIES   int = 3
+	HTTP_PROXY_REDIAL_DELAY int = 1
 	MAX_IDLE_CONNECTIONS    int = 20 * 5
 )
 
@@ -54,32 +56,38 @@ func modifyResponse(r *http.Response) error {
 	return nil
 }
 
-func (s *HTTPProxy) dial(network, addr string) (net.Conn, error) {
+func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn net.Conn, err error) {
+	purge := false
+	for i := 0; i < tries; i++ {
+		conn, err = s.dial(network, purge)
+		if err != nil {
+			purge = true
+			time.Sleep(time.Duration(delay) * time.Second)
+		} else {
+			break
+		}
+	}
+	return
+}
+
+func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
 	s.logger.Info("Dialing proxy backend")
 	timeout := time.Duration(HTTP_PROXY_DIAL_TIMEOUT) * time.Second
+	loc, err := s.r.Resolve(s.src, s.logger, purge, s.invoke, s.cl)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get location")
+		return nil, err
+	}
+	addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
 	conn, err := (&net.Dialer{
 		Timeout:   timeout,
 		KeepAlive: time.Duration(HTTP_PROXY_TTL) * time.Second,
 	}).Dial(network, addr)
 	if err != nil {
-		s.logger.Warn("Failed to dial location, try to refresh it")
-		loc, err := s.r.Resolve(s.src, s.logger, true, s.invoke, s.cl)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to get new location")
-			return nil, err
-		}
-		addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
-		conn, err := (&net.Dialer{
-			Timeout:   timeout,
-			KeepAlive: time.Duration(HTTP_PROXY_TTL) * time.Second,
-		}).Dial(network, addr)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to dial with new address")
-			return nil, err
-		}
-		return conn, err
+		s.logger.WithError(err).Error("Failed to dial")
+		return nil, err
 	}
-	return conn, err
+	return conn, nil
 }
 
 type stubTransport struct {
@@ -115,13 +123,16 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 		t = &stubTransport{http.DefaultTransport}
 	} else {
 		t = &http.Transport{
-			Dial:                s.dial,
+			Dial: func(network, addr string) (net.Conn, error) {
+				return s.dialWithRetry(network, HTTP_PROXY_DIAL_TRIES, HTTP_PROXY_REDIAL_DELAY)
+			},
 			MaxIdleConnsPerHost: MAX_IDLE_CONNECTIONS,
 		}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
+	p.FlushInterval = -1
 	return p, nil
 }
 
