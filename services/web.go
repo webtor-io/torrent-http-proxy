@@ -281,7 +281,7 @@ func (s *Web) Serve() error {
 		}
 
 		logger.Info("Handling HTTP")
-		s.proxyHTTP(NewNoBuffWriter(w), r, src, logger, originalPath, newPath)
+		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
 
 	})
 	logrus.Infof("Serving Web at %v", addr)
