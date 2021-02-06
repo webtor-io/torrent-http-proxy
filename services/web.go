@@ -215,7 +215,6 @@ func (s *Web) Serve() error {
 		w.Write(json)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w = NewNoBuffWriter(w)
 		logger := logrus.WithFields(logrus.Fields{
 			"URL":  r.URL.String(),
 			"Host": r.Host,
@@ -282,7 +281,7 @@ func (s *Web) Serve() error {
 		}
 
 		logger.Info("Handling HTTP")
-		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
+		s.proxyHTTP(NewNoBuffWriter(w), r, src, logger, originalPath, newPath)
 
 	})
 	logrus.Infof("Serving Web at %v", addr)
