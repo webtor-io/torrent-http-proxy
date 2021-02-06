@@ -215,6 +215,7 @@ func (s *Web) Serve() error {
 		w.Write(json)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w = NewNoBuffWriter(w)
 		logger := logrus.WithFields(logrus.Fields{
 			"URL":  r.URL.String(),
 			"Host": r.Host,
