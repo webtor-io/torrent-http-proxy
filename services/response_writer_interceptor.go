@@ -29,6 +29,9 @@ func (w *responseWriterInterceptor) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
+func (w *responseWriterInterceptor) GroupedStatusCode() int {
+	return w.statusCode / 100 * 100
+}
 
 func (w *responseWriterInterceptor) Write(p []byte) (int, error) {
 	if w.bytesWritten == 0 {

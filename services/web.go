@@ -63,11 +63,10 @@ var (
 		Name: "webtor_http_proxy_request_ttfb_seconds",
 		Help: "HTTP Proxy request ttfb in seconds",
 	}, []string{"source", "name", "status"})
-	promHTTPProxyRequestSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "webtor_http_proxy_request_size_bytes",
-		Help:    "HTTP Proxy request size bytes",
-		Buckets: prometheus.ExponentialBuckets(100, 10, 8),
-	}, []string{"client", "role", "source", "name", "status"})
+	promHTTPProxyRequestSize = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_request_size_bytes",
+		Help: "HTTP Proxy request size bytes",
+	}, []string{"client", "role", "source", "name", "infohash", "file", "status"})
 	promHTTPProxyRequestCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_http_proxy_request_current",
 		Help: "HTTP Proxy request current",
@@ -177,13 +176,21 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Inc()
 	defer func() {
-		promHTTPProxyRequestDuration.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(time.Since(wi.start).Seconds())
+		promHTTPProxyRequestDuration.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
 		if wi.bytesWritten > 0 {
-			promHTTPProxyRequestTTFB.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(wi.ttfb.Seconds())
+			promHTTPProxyRequestTTFB.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
 		}
 		promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Dec()
-		promHTTPProxyRequestTotal.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Inc()
-		promHTTPProxyRequestSize.WithLabelValues(clientName, role, source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(float64(wi.bytesWritten))
+		promHTTPProxyRequestTotal.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
+		promHTTPProxyRequestSize.WithLabelValues(
+			clientName,
+			role,
+			source,
+			src.GetEdgeName(),
+			src.InfoHash,
+			src.Path,
+			strconv.Itoa(wi.GroupedStatusCode()),
+		).Add(float64(wi.bytesWritten))
 	}()
 
 	headers := map[string]string{
