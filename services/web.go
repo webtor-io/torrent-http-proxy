@@ -171,7 +171,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		clientName = cl.Name
 	}
 	role := "nobody"
-	if r, roleOK := claims["agent"].(string); roleOK {
+	if r, roleOK := claims["role"].(string); roleOK {
 		role = r
 	}
 
