@@ -225,7 +225,7 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 	return &ConnectionsConfig{
 		"default": &ConnectionConfig{
-			Name:           "Torrent Web Seeder",
+			Name:           "torrent-web-seeder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
 				Name:                               c.String(JOB_PREFIX) + "seeder",
@@ -249,7 +249,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			},
 		},
 		"hls": &ConnectionConfig{
-			Name:           "HLS Content Transcoder",
+			Name:           "content-transcoder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
 				Name:        c.String(JOB_PREFIX) + "transcoder",
@@ -260,91 +260,91 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			},
 		},
 		"vtt": &ConnectionConfig{
-			Name:           "VTT Converter",
+			Name:           "srt2vtt",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "SRT2VTT",
 			},
 		},
 		"cp": &ConnectionConfig{
-			Name:           "Content Prober",
+			Name:           "content-prober",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "CONTENT_PROBER",
 			},
 		},
 		"ext": &ConnectionConfig{
-			Name:           "External Proxy",
+			Name:           "external-proxy",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "EXTERNAL_PROXY",
 			},
 		},
 		"arch": &ConnectionConfig{
-			Name:           "ZIP Archiver",
+			Name:           "torrent-archiver",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "TORRENT_ARCHIVER",
 			},
 		},
 		"vi": &ConnectionConfig{
-			Name:           "Video Info Provider",
+			Name:           "video-info",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "VIDEO_INFO",
 			},
 		},
 		"vtg": &ConnectionConfig{
-			Name:           "Video Thumbnails Generator",
+			Name:           "video-thumbnails-generator",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "VIDEO_THUMBNAILS_GENERATOR",
 			},
 		},
 		"it": &ConnectionConfig{
-			Name:           "Image Transformer",
+			Name:           "image-transformer",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "IMAGE_TRANSFORMER",
 			},
 		},
 		"tracker": &ConnectionConfig{
-			Name:           "WebTorrent Tracker",
+			Name:           "webtorrent-tracker",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "WEBTORRENT_TRACKER",
 			},
 		},
 		"tc": &ConnectionConfig{
-			Name:           "Torrent Web Cache",
+			Name:           "torrent-web-cache",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "TORRENT_WEB_CACHE",
 			},
 		},
 		"abuse": &ConnectionConfig{
-			Name:           "Abuse Store",
+			Name:           "abuse-store",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "ABUSE_STORE",
 			},
 		},
 		"magnet2torrent": &ConnectionConfig{
-			Name:           "Magnet2Torrent",
+			Name:           "magnet2torrent",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "MAGNET2TORRENT",
 			},
 		},
 		"store": &ConnectionConfig{
-			Name:           "Torrent Store",
+			Name:           "torrent-store",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "TORRENT_STORE",
 			},
 		},
 		"vod": &ConnectionConfig{
-			Name:           "NGINX VOD",
+			Name:           "nginx-vod",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "NGINX_VOD",

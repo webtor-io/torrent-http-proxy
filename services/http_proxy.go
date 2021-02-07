@@ -28,19 +28,19 @@ var (
 	promHTTPProxyDialDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "webtor_http_proxy_dial_duration_seconds",
 		Help: "HTTP Proxy dial duration in seconds",
-	}, []string{"type"})
+	}, []string{"name"})
 	promHTTPProxyDialCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_http_proxy_dial_current",
 		Help: "HTTP Proxy dial current",
-	}, []string{"type"})
+	}, []string{"name"})
 	promHTTPProxyDialTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_dial_total",
 		Help: "HTTP Proxy dial total",
-	}, []string{"type"})
+	}, []string{"name"})
 	promHTTPProxyDialErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_dial_errors",
 		Help: "HTTP Proxy dial errors",
-	}, []string{"type"})
+	}, []string{"name"})
 )
 
 func init() {
@@ -84,11 +84,11 @@ func modifyResponse(r *http.Response) error {
 
 func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn net.Conn, err error) {
 	now := time.Now()
-	promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeType()).Inc()
-	promHTTPProxyDialTotal.WithLabelValues(s.src.GetEdgeType()).Inc()
+	promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeName()).Inc()
+	promHTTPProxyDialTotal.WithLabelValues(s.src.GetEdgeName()).Inc()
 	defer func() {
-		promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeType()).Dec()
-		promHTTPProxyDialDuration.WithLabelValues(s.src.GetEdgeType()).Observe(time.Since(now).Seconds())
+		promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeName()).Dec()
+		promHTTPProxyDialDuration.WithLabelValues(s.src.GetEdgeName()).Observe(time.Since(now).Seconds())
 	}()
 	purge := false
 	for i := 0; i < tries; i++ {
@@ -101,7 +101,7 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 		}
 	}
 	if err != nil {
-		promHTTPProxyDialErrors.WithLabelValues(s.src.GetEdgeType()).Inc()
+		promHTTPProxyDialErrors.WithLabelValues(s.src.GetEdgeName()).Inc()
 	}
 	return
 }

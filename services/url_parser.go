@@ -15,12 +15,14 @@ type Mod struct {
 	Type  string `json:"type"`
 	Path  string `json:"path"`
 	Extra string `json:"extra"`
+	Name  string `json:"name"`
 }
 
 // Source struct represents torrent file source.
 // Source may have additional modification.
 type Source struct {
 	Type     string `json:"type"`
+	Name     string `json:"name"`
 	InfoHash string `json:"info_hash"`
 	Path     string `json:"path"`
 	Token    string `json:"token"`
@@ -37,11 +39,11 @@ func (s *Source) GetKey() string {
 	return key
 }
 
-func (s *Source) GetEdgeType() string {
+func (s *Source) GetEdgeName() string {
 	if s.Mod != nil {
-		return s.Mod.Type
+		return s.Mod.Name
 	}
-	return s.Type
+	return s.Name
 }
 
 func checkHash(hash string) bool {
@@ -69,9 +71,11 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 	// 	return "", nil, errors.New("Empty mod name")
 	// }
 	exist := false
+	name := ""
 	for _, v := range s.configs.GetMods() {
 		if t == v {
 			exist = true
+			name = s.configs.GetMod(v).Name
 			break
 		}
 	}
@@ -87,6 +91,7 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 		Type:  t,
 		Path:  modPath,
 		Extra: e,
+		Name:  name,
 	}
 	return newPath, m, nil
 }
@@ -113,9 +118,11 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 		return nil, errors.New("Empty hash")
 	}
 	sourceType := "default"
+	sourceName := "Default"
 	for _, v := range s.configs.GetMods() {
 		if hash == v {
 			sourceType = v
+			sourceName = s.configs.GetMod(v).Name
 			break
 		}
 	}
@@ -138,6 +145,7 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 		ApiKey:   url.Query().Get("api-key"),
 		Query:    url.RawQuery,
 		Type:     sourceType,
+		Name:     sourceName,
 		Mod:      mod,
 	}
 	return ss, nil
