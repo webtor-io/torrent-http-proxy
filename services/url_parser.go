@@ -37,6 +37,13 @@ func (s *Source) GetKey() string {
 	return key
 }
 
+func (s *Source) GetEdgeType() string {
+	if s.Mod != nil {
+		return s.Mod.Type
+	}
+	return s.Type
+}
+
 func checkHash(hash string) bool {
 	match, _ := regexp.MatchString("[0-9a-f]{5,40}", hash)
 	return match

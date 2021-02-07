@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/sirupsen/logrus"
 )
@@ -23,11 +24,36 @@ const (
 	MAX_IDLE_CONNECTIONS    int = 20 * 5
 )
 
+var (
+	promHTTPProxyDialDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "webtor_http_proxy_dial_duration_seconds",
+		Help: "HTTP Proxy dial duration in seconds",
+	}, []string{"type"})
+	promHTTPProxyDialCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_dial_current",
+		Help: "HTTP Proxy dial current",
+	}, []string{"type"})
+	promHTTPProxyDialTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_dial_total",
+		Help: "HTTP Proxy dial total",
+	}, []string{"type"})
+	promHTTPProxyDialErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_dial_errors",
+		Help: "HTTP Proxy dial errors",
+	}, []string{"type"})
+)
+
+func init() {
+	prometheus.MustRegister(promHTTPProxyDialDuration)
+	prometheus.MustRegister(promHTTPProxyDialCurrent)
+	prometheus.MustRegister(promHTTPProxyDialTotal)
+	prometheus.MustRegister(promHTTPProxyDialErrors)
+}
+
 type HTTPProxy struct {
 	proxy  *httputil.ReverseProxy
 	logger *logrus.Entry
 	inited bool
-	reloc  func() (*Location, string, error)
 	mux    sync.Mutex
 	err    error
 	r      *Resolver
@@ -57,6 +83,13 @@ func modifyResponse(r *http.Response) error {
 }
 
 func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn net.Conn, err error) {
+	now := time.Now()
+	promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeType()).Inc()
+	promHTTPProxyDialTotal.WithLabelValues(s.src.GetEdgeType()).Inc()
+	defer func() {
+		promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeType()).Dec()
+		promHTTPProxyDialDuration.WithLabelValues(s.src.GetEdgeType()).Observe(time.Since(now).Seconds())
+	}()
 	purge := false
 	for i := 0; i < tries; i++ {
 		conn, err = s.dial(network, purge)
@@ -66,6 +99,9 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 		} else {
 			break
 		}
+	}
+	if err != nil {
+		promHTTPProxyDialErrors.WithLabelValues(s.src.GetEdgeType()).Inc()
 	}
 	return
 }
