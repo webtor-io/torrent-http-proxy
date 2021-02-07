@@ -12,6 +12,7 @@ type StandardClaims struct {
 	Grace  int    `json:"grace"`
 	Preset string `json:"preset"`
 	Rate   string `json:"rate"`
+	Role   string `json:"role"`
 	jwt.StandardClaims
 }
 

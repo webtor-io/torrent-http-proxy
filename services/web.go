@@ -6,8 +6,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
 	"github.com/pkg/errors"
@@ -51,6 +54,38 @@ var (
 	}
 )
 
+var (
+	promHTTPProxyRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "webtor_http_proxy_request_duration_seconds",
+		Help: "HTTP Proxy request duration in seconds",
+	}, []string{"source", "name", "status"})
+	promHTTPProxyRequestTTFB = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "webtor_http_proxy_request_ttfb_seconds",
+		Help: "HTTP Proxy request ttfb in seconds",
+	}, []string{"source", "name", "status"})
+	promHTTPProxyRequestSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "webtor_http_proxy_request_size_bytes",
+		Help:    "HTTP Proxy request size bytes",
+		Buckets: prometheus.ExponentialBuckets(100, 10, 8),
+	}, []string{"client", "role", "source", "name", "status"})
+	promHTTPProxyRequestCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_request_current",
+		Help: "HTTP Proxy request current",
+	}, []string{"source", "name"})
+	promHTTPProxyRequestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_request_total",
+		Help: "HTTP Proxy dial total",
+	}, []string{"source", "name", "status"})
+)
+
+func init() {
+	prometheus.MustRegister(promHTTPProxyRequestDuration)
+	prometheus.MustRegister(promHTTPProxyRequestTTFB)
+	prometheus.MustRegister(promHTTPProxyRequestSize)
+	prometheus.MustRegister(promHTTPProxyRequestCurrent)
+	prometheus.MustRegister(promHTTPProxyRequestTotal)
+}
+
 func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
@@ -89,6 +124,8 @@ func (s *Web) getIP(r *http.Request) string {
 }
 
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
+	wi := NewResponseWrtierInterceptor(w)
+	w = wi
 	apiKey := r.URL.Query().Get("api-key")
 	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "" || isAllowed(r)) {
 		token, err := s.claims.Set(apiKey, StandardClaims{})
@@ -112,7 +149,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
+	source := "internal"
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
+		source = "external"
 		remoteAddress, raOK := claims["remoteAddress"].(string)
 		ua, uaOK := claims["agent"].(string)
 		if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
@@ -122,15 +161,31 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			return
 		}
 	}
+
 	invoke := true
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
 	}
-
 	clientName := "default"
 	if cl != nil {
 		clientName = cl.Name
 	}
+	role := "nobody"
+	if r, roleOK := claims["agent"].(string); roleOK {
+		role = r
+	}
+
+	promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Inc()
+	defer func() {
+		promHTTPProxyRequestDuration.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(time.Since(wi.start).Seconds())
+		if wi.bytesWritten > 0 {
+			promHTTPProxyRequestTTFB.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(wi.ttfb.Seconds())
+		}
+		promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Dec()
+		promHTTPProxyRequestTotal.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Inc()
+		promHTTPProxyRequestSize.WithLabelValues(clientName, role, source, src.GetEdgeName(), strconv.Itoa(wi.statusCode)).Observe(float64(wi.bytesWritten))
+	}()
+
 	headers := map[string]string{
 		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
 		"X-Proxy-Url":  s.baseURL,
@@ -215,6 +270,10 @@ func (s *Web) Serve() error {
 		w.Write(json)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/favicon") {
+			w.WriteHeader(200)
+			return
+		}
 		logger := logrus.WithFields(logrus.Fields{
 			"URL":  r.URL.String(),
 			"Host": r.Host,

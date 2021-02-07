@@ -85,8 +85,8 @@ func modifyResponse(r *http.Response) error {
 func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn net.Conn, err error) {
 	now := time.Now()
 	promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeName()).Inc()
-	promHTTPProxyDialTotal.WithLabelValues(s.src.GetEdgeName()).Inc()
 	defer func() {
+		promHTTPProxyDialTotal.WithLabelValues(s.src.GetEdgeName()).Inc()
 		promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeName()).Dec()
 		promHTTPProxyDialDuration.WithLabelValues(s.src.GetEdgeName()).Observe(time.Since(now).Seconds())
 	}()
