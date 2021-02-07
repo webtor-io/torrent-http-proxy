@@ -118,14 +118,13 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 		return nil, errors.New("Empty hash")
 	}
 	sourceType := "default"
-	sourceName := "Default"
 	for _, v := range s.configs.GetMods() {
 		if hash == v {
 			sourceType = v
-			sourceName = s.configs.GetMod(v).Name
 			break
 		}
 	}
+	sourceName := s.configs.GetMod(sourceType).Name
 	if sourceType == "default" && !checkHash(hash) {
 		return nil, errors.New(fmt.Sprintf("Wrong hash=%s", hash))
 	}
