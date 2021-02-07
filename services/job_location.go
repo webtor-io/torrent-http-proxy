@@ -47,7 +47,7 @@ var (
 	promJobInvokeDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "webtor_job_invoke_duration_seconds",
 		Help:    "Job invoke duration in seconds",
-		Buckets: prometheus.LinearBuckets(5, 5, 10),
+		Buckets: prometheus.LinearBuckets(5, 2.5, 20),
 	}, []string{"name"})
 	promJobInvokeCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_job_invoke_current",
