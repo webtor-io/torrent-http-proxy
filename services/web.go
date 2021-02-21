@@ -66,7 +66,7 @@ var (
 	promHTTPProxyRequestSize = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_request_size_bytes",
 		Help: "HTTP Proxy request size bytes",
-	}, []string{"client", "role", "source", "name", "infohash", "file", "status"})
+	}, []string{"client", "domain", "role", "source", "name", "infohash", "file", "status"})
 	promHTTPProxyRequestCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_http_proxy_request_current",
 		Help: "HTTP Proxy request current",
@@ -170,8 +170,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		clientName = cl.Name
 	}
 	role := "nobody"
-	if r, roleOK := claims["role"].(string); roleOK {
+	if r, ok := claims["role"].(string); ok {
 		role = r
+	}
+	domain := "default"
+	if d, ok := claims["domain"].(string); ok {
+		domain = d
 	}
 
 	promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Inc()
@@ -184,6 +188,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		promHTTPProxyRequestTotal.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		promHTTPProxyRequestSize.WithLabelValues(
 			clientName,
+			domain,
 			role,
 			source,
 			src.GetEdgeName(),
