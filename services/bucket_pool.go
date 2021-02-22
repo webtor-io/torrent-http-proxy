@@ -40,7 +40,8 @@ func (s *BucketPool) Get(mc jwt.MapClaims) (*ratelimit.Bucket, error) {
 	if err != nil {
 		return nil, errors.Errorf("Failed to parse rate %v", rate)
 	}
-	v, _ := s.sm.LoadOrStore(key, ratelimit.NewBucketWithRate(float64(r), int64(r)))
+
+	v, _ := s.sm.LoadOrStore(key, ratelimit.NewBucketWithRate(float64(r)/8, int64(r)))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {
