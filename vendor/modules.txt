@@ -1,3 +1,6 @@
+# code.cloudfoundry.org/bytefmt v0.0.0-20200131002437-cf55d5288a48
+## explicit
+code.cloudfoundry.org/bytefmt
 # github.com/aws/aws-sdk-go v1.36.28
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/arn
@@ -99,6 +102,9 @@ github.com/jmespath/go-jmespath
 github.com/joonix/log
 # github.com/json-iterator/go v1.1.10
 github.com/json-iterator/go
+# github.com/juju/ratelimit v1.0.1
+## explicit
+github.com/juju/ratelimit
 # github.com/matttproud/golang_protobuf_extensions v1.0.1
 github.com/matttproud/golang_protobuf_extensions/pbutil
 # github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd

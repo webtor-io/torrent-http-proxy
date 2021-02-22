@@ -43,6 +43,9 @@ func run(c *cli.Context) error {
 	// Setting URL Parser
 	urlParser := s.NewURLParser(config)
 
+	// Setting Bucket Pool
+	bucketPool := s.NewBucketPool()
+
 	// Setting Kubernetes client
 	k8sClient := s.NewK8SClient()
 
@@ -94,7 +97,7 @@ func run(c *cli.Context) error {
 	subdomainsPool := s.NewSubdomainsPool(c, k8sClient, nodesStatPool)
 
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool)
 	defer web.Close()
 
 	// Setting GRPC Proxy

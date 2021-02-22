@@ -26,6 +26,7 @@ type Web struct {
 	parser     *URLParser
 	grpc       *HTTPGRPCProxyPool
 	subdomains *SubdomainsPool
+	bucketPool *BucketPool
 	baseURL    string
 	claims     *Claims
 }
@@ -85,10 +86,10 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
-		subdomains: subs,
+		subdomains: subs, bucketPool: bp,
 	}
 }
 
@@ -211,6 +212,15 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	rate, ok := claims["rate"].(string)
 	if ok {
 		headers["X-Download-Rate"] = rate
+	}
+	b, err := s.bucketPool.Get(claims)
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to get bucket")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if b != nil {
+		w = NewThrottledRequestWrtier(w, b)
 	}
 	for k, v := range headers {
 		r.Header.Set(k, v)

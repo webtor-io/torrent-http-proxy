@@ -3,12 +3,14 @@ module github.com/webtor-io/torrent-http-proxy
 go 1.15
 
 require (
+	code.cloudfoundry.org/bytefmt v0.0.0-20200131002437-cf55d5288a48
 	github.com/bsm/redislock v0.4.0
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gorilla/websocket v1.4.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/improbable-eng/grpc-web v0.11.0
 	github.com/joonix/log v0.0.0-20190524090622-13fe31bbdd7a
+	github.com/juju/ratelimit v1.0.1
 	github.com/mwitkow/grpc-proxy v0.0.0-20181017164139-0f1106ef9c76
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.9.0
