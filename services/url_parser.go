@@ -139,12 +139,13 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 		return nil, errors.Wrapf(err, "Failed to extract mod from path=%s", path)
 	}
 	originPath := newPath
+	var tempMod *Mod
 	for {
-		originPath, mod, err = s.extractMod(originPath)
+		originPath, tempMod, err = s.extractMod(originPath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Failed to extract mod from path=%s", path)
 		}
-		if mod == nil {
+		if tempMod == nil {
 			break
 		}
 	}
