@@ -200,14 +200,15 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}()
 
 	headers := map[string]string{
-		"X-Source-Url": s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
-		"X-Proxy-Url":  s.baseURL,
-		"X-Info-Hash":  src.InfoHash,
-		"X-Path":       src.Path,
-		"X-Full-Path":  "/" + src.InfoHash + "/" + url.PathEscape(strings.TrimPrefix(src.Path, "/")),
-		"X-Token":      src.Token,
-		"X-Api-Key":    apiKey,
-		"X-Client":     clientName,
+		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
+		"X-Proxy-Url":   s.baseURL,
+		"X-Info-Hash":   src.InfoHash,
+		"X-Path":        src.Path,
+		"X-Origin-Path": src.OriginPath,
+		"X-Full-Path":   "/" + src.InfoHash + "/" + url.PathEscape(strings.TrimPrefix(src.Path, "/")),
+		"X-Token":       src.Token,
+		"X-Api-Key":     apiKey,
+		"X-Client":      clientName,
 	}
 	rate, ok := claims["rate"].(string)
 	if ok {

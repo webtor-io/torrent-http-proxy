@@ -21,14 +21,15 @@ type Mod struct {
 // Source struct represents torrent file source.
 // Source may have additional modification.
 type Source struct {
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	InfoHash string `json:"info_hash"`
-	Path     string `json:"path"`
-	Token    string `json:"token"`
-	ApiKey   string `json:"api_key"`
-	Query    string `json:"query"`
-	Mod      *Mod
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	InfoHash   string `json:"info_hash"`
+	Path       string `json:"path"`
+	OriginPath string `json:"origin_path"`
+	Token      string `json:"token"`
+	ApiKey     string `json:"api_key"`
+	Query      string `json:"query"`
+	Mod        *Mod
 }
 
 func (s *Source) GetKey() string {
@@ -137,15 +138,26 @@ func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to extract mod from path=%s", path)
 	}
+	originPath := newPath
+	for {
+		originPath, mod, err = s.extractMod(originPath)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Failed to extract mod from path=%s", path)
+		}
+		if mod == nil {
+			break
+		}
+	}
 	ss := &Source{
-		InfoHash: hash,
-		Path:     newPath,
-		Token:    url.Query().Get("token"),
-		ApiKey:   url.Query().Get("api-key"),
-		Query:    url.RawQuery,
-		Type:     sourceType,
-		Name:     sourceName,
-		Mod:      mod,
+		InfoHash:   hash,
+		Path:       newPath,
+		OriginPath: originPath,
+		Token:      url.Query().Get("token"),
+		ApiKey:     url.Query().Get("api-key"),
+		Query:      url.RawQuery,
+		Type:       sourceType,
+		Name:       sourceName,
+		Mod:        mod,
 	}
 	return ss, nil
 }

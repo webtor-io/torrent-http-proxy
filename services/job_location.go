@@ -458,14 +458,15 @@ func (s *JobLocation) invoke() (*Location, error) {
 		clientName = s.acl.Name
 	}
 	annotations := map[string]string{
-		"job-id":     s.id,
-		"job-type":   s.cfg.Name,
-		"info-hash":  s.params.InfoHash,
-		"file-path":  s.params.Path,
-		"source-url": s.params.SourceURL,
-		"extra":      s.params.Extra,
-		"grace":      fmt.Sprintf("%d", s.cfg.Grace),
-		"client":     clientName,
+		"job-id":      s.id,
+		"job-type":    s.cfg.Name,
+		"info-hash":   s.params.InfoHash,
+		"file-path":   s.params.Path,
+		"origin-path": s.params.OriginPath,
+		"source-url":  s.params.SourceURL,
+		"extra":       s.params.Extra,
+		"grace":       fmt.Sprintf("%d", s.cfg.Grace),
+		"client":      clientName,
 	}
 	validLabelValue := regexp.MustCompile(`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`)
 	labels := map[string]string{}

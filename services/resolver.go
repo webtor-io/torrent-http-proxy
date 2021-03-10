@@ -31,6 +31,7 @@ type Resolver struct {
 
 type InitParams struct {
 	InfoHash       string
+	OriginPath     string
 	SourceURL      string
 	Path           string
 	Extra          string
@@ -57,6 +58,7 @@ func (s *Resolver) getInit(src *Source) *Init {
 		init = &Init{
 			InitParams: &InitParams{
 				InfoHash:       src.InfoHash,
+				OriginPath:     src.OriginPath,
 				Path:           src.Path,
 				Extra:          src.Mod.Extra,
 				SourceURL:      s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
