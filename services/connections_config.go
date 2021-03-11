@@ -332,6 +332,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "TORRENT_WEB_CACHE",
 			},
 		},
+		"trc": &ConnectionConfig{
+			Name:           "transcode-web-cache",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "TRANSCODE_WEB_CACHE",
+			},
+		},
 		"abuse": &ConnectionConfig{
 			Name:           "abuse-store",
 			ConnectionType: ConnectionType_SERVICE,
