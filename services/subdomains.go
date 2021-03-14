@@ -207,7 +207,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 		})
 	}
 	sc, err = s.filterByActivePod(sc)
-	sc = s.updateScoreByCPU(sc)
+	// sc = s.updateScoreByCPU(sc)
 	sc = s.updateScoreByBandwidth(sc)
 	sc, err = s.updateScoreByInfoHash(sc)
 	if err != nil {
