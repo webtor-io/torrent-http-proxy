@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"code.cloudfoundry.org/bytefmt"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/sirupsen/logrus"
@@ -23,25 +24,25 @@ const (
 )
 
 func RegisterNodesStatFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.IntFlag{
+	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_HIGH_CPU,
 		Usage:  "node high cpu watermark (milli cpus)",
 		EnvVar: "NODE_HIGH_CPU",
 		Value:  3900,
 	})
-	c.Flags = append(c.Flags, cli.IntFlag{
+	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_LOW_CPU,
 		Usage:  "node low cpu watermark (milli cpus)",
 		EnvVar: "NODE_LOW_CPU",
 		Value:  3500,
 	})
-	c.Flags = append(c.Flags, cli.IntFlag{
+	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_HIGH_BANDWIDTH,
 		Usage:  "node high bandwidth watermark",
 		EnvVar: "NODE_HIGH_BANDWIDTH",
 		Value:  190 * 1000 * 1000, // 190Mbps
 	})
-	c.Flags = append(c.Flags, cli.IntFlag{
+	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_LOW_BANDWIDTH,
 		Usage:  "node low bandwidth watermark",
 		EnvVar: "NODE_LOW_BANDWIDTH",
@@ -56,14 +57,14 @@ func RegisterNodesStatFlags(c *cli.App) {
 }
 
 type NodeBandwidth struct {
-	High    int
-	Low     int
-	Current int
+	High    uint64
+	Low     uint64
+	Current uint64
 }
 type NodeCPU struct {
-	High    int
-	Low     int
-	Current int
+	High    uint64
+	Low     uint64
+	Current uint64
 }
 
 type NodeStat struct {
@@ -71,6 +72,7 @@ type NodeStat struct {
 	IP   string
 	NodeBandwidth
 	NodeCPU
+	Pool string
 }
 
 type NodesStat struct {
@@ -81,12 +83,10 @@ type NodesStat struct {
 	stats   []NodeStat
 	err     error
 	inited  bool
-	naKey   string
-	naVal   string
-	cpuHigh int
-	cpuLow  int
-	bwHigh  int
-	bwLow   int
+	cpuHigh uint64
+	cpuLow  uint64
+	bwHigh  uint64
+	bwLow   uint64
 	iface   string
 	raType  string
 }
@@ -95,26 +95,29 @@ func NewNodesStat(c *cli.Context, pcl *PromClient, kcl *K8SClient, l *logrus.Ent
 	return &NodesStat{
 		pcl:     pcl,
 		kcl:     kcl,
-		naKey:   c.String(JOB_NODE_AFFINITY_KEY),
-		naVal:   c.String(JOB_NODE_AFFINITY_VALUE),
-		cpuHigh: c.Int(NODE_HIGH_CPU),
-		cpuLow:  c.Int(NODE_LOW_CPU),
-		bwHigh:  c.Int(NODE_HIGH_BANDWIDTH),
-		bwLow:   c.Int(NODE_LOW_BANDWIDTH),
+		cpuHigh: c.Uint64(NODE_HIGH_CPU),
+		cpuLow:  c.Uint64(NODE_LOW_CPU),
+		bwHigh:  c.Uint64(NODE_HIGH_BANDWIDTH),
+		bwLow:   c.Uint64(NODE_LOW_BANDWIDTH),
 		iface:   c.String(NODE_NETWORK_IFACE),
 		raType:  c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
 	}
 }
 
 func (s *NodesStat) get() ([]NodeStat, error) {
-	stats, err := s.getPromStats()
+	ns, err := s.getKubeStats()
 	if err != nil {
-		s.l.WithError(err).Error("Failed to get stats from prometheus")
+		return nil, errors.Wrap(err, "Failed to get stats from k8s")
 	}
-	if stats != nil {
-		return stats, nil
+	fmt.Printf("%+v", ns)
+	ps, err := s.getPromStats(ns)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get stats from k8s")
 	}
-	return s.getKubeStats()
+	if ps == nil {
+		return ns, nil
+	}
+	return ps, nil
 }
 
 func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
@@ -125,9 +128,6 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 	timeout := int64(5)
 	opts := metav1.ListOptions{
 		TimeoutSeconds: &timeout,
-	}
-	if s.naKey != "" && s.naVal != "" {
-		opts.LabelSelector = fmt.Sprintf("%v=%v", s.naKey, s.naVal)
 	}
 	nodes, err := cl.CoreV1().Nodes().List(opts)
 	if err != nil {
@@ -150,25 +150,52 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 				ip = a.Address
 			}
 		}
+		bwHigh := s.bwHigh
+		bwLow := s.bwLow
+		cpuHigh := s.cpuHigh
+		cpuLow := s.cpuLow
+		if v, ok := n.GetLabels()["bw-high"]; ok {
+			bwHigh, err = bytefmt.ToBytes(v)
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to parse bw-high")
+			}
+		}
+		if v, ok := n.GetLabels()["bw-low"]; ok {
+			bwLow, err = bytefmt.ToBytes(v)
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to parse bw-low")
+			}
+		}
+		if v, ok := n.GetLabels()["cpu-high"]; ok {
+			cpuHigh, err = bytefmt.ToBytes(v)
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to parse cpu-high")
+			}
+		}
+		if v, ok := n.GetLabels()["cpu-low"]; ok {
+			cpuLow, err = bytefmt.ToBytes(v)
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to parse cpu-low")
+			}
+		}
 		res = append(res, NodeStat{
 			Name: n.Name,
 			IP:   ip,
 			NodeBandwidth: NodeBandwidth{
-				Current: 0,
-				High:    s.bwHigh,
-				Low:     s.bwLow,
+				High: bwHigh,
+				Low:  bwLow,
 			},
 			NodeCPU: NodeCPU{
-				Current: 0,
-				High:    s.cpuHigh,
-				Low:     s.cpuLow,
+				High: cpuHigh,
+				Low:  cpuLow,
 			},
+			Pool: n.GetLabels()["pool"],
 		})
 	}
 	return res, nil
 }
 
-func (s *NodesStat) getPromStats() ([]NodeStat, error) {
+func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 	cl, err := s.pcl.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get prometheus client")
@@ -179,9 +206,6 @@ func (s *NodesStat) getPromStats() ([]NodeStat, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	query := fmt.Sprintf("rate(node_network_transmit_bytes_total{device=\"%v\"}[5m]) * on (pod) group_right kube_pod_info * 8", s.iface)
-	if s.naKey != "" && s.naVal != "" {
-		query += fmt.Sprintf(" * on (node) group_left kube_node_labels{label_%v=\"%v\"}", s.naKey, s.naVal)
-	}
 	val, _, err := cl.Query(ctx, query, time.Now())
 	if err != nil {
 		return nil, err
@@ -190,21 +214,12 @@ func (s *NodesStat) getPromStats() ([]NodeStat, error) {
 	if !ok {
 		return nil, errors.Errorf("Failed to parse response %v", val)
 	}
-	res := []NodeStat{}
 	for _, d := range data {
-		res = append(res, NodeStat{
-			Name: string(d.Metric["node"]),
-			IP:   string(d.Metric["host_ip"]),
-			NodeBandwidth: NodeBandwidth{
-				Current: int(d.Value),
-				High:    s.bwHigh,
-				Low:     s.bwLow,
-			},
-			NodeCPU: NodeCPU{
-				High: s.cpuHigh,
-				Low:  s.cpuLow,
-			},
-		})
+		for i, n := range ns {
+			if string(d.Metric["node"]) == n.Name {
+				ns[i].NodeBandwidth.Current = uint64(d.Value)
+			}
+		}
 	}
 	query = "sum by (instance) (irate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) * on(instance) group_left(nodename) (node_uname_info) * 1000"
 	val, _, err = cl.Query(ctx, query, time.Now())
@@ -216,13 +231,13 @@ func (s *NodesStat) getPromStats() ([]NodeStat, error) {
 		return nil, errors.Errorf("Failed to parse response %v", val)
 	}
 	for _, d := range data {
-		for i, r := range res {
-			if r.Name == string(d.Metric["nodename"]) {
-				res[i].NodeCPU.Current = int(d.Value)
+		for i, n := range ns {
+			if n.Name == string(d.Metric["nodename"]) {
+				ns[i].NodeCPU.Current = uint64(d.Value)
 			}
 		}
 	}
-	return res, nil
+	return ns, nil
 }
 
 func (s *NodesStat) Get() ([]NodeStat, error) {

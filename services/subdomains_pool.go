@@ -25,9 +25,9 @@ func NewSubdomainsPool(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool) *Subd
 	return &SubdomainsPool{c: c, k8s: k8s, nsp: nsp, expire: time.Duration(SUBDOMAINS_TTL) * time.Second}
 }
 
-func (s *SubdomainsPool) Get(infoHash string, skipActiveJobSearch bool) ([]string, error) {
-	key := fmt.Sprintf("%v-%v", infoHash, skipActiveJobSearch)
-	v, _ := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, s.nsp, infoHash, skipActiveJobSearch))
+func (s *SubdomainsPool) Get(infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pool string) ([]string, error) {
+	key := fmt.Sprintf("%v-%v-%v-%v-%v", infoHash, skipActiveJobSearch, useCPU, useBandwidth, pool)
+	v, _ := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, s.nsp, infoHash, skipActiveJobSearch, useCPU, useBandwidth, pool))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {

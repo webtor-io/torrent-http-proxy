@@ -276,7 +276,17 @@ func (s *Web) Serve() error {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		subs, err := s.subdomains.Get(r.URL.Query().Get("infohash"), r.URL.Query().Get("skip-active-job-search") == "true")
+		pool := r.URL.Query().Get("pool")
+		if pool == "" {
+			pool = "worker"
+		}
+		subs, err := s.subdomains.Get(
+			r.URL.Query().Get("infohash"),
+			r.URL.Query().Get("skip-active-job-search") == "true",
+			r.URL.Query().Get("use-cpu") == "true",
+			r.URL.Query().Get("use-bandwidth") == "true",
+			pool,
+		)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to get subdomains")
 			w.WriteHeader(500)
