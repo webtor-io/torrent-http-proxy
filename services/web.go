@@ -280,7 +280,7 @@ func (s *Web) Serve() error {
 		if pool == "" {
 			pool = "worker"
 		}
-		subs, err := s.subdomains.Get(
+		sc, subs, err := s.subdomains.Get(
 			r.URL.Query().Get("infohash"),
 			r.URL.Query().Get("skip-active-job-search") == "true",
 			r.URL.Query().Get("use-cpu") == "true",
@@ -300,7 +300,11 @@ func (s *Web) Serve() error {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(json)
+		if r.URL.Query().Get("debug") == "true" {
+			w.Write([]byte(fmt.Sprintf("%+v", sc)))
+		} else {
+			w.Write(json)
+		}
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/favicon") {

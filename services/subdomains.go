@@ -26,7 +26,8 @@ const (
 var hexIPPattern = regexp.MustCompile(`[^\.]*`)
 
 type Subdomains struct {
-	res                 []string
+	subs                []string
+	sc                  []NodeStatWithScore
 	inited              bool
 	err                 error
 	mux                 sync.Mutex
@@ -244,10 +245,10 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 	return sc, nil
 }
 
-func (s *Subdomains) get() ([]string, error) {
+func (s *Subdomains) get() ([]NodeStatWithScore, []string, error) {
 	stats, err := s.getScoredStats()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get sorted nodes stat")
+		return nil, nil, errors.Wrap(err, "Failed to get sorted nodes stat")
 	}
 	res := []string{}
 	for _, st := range stats {
@@ -259,16 +260,16 @@ func (s *Subdomains) get() ([]string, error) {
 	if l > MAX_SUBDOMAINS {
 		l = MAX_SUBDOMAINS
 	}
-	return res[0:l], nil
+	return stats, res[0:l], nil
 }
 
-func (s *Subdomains) Get() ([]string, error) {
+func (s *Subdomains) Get() ([]NodeStatWithScore, []string, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.inited {
-		return s.res, s.err
+		return s.sc, s.subs, s.err
 	}
-	s.res, s.err = s.get()
+	s.sc, s.subs, s.err = s.get()
 	s.inited = true
-	return s.res, s.err
+	return s.sc, s.subs, s.err
 }
