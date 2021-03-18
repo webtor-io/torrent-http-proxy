@@ -143,6 +143,9 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeSta
 	if s.infoHash == "" {
 		return stats, nil
 	}
+	if len(stats) == 0 {
+		return stats, nil
+	}
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].Name > stats[j].Name
 	})
@@ -184,7 +187,7 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeSta
 			continue
 		}
 		ratio := 1 / float64(stats[i].Distance) / 2
-		stats[i].Score = stats[i].Score * ratio * ratio
+		stats[i].Score = stats[i].Score * ratio
 	}
 	return stats, nil
 }
@@ -204,7 +207,6 @@ func (s *Subdomains) updateScoreByBandwidth(stats []NodeStatWithScore) []NodeSta
 
 func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 	stats, err := s.nsp.Get()
-	fmt.Printf("%+v", stats)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get nodes stat")
 	}
@@ -238,6 +240,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 	sort.Slice(sc, func(i, j int) bool {
 		return sc[i].Score > sc[j].Score
 	})
+	// fmt.Printf("%+v", sc)
 	return sc, nil
 }
 

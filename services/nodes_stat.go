@@ -40,13 +40,13 @@ func RegisterNodesStatFlags(c *cli.App) {
 		Name:   NODE_HIGH_BANDWIDTH,
 		Usage:  "node high bandwidth watermark",
 		EnvVar: "NODE_HIGH_BANDWIDTH",
-		Value:  190 * 1000 * 1000, // 190Mbps
+		Value:  150 * 1000 * 1000, // 150Mbps
 	})
 	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_LOW_BANDWIDTH,
 		Usage:  "node low bandwidth watermark",
 		EnvVar: "NODE_LOW_BANDWIDTH",
-		Value:  95 * 1000 * 1000, // 95Mbps
+		Value:  85 * 1000 * 1000, // 85Mbps
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   NODE_NETWORK_IFACE,
@@ -109,10 +109,9 @@ func (s *NodesStat) get() ([]NodeStat, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get stats from k8s")
 	}
-	fmt.Printf("%+v", ns)
 	ps, err := s.getPromStats(ns)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get stats from k8s")
+		return nil, errors.Wrap(err, "Failed to get stats from prom")
 	}
 	if ps == nil {
 		return ns, nil
