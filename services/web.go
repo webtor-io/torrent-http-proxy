@@ -277,18 +277,19 @@ func (s *Web) Serve() error {
 			return
 		}
 		pool := r.URL.Query().Get("pool")
-		if pool == "" {
-			pool = "worker"
+		pools := strings.Split(pool, ",")
+		if len(pools) == 0 {
+			pools = []string{"worker"}
 		}
-		if pool == "any" {
-			pool = ""
+		if len(pools) == 1 && pools[0] == "any" {
+			pools = []string{}
 		}
 		sc, subs, err := s.subdomains.Get(
 			r.URL.Query().Get("infohash"),
 			r.URL.Query().Get("skip-active-job-search") == "true",
 			r.URL.Query().Get("use-cpu") == "true",
 			r.URL.Query().Get("use-bandwidth") == "true",
-			pool,
+			pools,
 		)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to get subdomains")

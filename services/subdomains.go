@@ -39,7 +39,7 @@ type Subdomains struct {
 	jobNamespace        string
 	useCPU              bool
 	useBandwidth        bool
-	pool                string
+	pools               []string
 	skipActiveJobSearch bool
 }
 
@@ -58,7 +58,7 @@ func RegisterSubdomainsFlags(c *cli.App) {
 	})
 }
 
-func NewSubdomains(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool, infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pool string) *Subdomains {
+func NewSubdomains(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool, infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pools []string) *Subdomains {
 	return &Subdomains{
 		k8s:                 k8s,
 		nsp:                 nsp,
@@ -68,7 +68,7 @@ func NewSubdomains(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool, infoHash 
 		infoHash:            infoHash,
 		useCPU:              useCPU,
 		useBandwidth:        useBandwidth,
-		pool:                pool,
+		pools:               pools,
 		skipActiveJobSearch: skipActiveJobSearch,
 	}
 }
@@ -79,10 +79,20 @@ type NodeStatWithScore struct {
 	Distance int
 }
 
-func (s *Subdomains) filterByPool(stats []NodeStatWithScore) []NodeStatWithScore {
+func (s *Subdomains) filterByPool(stats []NodeStatWithScore, pool string) []NodeStatWithScore {
 	res := []NodeStatWithScore{}
 	for _, st := range stats {
-		if s.pool == st.Pool {
+		if pool == st.Pool {
+			res = append(res, st)
+		}
+	}
+	return res
+}
+
+func (s *Subdomains) filterWithZeroScore(stats []NodeStatWithScore) []NodeStatWithScore {
+	res := []NodeStatWithScore{}
+	for _, st := range stats {
+		if st.Score != 0 {
 			res = append(res, st)
 		}
 	}
@@ -207,6 +217,22 @@ func (s *Subdomains) updateScoreByBandwidth(stats []NodeStatWithScore) []NodeSta
 }
 
 func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
+	if len(s.pools) == 0 {
+		return s.getScoredStatsByPool("")
+	}
+	for _, p := range s.pools {
+		sc, err := s.getScoredStatsByPool(p)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Failed to get nodes stat for pool %v", p)
+		}
+		if len(sc) > 0 {
+			return sc, nil
+		}
+	}
+	return []NodeStatWithScore{}, nil
+}
+
+func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, error) {
 	stats, err := s.nsp.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get nodes stat")
@@ -219,8 +245,8 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 			Distance: -1,
 		})
 	}
-	if s.pool != "" {
-		sc = s.filterByPool(sc)
+	if pool != "" {
+		sc = s.filterByPool(sc, pool)
 	}
 	if !s.skipActiveJobSearch {
 		sc, err = s.filterByActivePod(sc)
@@ -241,6 +267,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 	sort.Slice(sc, func(i, j int) bool {
 		return sc[i].Score > sc[j].Score
 	})
+	sc = s.filterWithZeroScore(sc)
 	// fmt.Printf("%+v", sc)
 	return sc, nil
 }
