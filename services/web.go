@@ -280,6 +280,9 @@ func (s *Web) Serve() error {
 		if pool == "" {
 			pool = "worker"
 		}
+		if pool == "any" {
+			pool = ""
+		}
 		sc, subs, err := s.subdomains.Get(
 			r.URL.Query().Get("infohash"),
 			r.URL.Query().Get("skip-active-job-search") == "true",

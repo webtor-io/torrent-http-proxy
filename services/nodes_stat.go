@@ -34,13 +34,13 @@ func RegisterNodesStatFlags(c *cli.App) {
 		Name:   NODE_LOW_CPU,
 		Usage:  "node low cpu watermark (milli cpus)",
 		EnvVar: "NODE_LOW_CPU",
-		Value:  3500,
+		Value:  3000,
 	})
 	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_HIGH_BANDWIDTH,
 		Usage:  "node high bandwidth watermark",
 		EnvVar: "NODE_HIGH_BANDWIDTH",
-		Value:  150 * 1000 * 1000, // 150Mbps
+		Value:  100 * 1000 * 1000, // 100Mbps
 	})
 	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_LOW_BANDWIDTH,
