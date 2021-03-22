@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,7 +73,7 @@ type NodeStat struct {
 	IP   string
 	NodeBandwidth
 	NodeCPU
-	Pool string
+	Pool []string
 }
 
 type NodesStat struct {
@@ -188,7 +189,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 				High: cpuHigh,
 				Low:  cpuLow,
 			},
-			Pool: n.GetLabels()["pool"],
+			Pool: strings.Split(n.GetLabels()["pool"], ","),
 		})
 	}
 	return res, nil

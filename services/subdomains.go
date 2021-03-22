@@ -82,8 +82,10 @@ type NodeStatWithScore struct {
 func (s *Subdomains) filterByPool(stats []NodeStatWithScore, pool string) []NodeStatWithScore {
 	res := []NodeStatWithScore{}
 	for _, st := range stats {
-		if pool == st.Pool {
-			res = append(res, st)
+		for _, p := range st.Pool {
+			if pool == p {
+				res = append(res, st)
+			}
 		}
 	}
 	return res
