@@ -108,7 +108,6 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 
 func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
 	s.logger.Info("Dialing proxy backend")
-	timeout := time.Duration(HTTP_PROXY_DIAL_TIMEOUT) * time.Second
 	loc, err := s.r.Resolve(s.src, s.logger, purge, s.invoke, s.cl)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get location")
@@ -116,8 +115,8 @@ func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
 	}
 	addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
 	conn, err := (&net.Dialer{
-		Timeout:   timeout,
-		KeepAlive: time.Duration(HTTP_PROXY_TTL) * time.Second,
+		Timeout:   1 * time.Minute,
+		KeepAlive: 1 * time.Minute,
 	}).Dial(network, addr)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to dial")
@@ -162,7 +161,10 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 			Dial: func(network, addr string) (net.Conn, error) {
 				return s.dialWithRetry(network, HTTP_PROXY_DIAL_TRIES, HTTP_PROXY_REDIAL_DELAY)
 			},
-			MaxIdleConnsPerHost: MAX_IDLE_CONNECTIONS,
+			MaxIdleConns:        500,
+			MaxIdleConnsPerHost: 500,
+			MaxConnsPerHost:     500,
+			IdleConnTimeout:     90 * time.Second,
 		}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
