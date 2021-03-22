@@ -189,7 +189,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 				High: cpuHigh,
 				Low:  cpuLow,
 			},
-			Pool: strings.Split(n.GetLabels()["pool"], ","),
+			Pool: strings.Split(n.GetLabels()["pool"], "_"),
 		})
 	}
 	return res, nil
