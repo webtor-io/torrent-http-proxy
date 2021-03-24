@@ -296,15 +296,41 @@ func (s *JobLocation) makeResources() corev1.ResourceRequirements {
 
 }
 
-func (s *JobLocation) makeNodeSelector() map[string]string {
-	res := map[string]string{}
+func (s *JobLocation) makeRequiredNodeAffinity() *corev1.NodeSelector {
+	nst := []corev1.NodeSelectorTerm{}
+	nst = append(nst, corev1.NodeSelectorTerm{
+		MatchExpressions: []corev1.NodeSelectorRequirement{
+			{
+				Key:      fmt.Sprintf("%vno-job", K8S_LABEL_PREFIX),
+				Operator: corev1.NodeSelectorOpNotIn,
+				Values:   []string{"true"},
+			},
+		},
+	})
+	nst = append(nst, corev1.NodeSelectorTerm{
+		MatchExpressions: []corev1.NodeSelectorRequirement{
+			{
+				Key:      fmt.Sprintf("%vno-%v", K8S_LABEL_PREFIX, s.cfg.Name),
+				Operator: corev1.NodeSelectorOpNotIn,
+				Values:   []string{"true"},
+			},
+		},
+	})
 	if s.naKey != "" && s.naVal != "" {
-		res[s.naKey] = s.naVal
+		nst = append(nst, corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{
+				{
+					Key:      s.naKey,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{s.naVal},
+				},
+			},
+		})
 	}
-	return res
+	return &corev1.NodeSelector{NodeSelectorTerms: nst}
 }
 
-func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
+func (s *JobLocation) makeNodeAffinity() []corev1.PreferredSchedulingTerm {
 	aff := []corev1.PreferredSchedulingTerm{}
 	if s.ra && s.nn != "" {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
@@ -320,20 +346,6 @@ func (s *JobLocation) makeAffinity() []corev1.PreferredSchedulingTerm {
 			},
 		})
 	}
-	// if s.naKey != "" && s.naVal != "" {
-	// 	aff = append(aff, corev1.PreferredSchedulingTerm{
-	// 		Weight: 1,
-	// 		Preference: corev1.NodeSelectorTerm{
-	// 			MatchExpressions: []corev1.NodeSelectorRequirement{
-	// 				{
-	// 					Key:      s.naKey,
-	// 					Operator: corev1.NodeSelectorOpIn,
-	// 					Values:   []string{s.naVal},
-	// 				},
-	// 			},
-	// 		},
-	// 	})
-	// }
 	return aff
 }
 
@@ -343,7 +355,7 @@ func (s *JobLocation) isInited() (bool, error) {
 		return false, errors.Wrap(err, "Failed to get K8S client")
 	}
 	opts := metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("job-id=%v", s.id),
+		LabelSelector: fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id),
 	}
 	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
 	if err != nil {
@@ -364,9 +376,9 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 		return nil, errors.Wrap(err, "Failed to get K8S client")
 	}
 
-	selector := fmt.Sprintf("job-id=%v", s.id)
+	selector := fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id)
 	if name != "" {
-		selector = fmt.Sprintf("job-name=%v", name)
+		selector = fmt.Sprintf("%vjob-name=%v", K8S_LABEL_PREFIX, name)
 	}
 	opts := metav1.ListOptions{
 		LabelSelector: selector,
@@ -468,9 +480,13 @@ func (s *JobLocation) invoke() (*Location, error) {
 		"grace":       fmt.Sprintf("%d", s.cfg.Grace),
 		"client":      clientName,
 	}
+	annotationsWithPrefix := map[string]string{}
+	for k, v := range annotations {
+		annotationsWithPrefix[fmt.Sprintf("%v%v", K8S_LABEL_PREFIX, k)] = v
+	}
 	validLabelValue := regexp.MustCompile(`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`)
 	labels := map[string]string{}
-	for k, v := range annotations {
+	for k, v := range annotationsWithPrefix {
 		if validLabelValue.MatchString(v) && len(v) < 64 {
 			labels[k] = v
 		}
@@ -479,7 +495,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 	meta := metav1.ObjectMeta{
 		Name:        jobName,
 		Labels:      labels,
-		Annotations: annotations,
+		Annotations: annotationsWithPrefix,
 	}
 	env := []corev1.EnvVar{
 		{
@@ -533,7 +549,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.AWSEndpoint,
 		},
 	}
-	for k, v := range annotations {
+	for k, v := range annotationsWithPrefix {
 		envName := strings.Replace(strings.ToUpper(k), "-", "_", -1)
 		env = append(env, corev1.EnvVar{
 			Name:  envName,
@@ -552,7 +568,6 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: meta,
 				Spec: corev1.PodSpec{
-					NodeSelector: s.makeNodeSelector(),
 					Affinity: &corev1.Affinity{
 						PodAffinity: &corev1.PodAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
@@ -561,7 +576,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 									PodAffinityTerm: corev1.PodAffinityTerm{
 										LabelSelector: &metav1.LabelSelector{
 											MatchLabels: map[string]string{
-												"info-hash": s.params.InfoHash,
+												fmt.Sprintf("%vinfo-hash", K8S_LABEL_PREFIX): s.params.InfoHash,
 											},
 										},
 										TopologyKey: "kubernetes.io/hostname",
@@ -570,7 +585,8 @@ func (s *JobLocation) invoke() (*Location, error) {
 							},
 						},
 						NodeAffinity: &corev1.NodeAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: s.makeAffinity(),
+							PreferredDuringSchedulingIgnoredDuringExecution: s.makeNodeAffinity(),
+							RequiredDuringSchedulingIgnoredDuringExecution:  s.makeRequiredNodeAffinity(),
 						},
 					},
 					Containers: []corev1.Container{

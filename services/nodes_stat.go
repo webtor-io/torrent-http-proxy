@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,26 +18,12 @@ import (
 )
 
 const (
-	NODE_HIGH_CPU       = "node-high-cpu"
-	NODE_LOW_CPU        = "node-low-cpu"
 	NODE_HIGH_BANDWIDTH = "node-high-bandwidth"
 	NODE_LOW_BANDWIDTH  = "node-low-bandwidth"
 	NODE_NETWORK_IFACE  = "node-netowrk-iface"
 )
 
 func RegisterNodesStatFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.Uint64Flag{
-		Name:   NODE_HIGH_CPU,
-		Usage:  "node high cpu watermark (milli cpus)",
-		EnvVar: "NODE_HIGH_CPU",
-		Value:  3900,
-	})
-	c.Flags = append(c.Flags, cli.Uint64Flag{
-		Name:   NODE_LOW_CPU,
-		Usage:  "node low cpu watermark (milli cpus)",
-		EnvVar: "NODE_LOW_CPU",
-		Value:  3000,
-	})
 	c.Flags = append(c.Flags, cli.Uint64Flag{
 		Name:   NODE_HIGH_BANDWIDTH,
 		Usage:  "node high bandwidth watermark",
@@ -63,9 +50,9 @@ type NodeBandwidth struct {
 	Current uint64
 }
 type NodeCPU struct {
-	High    uint64
-	Low     uint64
-	Current uint64
+	High    float64
+	Low     float64
+	Current float64
 }
 
 type NodeStat struct {
@@ -84,8 +71,8 @@ type NodesStat struct {
 	stats   []NodeStat
 	err     error
 	inited  bool
-	cpuHigh uint64
-	cpuLow  uint64
+	cpuHigh float64
+	cpuLow  float64
 	bwHigh  uint64
 	bwLow   uint64
 	iface   string
@@ -94,14 +81,12 @@ type NodesStat struct {
 
 func NewNodesStat(c *cli.Context, pcl *PromClient, kcl *K8SClient, l *logrus.Entry) *NodesStat {
 	return &NodesStat{
-		pcl:     pcl,
-		kcl:     kcl,
-		cpuHigh: c.Uint64(NODE_HIGH_CPU),
-		cpuLow:  c.Uint64(NODE_LOW_CPU),
-		bwHigh:  c.Uint64(NODE_HIGH_BANDWIDTH),
-		bwLow:   c.Uint64(NODE_LOW_BANDWIDTH),
-		iface:   c.String(NODE_NETWORK_IFACE),
-		raType:  c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		pcl:    pcl,
+		kcl:    kcl,
+		bwHigh: c.Uint64(NODE_HIGH_BANDWIDTH),
+		bwLow:  c.Uint64(NODE_LOW_BANDWIDTH),
+		iface:  c.String(NODE_NETWORK_IFACE),
+		raType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
 	}
 }
 
@@ -118,6 +103,19 @@ func (s *NodesStat) get() ([]NodeStat, error) {
 		return ns, nil
 	}
 	return ps, nil
+}
+
+func parseCPUTime(t string) (float64, error) {
+	d := float64(1)
+	if strings.HasSuffix(t, "m") {
+		d = 1000
+		t = strings.TrimSuffix(t, "m")
+	}
+	v, err := strconv.Atoi(t)
+	if err != nil {
+		return 0, err
+	}
+	return float64(v) / d, nil
 }
 
 func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
@@ -152,30 +150,40 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 		}
 		bwHigh := s.bwHigh
 		bwLow := s.bwLow
-		cpuHigh := s.cpuHigh
-		cpuLow := s.cpuLow
-		if v, ok := n.GetLabels()["bw-high"]; ok {
+		a := n.Status.Allocatable[corev1.ResourceCPU]
+		cpuHigh, err := parseCPUTime(a.String())
+		if err != nil {
+			return nil, errors.Wrapf(err, "Failed to parse allocateble cpu value=%v", a.String())
+		}
+		cpuLow := cpuHigh - 1
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-high", K8S_LABEL_PREFIX)]; ok {
 			bwHigh, err = bytefmt.ToBytes(v)
 			if err != nil {
-				return nil, errors.Wrap(err, "Failed to parse bw-high")
+				return nil, errors.Wrapf(err, "Failed to parse bandwidth-high value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()["bw-low"]; ok {
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-low", K8S_LABEL_PREFIX)]; ok {
 			bwLow, err = bytefmt.ToBytes(v)
 			if err != nil {
-				return nil, errors.Wrap(err, "Failed to parse bw-low")
+				return nil, errors.Wrapf(err, "Failed to parse bandwidth-low value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()["cpu-high"]; ok {
-			cpuHigh, err = bytefmt.ToBytes(v)
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-high", K8S_LABEL_PREFIX)]; ok {
+			cpuHigh, err = parseCPUTime(v)
 			if err != nil {
-				return nil, errors.Wrap(err, "Failed to parse cpu-high")
+				return nil, errors.Wrapf(err, "Failed to parse cpu-high value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()["cpu-low"]; ok {
-			cpuLow, err = bytefmt.ToBytes(v)
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-low", K8S_LABEL_PREFIX)]; ok {
+			cpuLow, err = parseCPUTime(v)
 			if err != nil {
-				return nil, errors.Wrap(err, "Failed to parse cpu-low")
+				return nil, errors.Wrapf(err, "Failed to parse cpu-low value=%v", v)
+			}
+		}
+		pools := []string{}
+		for k, v := range n.GetLabels() {
+			if strings.HasPrefix(k, K8S_LABEL_PREFIX) && strings.HasSuffix(k, "pool") && v == "true" {
+				pools = append(pools, strings.TrimSuffix(strings.TrimPrefix(k, K8S_LABEL_PREFIX), "-pool"))
 			}
 		}
 		res = append(res, NodeStat{
@@ -189,7 +197,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 				High: cpuHigh,
 				Low:  cpuLow,
 			},
-			Pool: strings.Split(n.GetLabels()["pool"], "_"),
+			Pool: pools,
 		})
 	}
 	return res, nil
@@ -221,7 +229,7 @@ func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 			}
 		}
 	}
-	query = "sum by (instance) (irate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) * on(instance) group_left(nodename) (node_uname_info) * 1000"
+	query = "sum by (instance) (irate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) * on(instance) group_left(nodename) (node_uname_info)"
 	val, _, err = cl.Query(ctx, query, time.Now())
 	if err != nil {
 		return nil, err
@@ -233,7 +241,7 @@ func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 	for _, d := range data {
 		for i, n := range ns {
 			if n.Name == string(d.Metric["nodename"]) {
-				ns[i].NodeCPU.Current = uint64(d.Value)
+				ns[i].NodeCPU.Current = float64(d.Value)
 			}
 		}
 	}

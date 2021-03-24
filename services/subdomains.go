@@ -111,7 +111,7 @@ func (s *Subdomains) filterByActivePod(stats []NodeStatWithScore) ([]NodeStatWit
 	timeout := int64(5)
 	if infoHash != "" {
 		opts := metav1.ListOptions{
-			LabelSelector:  fmt.Sprintf("info-hash=%v", infoHash),
+			LabelSelector:  fmt.Sprintf("%vinfo-hash=%v", K8S_LABEL_PREFIX, infoHash),
 			TimeoutSeconds: &timeout,
 		}
 		pods, err := cl.CoreV1().Pods(s.jobNamespace).List(opts)
