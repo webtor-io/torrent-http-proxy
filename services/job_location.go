@@ -377,7 +377,7 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 
 	selector := fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id)
 	if name != "" {
-		selector = fmt.Sprintf("%vjob-name=%v", K8S_LABEL_PREFIX, name)
+		selector = fmt.Sprintf("job-name=%v", K8S_LABEL_PREFIX, name)
 	}
 	opts := metav1.ListOptions{
 		LabelSelector: selector,
@@ -468,7 +468,9 @@ func (s *JobLocation) invoke() (*Location, error) {
 	if s.acl != nil {
 		clientName = s.acl.Name
 	}
+	jobName := s.id + "-" + randStr(4)
 	annotations := map[string]string{
+		"job-name":    jobName,
 		"job-id":      s.id,
 		"job-type":    s.cfg.Name,
 		"info-hash":   s.params.InfoHash,
@@ -490,7 +492,6 @@ func (s *JobLocation) invoke() (*Location, error) {
 			labels[k] = v
 		}
 	}
-	jobName := s.id + "-" + randStr(4)
 	meta := metav1.ObjectMeta{
 		Name:        jobName,
 		Labels:      labels,
