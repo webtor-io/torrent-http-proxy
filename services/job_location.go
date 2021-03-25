@@ -367,7 +367,6 @@ func (s *JobLocation) isInited() (bool, error) {
 		}
 	}
 	return false, nil
-
 }
 
 func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod, error) {
@@ -549,7 +548,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.AWSEndpoint,
 		},
 	}
-	for k, v := range annotationsWithPrefix {
+	for k, v := range annotations {
 		envName := strings.Replace(strings.ToUpper(k), "-", "_", -1)
 		env = append(env, corev1.EnvVar{
 			Name:  envName,
