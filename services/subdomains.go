@@ -152,7 +152,7 @@ func (s *Subdomains) updateScoreByCPU(stats []NodeStatWithScore) []NodeStatWithS
 	return stats
 }
 
-func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeStatWithScore, error) {
+func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore, useCPU bool) ([]NodeStatWithScore, error) {
 	if s.infoHash == "" {
 		return stats, nil
 	}
@@ -167,13 +167,30 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore) ([]NodeSta
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to parse hex from infohash=%v", s.infoHash)
 	}
-	total := 1048575
-	interval := int64(total / len(stats))
+	num = num * 1000
+	total := 1048575 * 1000
 	t := 0
-	for i := 0; i < len(stats); i++ {
-		if num < (int64(i)+1)*interval {
-			t = i
-			break
+	if useCPU {
+		totalCPU := 0
+		for _, s := range stats {
+			totalCPU += int(s.NodeCPU.High * 1000)
+		}
+		interval := int64(total / totalCPU)
+		cur := int64(0)
+		for i := 0; i < len(stats); i++ {
+			cur += int64(stats[i].NodeCPU.High*1000) * interval
+			if num < cur {
+				t = i
+				break
+			}
+		}
+	} else {
+		interval := int64(total / len(stats))
+		for i := 0; i < len(stats); i++ {
+			if num < (int64(i)+1)*interval {
+				t = i
+				break
+			}
 		}
 	}
 
@@ -262,7 +279,7 @@ func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, err
 	if s.useBandwidth {
 		sc = s.updateScoreByBandwidth(sc)
 	}
-	sc, err = s.updateScoreByInfoHash(sc)
+	sc, err = s.updateScoreByInfoHash(sc, s.useCPU)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to update score by hash")
 	}
