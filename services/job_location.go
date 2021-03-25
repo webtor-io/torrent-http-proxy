@@ -374,7 +374,7 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 
 	selector := fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id)
 	if name != "" {
-		selector = fmt.Sprintf("job-name=%v", K8S_LABEL_PREFIX, name)
+		selector = fmt.Sprintf("job-name=%v", name)
 	}
 	opts := metav1.ListOptions{
 		LabelSelector: selector,
