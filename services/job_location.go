@@ -27,20 +27,24 @@ import (
 )
 
 const (
-	PORT_HTTP               = 8080
-	PORT_PROBE              = 8081
-	PORT_GRPC               = 50051
-	HEALTH_CHECK_TIMEOUT    = 3
-	HEALTH_CHECK_INTERVAL   = 5
-	POD_LOCK_DURATION       = 1
-	POD_LOCK_STANDBY        = 1
-	POD_LIVENESS_PATH       = "/liveness"
-	POD_READINESS_PATH      = "/readiness"
-	JOB_NODE_AFFINITY_KEY   = "job-node-affinity-key"
-	JOB_NODE_AFFINITY_VALUE = "job-node-affinity-value"
-	JOB_NAMESPACE           = "job-namespace"
-	JOB_REQUEST_AFFINITY    = "job-request-affinity"
-	MY_NODE_NAME            = "my-node-name"
+	PORT_HTTP                          = 8080
+	PORT_PROBE                         = 8081
+	PORT_GRPC                          = 50051
+	HEALTH_CHECK_TIMEOUT               = 3
+	HEALTH_CHECK_INTERVAL              = 5
+	POD_LOCK_DURATION                  = 1
+	POD_LOCK_STANDBY                   = 1
+	POD_LIVENESS_PATH                  = "/liveness"
+	POD_READINESS_PATH                 = "/readiness"
+	JOB_NODE_AFFINITY_KEY              = "job-node-affinity-key"
+	JOB_NODE_AFFINITY_VALUE            = "job-node-affinity-value"
+	JOB_NODE_TRANSCODER_AFFINITY_KEY   = "job-node-transcoder-affinity-key"
+	JOB_NODE_TRANSCODER_AFFINITY_VALUE = "job-node-transcoder-affinity-value"
+	JOB_NODE_SEEDER_AFFINITY_KEY       = "job-node-seeder-affinity-key"
+	JOB_NODE_SEEDER_AFFINITY_VALUE     = "job-node-seeder-affinity-value"
+	JOB_NAMESPACE                      = "job-namespace"
+	JOB_REQUEST_AFFINITY               = "job-request-affinity"
+	MY_NODE_NAME                       = "my-node-name"
 )
 
 var (
@@ -85,6 +89,10 @@ type JobLocation struct {
 	l              *Locker
 	naKey          string
 	naVal          string
+	nsaKey         string
+	nsaVal         string
+	ntaKey         string
+	ntaVal         string
 	namespace      string
 	extAddressType string
 	acl            *Client
@@ -104,6 +112,30 @@ func RegisterJobFlags(c *cli.App) {
 		Usage:  "Node Affinity Value",
 		Value:  "",
 		EnvVar: "JOB_NODE_AFFINITY_VALUE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   JOB_NODE_SEEDER_AFFINITY_KEY,
+		Usage:  "Node Seeder Affinity Key",
+		Value:  "",
+		EnvVar: "JOB_NODE_SEEDER_AFFINITY_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   JOB_NODE_SEEDER_AFFINITY_VALUE,
+		Usage:  "Node Seeder Affinity Value",
+		Value:  "",
+		EnvVar: "JOB_NODE_SEEDER_AFFINITY_VALUE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   JOB_NODE_TRANSCODER_AFFINITY_KEY,
+		Usage:  "Node Transcoder Affinity Key",
+		Value:  "",
+		EnvVar: "JOB_NODE_TRANSCODER_AFFINITY_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   JOB_NODE_TRANSCODER_AFFINITY_VALUE,
+		Usage:  "Node Transcoder Affinity Value",
+		Value:  "",
+		EnvVar: "JOB_NODE_TRANSCODER_AFFINITY_VALUE",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   JOB_NAMESPACE,
@@ -127,7 +159,10 @@ func RegisterJobFlags(c *cli.App) {
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
-		logger: logger, l: l, naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
+		logger: logger, l: l,
+		naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
+		nsaKey: c.String(JOB_NODE_SEEDER_AFFINITY_KEY), nsaVal: c.String(JOB_NODE_SEEDER_AFFINITY_VALUE),
+		ntaKey: c.String(JOB_NODE_TRANSCODER_AFFINITY_KEY), ntaVal: c.String(JOB_NODE_TRANSCODER_AFFINITY_VALUE),
 		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
 		ra: c.Bool(JOB_REQUEST_AFFINITY), nn: c.String(MY_NODE_NAME),
 	}
@@ -300,6 +335,12 @@ func (s *JobLocation) makeNodeSelector() map[string]string {
 	res := map[string]string{}
 	if s.naKey != "" && s.naVal != "" {
 		res[s.naKey] = s.naVal
+	}
+	if s.nsaKey != "" && s.nsaVal != "" && s.cfg.Name == "torrent-web-seeder" {
+		res[s.nsaKey] = s.nsaVal
+	}
+	if s.ntaKey != "" && s.ntaVal != "" && s.cfg.Name == "content-transcoder" {
+		res[s.ntaKey] = s.ntaVal
 	}
 	return res
 }
@@ -584,7 +625,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 						},
 						NodeAffinity: &corev1.NodeAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: s.makeNodeAffinity(),
-							RequiredDuringSchedulingIgnoredDuringExecution:  s.makeRequiredNodeAffinity(),
+							// RequiredDuringSchedulingIgnoredDuringExecution:  s.makeRequiredNodeAffinity(),
 						},
 					},
 					Containers: []corev1.Container{
