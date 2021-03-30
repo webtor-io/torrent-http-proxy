@@ -336,10 +336,10 @@ func (s *JobLocation) makeNodeSelector() map[string]string {
 	if s.naKey != "" && s.naVal != "" {
 		res[s.naKey] = s.naVal
 	}
-	if s.nsaKey != "" && s.nsaVal != "" && s.cfg.Name == "torrent-web-seeder" {
+	if s.nsaKey != "" && s.nsaVal != "" && s.cfg.Name == "seeder" {
 		res[s.nsaKey] = s.nsaVal
 	}
-	if s.ntaKey != "" && s.ntaVal != "" && s.cfg.Name == "content-transcoder" {
+	if s.ntaKey != "" && s.ntaVal != "" && s.cfg.Name == "transcoder" {
 		res[s.ntaKey] = s.ntaVal
 	}
 	return res
