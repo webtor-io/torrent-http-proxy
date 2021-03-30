@@ -9,11 +9,19 @@ const (
 	ConnectionType_JOB     ConnectionType = 1
 )
 
+type JobType string
+
+const (
+	JobType_TRANSCODER JobType = "transcoder"
+	JobType_SEEDER     JobType = "seeder"
+)
+
 type ServiceConfig struct {
 	EnvName string
 }
 
 type JobConfig struct {
+	Type                               JobType
 	Name                               string
 	Image                              string
 	CPURequests                        string
@@ -228,6 +236,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "torrent-web-seeder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
+				Type:                               JobType_SEEDER,
 				Name:                               c.String(JOB_PREFIX) + "seeder",
 				Image:                              c.String(SEEDER_IMAGE),
 				CPURequests:                        c.String(SEEDER_CPU_REQUESTS),
@@ -252,6 +261,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "content-transcoder",
 			ConnectionType: ConnectionType_JOB,
 			JobConfig: JobConfig{
+				Type:                     JobType_TRANSCODER,
 				Name:                     c.String(JOB_PREFIX) + "transcoder",
 				Image:                    c.String(TRANSCODER_IMAGE),
 				CPURequests:              c.String(TRANSCODER_CPU_REQUESTS),
