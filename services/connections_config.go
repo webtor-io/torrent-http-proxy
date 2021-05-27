@@ -377,5 +377,12 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "NGINX_VOD",
 			},
 		},
+		"dp": &ConnectionConfig{
+			Name:           "download-progress",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "DOWNLOAD_PROGRESS",
+			},
+		},
 	}
 }
