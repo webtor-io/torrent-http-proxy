@@ -17,6 +17,13 @@ import (
 	"github.com/urfave/cli"
 )
 
+type SourceType string
+
+const (
+	Internal SourceType = "internal"
+	External SourceType = "external"
+)
+
 type Web struct {
 	host       string
 	port       int
@@ -149,9 +156,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
-	source := "internal"
+	source := Internal
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
-		source = "external"
+		source = External
 		remoteAddress, raOK := claims["remoteAddress"].(string)
 		ua, uaOK := claims["agent"].(string)
 		if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
@@ -179,19 +186,19 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		domain = d
 	}
 
-	promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Inc()
+	promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Inc()
 	defer func() {
-		promHTTPProxyRequestDuration.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
+		promHTTPProxyRequestDuration.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
 		if wi.bytesWritten > 0 {
-			promHTTPProxyRequestTTFB.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
+			promHTTPProxyRequestTTFB.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
 		}
-		promHTTPProxyRequestCurrent.WithLabelValues(source, src.GetEdgeName()).Dec()
-		promHTTPProxyRequestTotal.WithLabelValues(source, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
+		promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Dec()
+		promHTTPProxyRequestTotal.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		promHTTPProxyRequestSize.WithLabelValues(
 			clientName,
 			domain,
 			role,
-			source,
+			string(source),
 			src.GetEdgeName(),
 			src.InfoHash,
 			src.Path,
@@ -214,14 +221,16 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if ok {
 		headers["X-Download-Rate"] = rate
 	}
-	b, err := s.bucketPool.Get(claims)
-	if err != nil {
-		logger.WithError(err).Errorf("Failed to get bucket")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if b != nil {
-		w = NewThrottledRequestWrtier(w, b)
+	if source == External {
+		b, err := s.bucketPool.Get(claims)
+		if err != nil {
+			logger.WithError(err).Errorf("Failed to get bucket")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if b != nil {
+			w = NewThrottledRequestWrtier(w, b)
+		}
 	}
 	for k, v := range headers {
 		r.Header.Set(k, v)
