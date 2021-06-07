@@ -170,7 +170,7 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
-	p.FlushInterval = -1
+	// p.FlushInterval = -1
 	return p, nil
 }
 
