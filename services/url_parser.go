@@ -56,27 +56,39 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 	if !strings.Contains(path, "~") {
 		return path, nil, nil
 	}
-	index := strings.LastIndex(path, "~")
-	first := path[:index]
-	last := path[index+1:]
-	newPath := first
-	p := strings.SplitN(last, "/", 2)
-	t := p[0]
-	ee := strings.SplitN(t, ":", 2)
-	e := ""
-	if len(ee) > 1 {
-		e = ee[1]
-		t = ee[0]
-	}
-	// if t == "" {
-	// 	return "", nil, errors.New("Empty mod name")
-	// }
+	index := len(path)
 	exist := false
+	p := []string{}
+	e := ""
 	name := ""
-	for _, v := range s.configs.GetMods() {
-		if t == v {
-			exist = true
-			name = s.configs.GetMod(v).Name
+	newPath := ""
+	t := ""
+	for {
+		index = strings.LastIndex(path[:index], "~")
+		if index == -1 {
+			break
+		}
+		first := path[:index]
+		last := path[index+1:]
+		newPath = first
+		p = strings.SplitN(last, "/", 2)
+		t := p[0]
+		ee := strings.SplitN(t, ":", 2)
+		if len(ee) > 1 {
+			e = ee[1]
+			t = ee[0]
+		}
+		// if t == "" {
+		// 	return "", nil, errors.New("Empty mod name")
+		// }
+		for _, v := range s.configs.GetMods() {
+			if t == v {
+				exist = true
+				name = s.configs.GetMod(v).Name
+				break
+			}
+		}
+		if exist {
 			break
 		}
 	}
