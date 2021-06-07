@@ -23,6 +23,14 @@ func TestUrlParse(t *testing.T) {
 		if src.Mod.Name != "download-progress" {
 			t.Fatalf("Expected %v got %v", "download-progress", src.Mod.Name)
 		}
+		u, _ = url.Parse("https://example.com/08ada5a7a6183aae1e09d831df6748d566095a10/~tc/completed_pieces?download-id=812a10f280c6348bdd630f6a38e65fb6&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZ2VudCI6Ik1vemlsbGEvNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwXzE1XzcpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS85MS4wLjQ0NzIuNzcgU2FmYXJpLzUzNy4zNiIsInJlbW90ZUFkZHJlc3MiOiI0Ni4xNjAuMjU1LjE5NyIsImRvbWFpbiI6IndlYnRvci5pbyIsImV4cCI6MTYyMzY5MzUyMCwic2Vzc2lvbklEIjoiU0VjYzcyck5KWFlRcS1UbUJaRkdxWkZjcUpJRlJXMDYiLCJyYXRlIjoiMTBNIiwicm9sZSI6Im5vYm9keSJ9.4RakJlhLxFPVTjwYlpcYDxR45s4gFFOYok4n8dA5IqI&api-key=8acbcf1e-732c-4574-a3bf-27e6a85b86f1")
+		src, _ = p.Parse(u)
+		if src.Mod == nil {
+			t.Fatalf("Got empty mod")
+		}
+		if src.Mod.Name != "torrent-web-cache" {
+			t.Fatalf("Expected %v got %v", "torrent-web-cache", src.Mod.Name)
+		}
 		return nil
 	}
 	args := os.Args[0:1]

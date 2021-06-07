@@ -72,7 +72,7 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 		last := path[index+1:]
 		newPath = first
 		p = strings.SplitN(last, "/", 2)
-		t := p[0]
+		t = p[0]
 		ee := strings.SplitN(t, ":", 2)
 		if len(ee) > 1 {
 			e = ee[1]
