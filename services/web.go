@@ -125,7 +125,7 @@ func isAllowed(r *http.Request) bool {
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
-		return forwarded
+		return strings.Split(forwarded, ",")[0]
 	}
 	return r.RemoteAddr
 }
