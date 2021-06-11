@@ -269,9 +269,7 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 					httpHealthCheck <- err
 					return
 				}
-			}
-			// s.logger.Infof("Got http status=%d", res.StatusCode)
-			if res.StatusCode == http.StatusOK {
+			} else if res.StatusCode == http.StatusOK {
 				tries = 0
 			}
 			time.Sleep(time.Second * HEALTH_CHECK_INTERVAL)
