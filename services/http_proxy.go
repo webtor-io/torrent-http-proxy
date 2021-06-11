@@ -101,6 +101,7 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 		}
 	}
 	if err != nil {
+		s.logger.WithError(err).Error("Failed to dial")
 		promHTTPProxyDialErrors.WithLabelValues(s.src.GetEdgeName()).Inc()
 	}
 	return
@@ -119,7 +120,7 @@ func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
 		KeepAlive: 1 * time.Minute,
 	}).Dial(network, addr)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to dial")
+		s.logger.WithError(err).Warnf("Failed to dial")
 		return nil, err
 	}
 	return conn, nil
