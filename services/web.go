@@ -151,7 +151,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}
 	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
-		logger.WithError(err).Errorf("Failed to get claims")
+		logger.WithError(err).Warnf("Failed to get claims")
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -320,7 +320,10 @@ func (s *Web) Serve() error {
 		}
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/favicon") {
+		if r.URL.Path == "/" ||
+			strings.HasPrefix(r.URL.Path, "/favicon") ||
+			strings.HasPrefix(r.URL.Path, "/ads.txt") ||
+			strings.HasPrefix(r.URL.Path, "/robots.txt") {
 			w.WriteHeader(200)
 			return
 		}

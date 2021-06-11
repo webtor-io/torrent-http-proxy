@@ -30,8 +30,9 @@ const (
 	PORT_HTTP                          = 8080
 	PORT_PROBE                         = 8081
 	PORT_GRPC                          = 50051
-	HEALTH_CHECK_TIMEOUT               = 3
+	HEALTH_CHECK_TIMEOUT               = 5
 	HEALTH_CHECK_INTERVAL              = 5
+	HEALTH_CHECK_TRIES                 = 3
 	POD_LOCK_DURATION                  = 1
 	POD_LOCK_STANDBY                   = 1
 	POD_LIVENESS_PATH                  = "/liveness"
@@ -253,19 +254,25 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		netClient := &http.Client{
 			Timeout: time.Second * HEALTH_CHECK_TIMEOUT,
 		}
+		tries := 0
+		url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
 		for {
-			url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
 			// s.logger.Infof("Checking url=%s", url)
 			res, err := netClient.Get(url)
+			if res.StatusCode != http.StatusOK {
+				err = errors.Errorf("Got not OK status code=%v", res.StatusCode)
+			}
 			if err != nil {
-				s.logger.WithError(err).Error("Failed to check pod status")
-				httpHealthCheck <- err
-				return
+				tries++
+				s.logger.WithError(err).Warn("Failed to check pod status")
+				if tries >= HEALTH_CHECK_TRIES {
+					httpHealthCheck <- err
+					return
+				}
 			}
 			// s.logger.Infof("Got http status=%d", res.StatusCode)
-			if res.StatusCode != http.StatusOK {
-				httpHealthCheck <- nil
-				return
+			if res.StatusCode == http.StatusOK {
+				tries = 0
 			}
 			time.Sleep(time.Second * HEALTH_CHECK_INTERVAL)
 		}
@@ -275,8 +282,8 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		select {
 		case <-watchSuccess:
 			s.logger.Info("Pod finished")
-		case <-httpHealthCheck:
-			s.logger.Info("Job health check failed")
+		case err := <-httpHealthCheck:
+			s.logger.WithError(err).Warnf("Job health check failed for pod=%v", pod.Name)
 		}
 		watcher.Stop()
 		close(resCh)
