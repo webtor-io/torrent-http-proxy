@@ -259,7 +259,7 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		for {
 			// s.logger.Infof("Checking url=%s", url)
 			res, err := netClient.Get(url)
-			if res.StatusCode != http.StatusOK {
+			if res != nil && res.StatusCode != http.StatusOK {
 				err = errors.Errorf("Got not OK status code=%v", res.StatusCode)
 			}
 			if err != nil {
