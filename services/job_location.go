@@ -501,7 +501,8 @@ func (s *JobLocation) invoke() (*Location, error) {
 		}
 		time.Sleep(time.Second * POD_INIT_INTERVAL)
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	if isInited {
 		pod, err := s.waitForPod(ctx, "")
 		if err != nil {
@@ -720,7 +721,8 @@ func (s *JobLocation) invoke() (*Location, error) {
 }
 
 func (s *JobLocation) wait() (*Location, error) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	pod, err := s.waitForPod(ctx, "")
 
