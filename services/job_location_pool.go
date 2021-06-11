@@ -90,17 +90,15 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl))
 	l, err := v.(*JobLocation).Invoke(purge)
 
-	if !loaded {
-		if err != nil || l == nil {
-			defer s.sm.Delete(key)
-			logger.Info("Failed to get job location")
-		} else {
-			go func() {
-				<-l.Expire
-				s.sm.Delete(key)
-				logger.Info("Job deleted from pool")
-			}()
-		}
+	if !loaded && err == nil && l != nil {
+		go func() {
+			<-l.Expire
+			s.sm.Delete(key)
+			logger.Info("Job deleted from pool")
+		}()
+	}
+	if err != nil || l == nil {
+		s.sm.Delete(key)
 	}
 	return l, err
 }
