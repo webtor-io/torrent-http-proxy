@@ -252,6 +252,7 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		}
 	}()
 	httpHealthCheck := make(chan error)
+	finished := false
 	go func() {
 		netClient := &http.Client{
 			Timeout: time.Second * HEALTH_CHECK_TIMEOUT,
@@ -259,6 +260,9 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		tries := 0
 		url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
 		for {
+			if finished {
+				return
+			}
 			// s.logger.Infof("Checking url=%s", url)
 			res, err := netClient.Get(url)
 			if res != nil && res.StatusCode != http.StatusOK {
@@ -282,6 +286,7 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 		select {
 		case <-watchSuccess:
 			s.logger.Info("Pod finished")
+			finished = true
 		case err := <-httpHealthCheck:
 			s.logger.WithError(err).Warnf("Job health check failed for pod=%v", pod.Name)
 		}
