@@ -162,8 +162,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		remoteAddress, raOK := claims["remoteAddress"].(string)
 		ua, uaOK := claims["agent"].(string)
 		if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
-			logger.Warningf("IP and UA changed, got ua=%v ip=%v, expected ua=%v ip=%v so deny access",
-				r.Header.Get("User-Agent"), s.getIP(r), ua, remoteAddress)
+			logger.Warningf("IP and UA changed, got ua=%v ip=%v x-forwarded-for=%v, expected ua=%v ip=%v so deny access",
+				r.Header.Get("User-Agent"), s.getIP(r), r.Header.Get("X-FORWARDED-FOR"), ua, remoteAddress)
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
