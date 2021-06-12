@@ -33,8 +33,6 @@ type JobConfig struct {
 	SnapshotStartThreshold             float64
 	SnapshotDownloadRatio              float64
 	SnapshotTorrentSizeLimit           int64
-	ResticPassword                     string
-	ResticRepository                   string
 	AWSAccessKeyID                     string
 	AWSSecretAccessKey                 string
 	AWSEndpoint                        string
@@ -42,6 +40,9 @@ type JobConfig struct {
 	AWSBucket                          string
 	AWSBucketSpread                    string
 	AWSNoSSL                           string
+	RequestAffinity                    bool
+	AffinityKey                        string
+	AffinityValue                      string
 }
 
 type ConnectionConfig struct {
@@ -92,10 +93,16 @@ const (
 	SEEDER_CPU_REQUESTS                    = "seeder-cpu-requests"
 	SEEDER_CPU_LIMITS                      = "seeder-cpu-limits"
 	SEEDER_GRACE                           = "seeder-grace"
+	SEEDER_AFFINITY_KEY                    = "seeder-affinity-key"
+	SEEDER_AFFINITY_VALUE                  = "seeder-affinity-value"
+	SEEDER_REQUEST_AFFINITY                = "seeder-request-affinity"
 	TRANSCODER_IMAGE                       = "transcoder-image"
 	TRANSCODER_CPU_REQUESTS                = "transcoder-cpu-requests"
 	TRANSCODER_CPU_LIMITS                  = "transcoder-cpu-limits"
 	TRANSCODER_GRACE                       = "transcoder-grace"
+	TRANSCODER_AFFINITY_KEY                = "transcoder-affinity-key"
+	TRANSCODER_AFFINITY_VALUE              = "transcoder-affinity-value"
+	TRANSCODER_REQUEST_AFFINITY            = "transcoder-request-affinity"
 	USE_SNAPSHOT                           = "use-snapshot"
 	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
 	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
@@ -228,6 +235,40 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  "",
 		EnvVar: "AWS_REGION",
 	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_AFFINITY_KEY,
+		Usage:  "Seeder Affinity Key",
+		Value:  "",
+		EnvVar: "SEEDER_AFFINITY_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_AFFINITY_VALUE,
+		Usage:  "Seeder Affinity Value",
+		Value:  "",
+		EnvVar: "SEEDER_AFFINITY_VALUE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_AFFINITY_KEY,
+		Usage:  "Transcoder Affinity Key",
+		Value:  "",
+		EnvVar: "TRANSCODER_AFFINITY_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_AFFINITY_VALUE,
+		Usage:  "Transcoder Affinity Value",
+		Value:  "",
+		EnvVar: "TRANSCODER_AFFINITY_VALUE",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   SEEDER_REQUEST_AFFINITY,
+		Usage:  "Seeder request affinity",
+		EnvVar: "SEEDER_REQUEST_AFFINITY",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   TRANSCODER_REQUEST_AFFINITY,
+		Usage:  "Transcoder request affinity",
+		EnvVar: "TRANSCODER_REQUEST_AFFINITY",
+	})
 }
 
 func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
@@ -255,6 +296,9 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				SnapshotTorrentSizeLimit:           c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
 				Grace:                              c.Int(SEEDER_GRACE),
 				IgnoredPaths:                       []string{"/TorrentWebSeeder/StatStream"},
+				RequestAffinity:                    c.Bool(SEEDER_REQUEST_AFFINITY),
+				AffinityKey:                        c.String(SEEDER_AFFINITY_KEY),
+				AffinityValue:                      c.String(SEEDER_AFFINITY_VALUE),
 			},
 		},
 		"hls": &ConnectionConfig{
@@ -277,6 +321,9 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				SnapshotDownloadRatio:    c.Float64(SNAPSHOT_DOWNLOAD_RATIO),
 				SnapshotTorrentSizeLimit: c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
 				Grace:                    c.Int(TRANSCODER_GRACE),
+				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
+				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
+				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),
 			},
 		},
 		"vtt": &ConnectionConfig{

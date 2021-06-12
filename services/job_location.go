@@ -27,27 +27,22 @@ import (
 )
 
 const (
-	PORT_HTTP                          = 8080
-	PORT_PROBE                         = 8081
-	PORT_GRPC                          = 50051
-	HEALTH_CHECK_TIMEOUT               = 5
-	HEALTH_CHECK_INTERVAL              = 5
-	HEALTH_CHECK_TRIES                 = 3
-	POD_LOCK_DURATION                  = 1
-	POD_LOCK_STANDBY                   = 1
-	POD_INIT_INTERVAL                  = 3
-	POD_INIT_TRIES                     = 5
-	POD_LIVENESS_PATH                  = "/liveness"
-	POD_READINESS_PATH                 = "/readiness"
-	JOB_NODE_AFFINITY_KEY              = "job-node-affinity-key"
-	JOB_NODE_AFFINITY_VALUE            = "job-node-affinity-value"
-	JOB_NODE_TRANSCODER_AFFINITY_KEY   = "job-node-transcoder-affinity-key"
-	JOB_NODE_TRANSCODER_AFFINITY_VALUE = "job-node-transcoder-affinity-value"
-	JOB_NODE_SEEDER_AFFINITY_KEY       = "job-node-seeder-affinity-key"
-	JOB_NODE_SEEDER_AFFINITY_VALUE     = "job-node-seeder-affinity-value"
-	JOB_NAMESPACE                      = "job-namespace"
-	JOB_REQUEST_AFFINITY               = "job-request-affinity"
-	MY_NODE_NAME                       = "my-node-name"
+	PORT_HTTP               = 8080
+	PORT_PROBE              = 8081
+	PORT_GRPC               = 50051
+	HEALTH_CHECK_TIMEOUT    = 5
+	HEALTH_CHECK_INTERVAL   = 5
+	HEALTH_CHECK_TRIES      = 3
+	POD_LOCK_DURATION       = 1
+	POD_LOCK_STANDBY        = 1
+	POD_INIT_INTERVAL       = 3
+	POD_INIT_TRIES          = 5
+	POD_LIVENESS_PATH       = "/liveness"
+	POD_READINESS_PATH      = "/readiness"
+	JOB_NODE_AFFINITY_KEY   = "job-node-affinity-key"
+	JOB_NODE_AFFINITY_VALUE = "job-node-affinity-value"
+	JOB_NAMESPACE           = "job-namespace"
+	MY_NODE_NAME            = "my-node-name"
 )
 
 var (
@@ -92,14 +87,9 @@ type JobLocation struct {
 	l              *Locker
 	naKey          string
 	naVal          string
-	nsaKey         string
-	nsaVal         string
-	ntaKey         string
-	ntaVal         string
 	namespace      string
 	extAddressType string
 	acl            *Client
-	ra             bool
 	nn             string
 }
 
@@ -117,39 +107,10 @@ func RegisterJobFlags(c *cli.App) {
 		EnvVar: "JOB_NODE_AFFINITY_VALUE",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_SEEDER_AFFINITY_KEY,
-		Usage:  "Node Seeder Affinity Key",
-		Value:  "",
-		EnvVar: "JOB_NODE_SEEDER_AFFINITY_KEY",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_SEEDER_AFFINITY_VALUE,
-		Usage:  "Node Seeder Affinity Value",
-		Value:  "",
-		EnvVar: "JOB_NODE_SEEDER_AFFINITY_VALUE",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_TRANSCODER_AFFINITY_KEY,
-		Usage:  "Node Transcoder Affinity Key",
-		Value:  "",
-		EnvVar: "JOB_NODE_TRANSCODER_AFFINITY_KEY",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_TRANSCODER_AFFINITY_VALUE,
-		Usage:  "Node Transcoder Affinity Value",
-		Value:  "",
-		EnvVar: "JOB_NODE_TRANSCODER_AFFINITY_VALUE",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   JOB_NAMESPACE,
 		Usage:  "Job namespace",
 		Value:  "webtor",
 		EnvVar: "JOB_NAMESPACE",
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   JOB_REQUEST_AFFINITY,
-		Usage:  "Job request affinity",
-		EnvVar: "JOB_REQUEST_AFFINITY",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   MY_NODE_NAME,
@@ -164,10 +125,8 @@ func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SC
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
 		logger: logger, l: l,
 		naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
-		nsaKey: c.String(JOB_NODE_SEEDER_AFFINITY_KEY), nsaVal: c.String(JOB_NODE_SEEDER_AFFINITY_VALUE),
-		ntaKey: c.String(JOB_NODE_TRANSCODER_AFFINITY_KEY), ntaVal: c.String(JOB_NODE_TRANSCODER_AFFINITY_VALUE),
 		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
-		ra: c.Bool(JOB_REQUEST_AFFINITY), nn: c.String(MY_NODE_NAME),
+		nn: c.String(MY_NODE_NAME),
 	}
 }
 
@@ -348,11 +307,8 @@ func (s *JobLocation) makeNodeSelector() map[string]string {
 	if s.naKey != "" && s.naVal != "" {
 		res[s.naKey] = s.naVal
 	}
-	if s.nsaKey != "" && s.nsaVal != "" && s.cfg.Type == JobType_SEEDER {
-		res[s.nsaKey] = s.nsaVal
-	}
-	if s.ntaKey != "" && s.ntaVal != "" && s.cfg.Type == JobType_TRANSCODER {
-		res[s.ntaKey] = s.ntaVal
+	if s.cfg.AffinityKey != "" && s.cfg.AffinityValue != "" {
+		res[s.cfg.AffinityKey] = s.cfg.AffinityValue
 	}
 	return res
 }
@@ -382,7 +338,7 @@ func (s *JobLocation) makeRequiredNodeAffinity() *corev1.NodeSelector {
 
 func (s *JobLocation) makeNodeAffinity() []corev1.PreferredSchedulingTerm {
 	aff := []corev1.PreferredSchedulingTerm{}
-	if s.ra && s.nn != "" {
+	if s.cfg.RequestAffinity && s.nn != "" {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
 			Weight: 100,
 			Preference: corev1.NodeSelectorTerm{
