@@ -204,6 +204,23 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			src.Path,
 			strconv.Itoa(wi.GroupedStatusCode()),
 		).Add(float64(wi.bytesWritten))
+		l := logger.WithFields(logrus.Fields{
+			"client":   clientName,
+			"domain":   domain,
+			"role":     role,
+			"source":   string(source),
+			"edge":     src.GetEdgeName(),
+			"infohash": src.InfoHash,
+			"path":     src.Path,
+			"status":   strconv.Itoa(wi.statusCode),
+		})
+		if wi.GroupedStatusCode() == 500 {
+			l.Error("Failed to serve request")
+		} else if wi.GroupedStatusCode() == 200 {
+			l.Info("Request served successfully")
+		} else {
+			l.Warn("Bad request")
+		}
 	}()
 
 	headers := map[string]string{
@@ -392,7 +409,6 @@ func (s *Web) Serve() error {
 			}
 		}
 
-		logger.Info("Handling HTTP")
 		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
 
 	})
