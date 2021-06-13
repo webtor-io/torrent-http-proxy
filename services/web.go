@@ -212,6 +212,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"edge":     src.GetEdgeName(),
 			"infohash": src.InfoHash,
 			"path":     src.Path,
+			"ttfb":     wi.ttfb.Seconds(),
+			"duration": time.Since(wi.start).Seconds(),
 			"status":   strconv.Itoa(wi.statusCode),
 		})
 		if wi.GroupedStatusCode() == 500 {
