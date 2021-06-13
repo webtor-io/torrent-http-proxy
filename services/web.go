@@ -82,7 +82,7 @@ var (
 	promHTTPProxyRequestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_request_total",
 		Help: "HTTP Proxy dial total",
-	}, []string{"source", "name", "status"})
+	}, []string{"source", "name", "infohash", "status"})
 )
 
 func init() {
@@ -193,7 +193,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			promHTTPProxyRequestTTFB.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
 		}
 		promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Dec()
-		promHTTPProxyRequestTotal.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
+		promHTTPProxyRequestTotal.WithLabelValues(string(source), src.GetEdgeName(), src.InfoHash, strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		promHTTPProxyRequestSize.WithLabelValues(
 			clientName,
 			domain,
