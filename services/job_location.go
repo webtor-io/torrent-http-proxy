@@ -444,39 +444,39 @@ func (s *JobLocation) invoke() (*Location, error) {
 	if err == redislock.ErrNotObtained {
 		s.logger.Warn("Failed to obtain lock")
 		wasLocked = true
-		time.Sleep(time.Second * POD_LOCK_STANDBY)
 	} else if err != nil {
 		return nil, errors.Wrap(err, "Failed to set lock")
 	} else {
 		defer l.Release()
 	}
 
-	isInited := false
-	for i := 0; i < POD_INIT_TRIES; i++ {
-		isInited, err = s.isInited()
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to check is there any inited job")
-		}
-		if isInited {
-			break
-		}
-		time.Sleep(time.Second * POD_INIT_INTERVAL)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if isInited {
-		pod, err := s.waitForPod(ctx, "")
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to wait for pod")
-		}
-		loc, err := s.podToLocation(pod)
-
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to convert pod to location")
-		}
-		return loc, nil
-	}
 	if wasLocked {
+		time.Sleep(time.Second * POD_LOCK_STANDBY)
+		isInited := false
+		for i := 0; i < POD_INIT_TRIES; i++ {
+			isInited, err = s.isInited()
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to check is there any inited job")
+			}
+			if isInited {
+				break
+			}
+			time.Sleep(time.Second * POD_INIT_INTERVAL)
+		}
+		if isInited {
+			pod, err := s.waitForPod(ctx, "")
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to wait for pod")
+			}
+			loc, err := s.podToLocation(pod)
+
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to convert pod to location")
+			}
+			return loc, nil
+		}
 		return nil, errors.Errorf("Failed to allocate existent pod")
 	}
 	clientName := "default"
