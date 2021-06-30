@@ -34,7 +34,7 @@ const (
 	HEALTH_CHECK_INTERVAL   = 5
 	HEALTH_CHECK_TRIES      = 3
 	POD_LOCK_DURATION       = 1
-	POD_LOCK_STANDBY        = 1
+	POD_LOCK_STANDBY        = 10
 	POD_INIT_INTERVAL       = 3
 	POD_INIT_TRIES          = 5
 	POD_LIVENESS_PATH       = "/liveness"
@@ -444,6 +444,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 	if err == redislock.ErrNotObtained {
 		s.logger.Warn("Failed to obtain lock")
 		wasLocked = true
+		time.Sleep(time.Second * POD_LOCK_STANDBY)
 	} else if err != nil {
 		return nil, errors.Wrap(err, "Failed to set lock")
 	} else {
@@ -453,7 +454,6 @@ func (s *JobLocation) invoke() (*Location, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if wasLocked {
-		time.Sleep(time.Second * POD_LOCK_STANDBY)
 		isInited := false
 		for i := 0; i < POD_INIT_TRIES; i++ {
 			isInited, err = s.isInited()
