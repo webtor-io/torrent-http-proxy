@@ -451,32 +451,32 @@ func (s *JobLocation) invoke() (*Location, error) {
 		defer l.Release()
 	}
 
+	isInited := false
+	for i := 0; i < POD_INIT_TRIES; i++ {
+		isInited, err = s.isInited()
+		if err != nil {
+			return nil, errors.Wrap(err, "Failed to check is there any inited job")
+		}
+		if isInited || !wasLocked {
+			break
+		}
+		time.Sleep(time.Second * POD_INIT_INTERVAL)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if wasLocked {
-		isInited := false
-		for i := 0; i < POD_INIT_TRIES; i++ {
-			isInited, err = s.isInited()
-			if err != nil {
-				return nil, errors.Wrap(err, "Failed to check is there any inited job")
-			}
-			if isInited {
-				break
-			}
-			time.Sleep(time.Second * POD_INIT_INTERVAL)
+	if isInited {
+		pod, err := s.waitForPod(ctx, "")
+		if err != nil {
+			return nil, errors.Wrap(err, "Failed to wait for pod")
 		}
-		if isInited {
-			pod, err := s.waitForPod(ctx, "")
-			if err != nil {
-				return nil, errors.Wrap(err, "Failed to wait for pod")
-			}
-			loc, err := s.podToLocation(pod)
+		loc, err := s.podToLocation(pod)
 
-			if err != nil {
-				return nil, errors.Wrap(err, "Failed to convert pod to location")
-			}
-			return loc, nil
+		if err != nil {
+			return nil, errors.Wrap(err, "Failed to convert pod to location")
 		}
+		return loc, nil
+	}
+	if wasLocked {
 		return nil, errors.Errorf("Failed to allocate existent pod")
 	}
 	clientName := "default"
