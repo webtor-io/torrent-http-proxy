@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -16,6 +18,12 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+)
+
+const (
+	GRPC_PROXY_DIAL_TRIES   int = 5
+	GRPC_PROXY_REDIAL_DELAY int = 1
 )
 
 type GRPCProxy struct {
@@ -33,22 +41,45 @@ type GRPCProxy struct {
 func NewGRPCProxy(bu string, claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
 	return &GRPCProxy{baseURL: bu, claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
 }
+func (s *GRPCProxy) dial(ctx context.Context, cl *Client, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
+	loc, err := s.r.Resolve(s.src, s.logger, false, invoke, cl)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get location")
+		return nil, status.Errorf(codes.Unavailable, "Unavailable")
+	}
+	if loc.Unavailable {
+		return nil, status.Errorf(codes.Unavailable, "Unavailable")
+	}
+	return grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), opts...)
+}
+
+func (s *GRPCProxy) dialWithRetry(ctx context.Context, cl *Client, opts []grpc.DialOption, invoke bool, tries int, delay int) (conn *grpc.ClientConn, err error) {
+	for i := 0; i < tries; i++ {
+		conn, err = s.dial(ctx, cl, opts, invoke)
+		if err != nil {
+			time.Sleep(time.Duration(delay) * time.Second)
+		} else {
+			break
+		}
+	}
+	return
+}
 
 func (s *GRPCProxy) get() *grpc.Server {
 	// logger := logrus.NewEntry(logrus.StandardLogger())
 	// grpc.EnableTracing = true
 	// grpc_logrus.ReplaceGrpcLogger(logger)
 
-	// retryOpts := []grpcretry.CallOption{
-	// 	grpcretry.WithPerRetryTimeout(3 * time.Second),
-	// 	grpcretry.WithBackoff(grpcretry.BackoffLinear(500 * time.Millisecond)),
-	// 	grpcretry.WithMax(3),
-	// }
+	retryOpts := []grpcretry.CallOption{
+		grpcretry.WithPerRetryTimeout(3 * time.Second),
+		grpcretry.WithBackoff(grpcretry.BackoffLinear(500 * time.Millisecond)),
+		grpcretry.WithMax(3),
+	}
 	grpcOpts := []grpc.DialOption{
 		grpc.WithCodec(proxy.Codec()),
 		grpc.WithInsecure(),
-		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
-		// grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
+		grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
+		grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
 	}
 
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
@@ -107,28 +138,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to get location")
-			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
-		}
-		if loc.Unavailable {
-			return nil, nil, grpc.Errorf(codes.Unavailable, "Unavailable")
-		}
-		conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), grpcOpts...)
-		if err != nil {
-			s.logger.Warn("Failed to dial location, try to refresh it")
-			loc, err := s.r.Resolve(src, s.logger, true, invoke, cl)
-			if err != nil {
-				s.logger.WithError(err).Error("Failed to get new location")
-				return nil, nil, err
-			}
-			conn, err = grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), grpcOpts...)
-			if err != nil {
-				s.logger.WithError(err).Error("Failed to dial with new address")
-				return nil, nil, err
-			}
-		}
+		conn, err := s.dialWithRetry(ctx, cl, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
 		return outCtx, conn, err
 	}
 	// Server with logging and monitoring enabled.
