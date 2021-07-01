@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 )
 
 const (
@@ -70,16 +69,16 @@ func (s *GRPCProxy) get() *grpc.Server {
 	// grpc.EnableTracing = true
 	// grpc_logrus.ReplaceGrpcLogger(logger)
 
-	retryOpts := []grpcretry.CallOption{
-		grpcretry.WithPerRetryTimeout(3 * time.Second),
-		grpcretry.WithBackoff(grpcretry.BackoffLinear(500 * time.Millisecond)),
-		grpcretry.WithMax(3),
-	}
+	// retryOpts := []grpcretry.CallOption{
+	// 	grpcretry.WithPerRetryTimeout(3 * time.Second),
+	// 	grpcretry.WithBackoff(grpcretry.BackoffLinear(500 * time.Millisecond)),
+	// 	grpcretry.WithMax(3),
+	// }
 	grpcOpts := []grpc.DialOption{
 		grpc.WithCodec(proxy.Codec()),
 		grpc.WithInsecure(),
-		grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
-		grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
+		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
+		// grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
 	}
 
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
