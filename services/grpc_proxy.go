@@ -40,8 +40,8 @@ type GRPCProxy struct {
 func NewGRPCProxy(bu string, claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
 	return &GRPCProxy{baseURL: bu, claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
 }
-func (s *GRPCProxy) dial(ctx context.Context, cl *Client, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
-	loc, err := s.r.Resolve(s.src, s.logger, false, invoke, cl)
+func (s *GRPCProxy) dial(ctx context.Context, cl *Client, src *Source, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
+	loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get location")
 		return nil, status.Errorf(codes.Unavailable, "Unavailable")
@@ -52,9 +52,9 @@ func (s *GRPCProxy) dial(ctx context.Context, cl *Client, opts []grpc.DialOption
 	return grpc.DialContext(ctx, fmt.Sprintf("%s:%v", loc.IP.String(), loc.GRPC), opts...)
 }
 
-func (s *GRPCProxy) dialWithRetry(ctx context.Context, cl *Client, opts []grpc.DialOption, invoke bool, tries int, delay int) (conn *grpc.ClientConn, err error) {
+func (s *GRPCProxy) dialWithRetry(ctx context.Context, cl *Client, src *Source, opts []grpc.DialOption, invoke bool, tries int, delay int) (conn *grpc.ClientConn, err error) {
 	for i := 0; i < tries; i++ {
-		conn, err = s.dial(ctx, cl, opts, invoke)
+		conn, err = s.dial(ctx, cl, src, opts, invoke)
 		if err != nil {
 			time.Sleep(time.Duration(delay) * time.Second)
 		} else {
@@ -137,7 +137,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		conn, err := s.dialWithRetry(ctx, cl, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
+		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
 		return outCtx, conn, err
 	}
 	// Server with logging and monitoring enabled.
