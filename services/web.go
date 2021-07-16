@@ -416,9 +416,9 @@ func (s *Web) Serve() error {
 	})
 	logrus.Infof("Serving Web at %v", addr)
 	srv := &http.Server{
-		Handler:        mux,
-		ReadTimeout:    5 * time.Minute,
-		WriteTimeout:   5 * time.Minute,
+		Handler: mux,
+		// ReadTimeout:    5 * time.Minute,
+		// WriteTimeout:   5 * time.Minute,
 		MaxHeaderBytes: 50 << 20,
 	}
 	return srv.Serve(ln)
