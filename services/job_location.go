@@ -518,7 +518,6 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.UseSnapshot,
 		},
 		{
-
 			Name:  "SNAPSHOT_START_THRESHOLD",
 			Value: fmt.Sprintf("%f", s.cfg.SnapshotStartThreshold),
 		},

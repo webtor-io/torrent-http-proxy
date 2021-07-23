@@ -186,6 +186,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		domain = d
 	}
 
+	sessionID := ""
+	if sid, ok := claims["sessionID"].(string); ok {
+		sessionID = sid
+	}
+
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Inc()
 	defer func() {
 		promHTTPProxyRequestDuration.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
@@ -235,6 +240,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Token":       src.Token,
 		"X-Api-Key":     apiKey,
 		"X-Client":      clientName,
+		"X-Session-ID":  sessionID,
 	}
 	rate, ok := claims["rate"].(string)
 	if ok {
