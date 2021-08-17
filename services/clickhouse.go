@@ -31,7 +31,6 @@ type ClickHouse struct {
 	batch     []*StatRecord
 	mux       sync.Mutex
 	storeMux  sync.Mutex
-	err       error
 	init      sync.Once
 }
 
@@ -131,9 +130,6 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 }
 
 func (s *ClickHouse) Add(sr *StatRecord) error {
-	if s.err != nil {
-		return s.err
-	}
 	s.mux.Lock()
 	s.batch = append(s.batch, sr)
 	s.mux.Unlock()
@@ -141,7 +137,10 @@ func (s *ClickHouse) Add(sr *StatRecord) error {
 		go func(b []*StatRecord) {
 			s.storeMux.Lock()
 			logrus.Infof("Storing %v row to ClickHouse", len(b))
-			s.err = s.store(b)
+			err := s.store(b)
+			if err != nil {
+				logrus.WithError(err).Warn("Failed to store to ClickHouse")
+			}
 			logrus.Infof("Finish storing %v row to ClickHouse", len(b))
 			s.storeMux.Unlock()
 		}(s.batch)
