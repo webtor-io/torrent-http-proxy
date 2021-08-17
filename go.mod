@@ -4,6 +4,8 @@ go 1.15
 
 require (
 	code.cloudfoundry.org/bytefmt v0.0.0-20200131002437-cf55d5288a48
+	github.com/ClickHouse/clickhouse-go v1.4.5
+	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/bsm/redislock v0.4.0
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gorilla/websocket v1.4.1 // indirect

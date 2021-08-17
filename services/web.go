@@ -34,6 +34,7 @@ type Web struct {
 	grpc       *HTTPGRPCProxyPool
 	subdomains *SubdomainsPool
 	bucketPool *BucketPool
+	clickHouse *ClickHouse
 	baseURL    string
 	claims     *Claims
 }
@@ -93,10 +94,10 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
-		subdomains: subs, bucketPool: bp,
+		subdomains: subs, bucketPool: bp, clickHouse: ch,
 	}
 }
 
@@ -169,6 +170,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 	}
 
+	ads := false
 	invoke := true
 	if r.URL.Query().Get("invoke") == "false" {
 		invoke = false
@@ -180,6 +182,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	role := "nobody"
 	if r, ok := claims["role"].(string); ok {
 		role = r
+	}
+	if r, ok := claims["ads"].(string); ok {
+		ads, _ = strconv.ParseBool(r)
 	}
 	domain := "default"
 	if d, ok := claims["domain"].(string); ok {
@@ -193,6 +198,30 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Inc()
 	defer func() {
+		if s.clickHouse != nil {
+			err := s.clickHouse.Add(&StatRecord{
+				ApiKey:        apiKey,
+				BytesWritten:  uint64(wi.bytesWritten),
+				Client:        clientName,
+				Domain:        domain,
+				Duration:      uint64(time.Since(wi.start).Milliseconds()),
+				Edge:          src.GetEdgeName(),
+				GroupedStatus: uint64(wi.GroupedStatusCode()),
+				InfoHash:      src.InfoHash,
+				OriginalPath:  src.OriginPath,
+				Path:          src.Path,
+				Role:          role,
+				SessionID:     sessionID,
+				Source:        string(source),
+				Status:        uint64(wi.statusCode),
+				TTFB:          uint64(wi.ttfb.Milliseconds()),
+				Timestamp:     time.Now(),
+				Ads:           ads,
+			})
+			if err != nil {
+				logger.WithError(err).Warn("Failed to store data to ClickHouse")
+			}
+		}
 		promHTTPProxyRequestDuration.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
 		if wi.bytesWritten > 0 {
 			promHTTPProxyRequestTTFB.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())

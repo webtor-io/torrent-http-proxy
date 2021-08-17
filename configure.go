@@ -20,6 +20,8 @@ func configure(app *cli.App) {
 	s.RegisterPromFlags(app)
 	s.RegisterPromClientFlags(app)
 	s.RegisterSubdomainsFlags(app)
+	s.RegisterClickHouseFlags(app)
+	s.RegisterClickHouseDBFlags(app)
 
 	app.Action = run
 }
@@ -96,8 +98,22 @@ func run(c *cli.Context) error {
 	// Setting Subdomains Pool
 	subdomainsPool := s.NewSubdomainsPool(c, k8sClient, nodesStatPool)
 
+	var clickHouse *s.ClickHouse
+
+	if c.String(s.CLICKHOUSE_DSN) != "" {
+		// Setting ClickHouse DB
+		clickHouseDB := s.NewClickHouseDB(c)
+		defer clickHouseDB.Close()
+
+		// Setting ClickHouse
+		clickHouse = s.NewClickHouse(c, clickHouseDB)
+		if clickHouse != nil {
+			defer clickHouse.Close()
+		}
+	}
+
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool, clickHouse)
 	defer web.Close()
 
 	// Setting GRPC Proxy
