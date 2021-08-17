@@ -103,6 +103,10 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	if err != nil {
 		return errors.Wrapf(err, "Failed to create table")
 	}
+	err = db.Ping()
+	if err != nil {
+		return errors.Wrapf(err, "Failed to ping")
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return errors.Wrapf(err, "Failed to begin")
