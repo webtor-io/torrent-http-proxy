@@ -105,13 +105,13 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "Failed to begin")
 	}
 	stmt, err := tx.Prepare(`INSERT INTO proxy_stat (timestamp, api_key, client, bytes_written, ttfb,
 		duration, path, infohash, original_path, session_id, domain, status, grouped_status, edge,
 		source, role, ads) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "Failed to prepare")
 	}
 	defer stmt.Close()
 	for _, r := range sr {
@@ -124,7 +124,7 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	}
 	err = tx.Commit()
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "Failed to commit")
 	}
 	return nil
 }
