@@ -198,7 +198,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Inc()
 	defer func() {
-		if s.clickHouse != nil {
+		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {
 			err := s.clickHouse.Add(&StatRecord{
 				ApiKey:        apiKey,
 				BytesWritten:  uint64(wi.bytesWritten),
