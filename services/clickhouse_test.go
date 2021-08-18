@@ -28,22 +28,13 @@ func TestClickHouse(t *testing.T) {
 		}
 		mock.ExpectExec("CREATE TABLE IF NOT EXISTS").WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectBegin()
-		stmt := mock.ExpectPrepare("INSERT INTO")
-		for i := 0; i < 1000; i++ {
-			stmt.ExpectExec()
-		}
+		mock.ExpectPrepare("INSERT INTO")
 		mock.ExpectCommit()
 		mock.ExpectBegin()
-		stmt = mock.ExpectPrepare("INSERT INTO")
-		for i := 0; i < 1000; i++ {
-			stmt.ExpectExec()
-		}
+		mock.ExpectPrepare("INSERT INTO")
 		mock.ExpectCommit()
 		mock.ExpectBegin()
-		stmt = mock.ExpectPrepare("INSERT INTO")
-		for i := 0; i < 100; i++ {
-			stmt.ExpectExec()
-		}
+		mock.ExpectPrepare("INSERT INTO")
 		mock.ExpectCommit()
 
 		clickHouseDB := &ClickHouseDB_Mock{

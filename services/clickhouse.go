@@ -10,6 +10,8 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/urfave/cli"
+
+	"database/sql/driver"
 )
 
 const (
@@ -92,7 +94,12 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 }
 
 func (s *ClickHouse) store(sr []*StatRecord) error {
-
+	s.storeMux.Lock()
+	logrus.Infof("Storing %v row to ClickHouse", len(sr))
+	defer func() {
+		logrus.Infof("finish storing %v row to clickhouse", len(sr))
+		s.storeMux.Unlock()
+	}()
 	db, err := s.db.Get()
 	if err != nil {
 		return errors.Wrapf(err, "Failed to get ClickHouse DB")
@@ -119,12 +126,12 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	}
 	defer stmt.Close()
 	for _, r := range sr {
-		stmt.Exec(
+		stmt.Exec([]driver.Value{
 			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
 			r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 			r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
 			r.Role, r.Ads,
-		)
+		})
 	}
 	err = tx.Commit()
 	if err != nil {
@@ -139,14 +146,10 @@ func (s *ClickHouse) Add(sr *StatRecord) error {
 	s.mux.Unlock()
 	if len(s.batch) >= s.batchSize {
 		go func(b []*StatRecord) {
-			s.storeMux.Lock()
-			logrus.Infof("Storing %v row to ClickHouse", len(b))
 			err := s.store(b)
 			if err != nil {
 				logrus.WithError(err).Warn("Failed to store to ClickHouse")
 			}
-			logrus.Infof("Finish storing %v row to ClickHouse", len(b))
-			s.storeMux.Unlock()
 		}(s.batch)
 		s.mux.Lock()
 		s.batch = make([]*StatRecord, 0, s.batchSize)

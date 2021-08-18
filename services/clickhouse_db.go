@@ -3,7 +3,6 @@ package services
 import (
 	"database/sql"
 	"sync"
-	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/urfave/cli"
@@ -43,9 +42,6 @@ func (s *ClickHouseDB) Get() (*sql.DB, error) {
 	s.once.Do(func() {
 		s.db, s.err = sql.Open("clickhouse", s.dsn)
 	})
-	if s.err != nil {
-		s.db.SetConnMaxLifetime(15 * time.Minute)
-	}
 	return s.db, s.err
 }
 
