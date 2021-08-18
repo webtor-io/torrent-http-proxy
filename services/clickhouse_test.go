@@ -26,15 +26,37 @@ func TestClickHouse(t *testing.T) {
 		if err != nil {
 			return nil
 		}
+		r := &StatRecord{}
 		mock.ExpectExec("CREATE TABLE IF NOT EXISTS").WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectBegin()
-		mock.ExpectPrepare("INSERT INTO")
+		stmt := mock.ExpectPrepare("INSERT INTO")
+		for i := 0; i < 1000; i++ {
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
+				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
+				r.Role, 0,
+			).WillReturnResult(sqlmock.NewResult(1, 1))
+		}
 		mock.ExpectCommit()
 		mock.ExpectBegin()
-		mock.ExpectPrepare("INSERT INTO")
+		stmt = mock.ExpectPrepare("INSERT INTO")
+		for i := 0; i < 1000; i++ {
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
+				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
+				r.Role, 0,
+			).WillReturnResult(sqlmock.NewResult(1, 1))
+		}
 		mock.ExpectCommit()
 		mock.ExpectBegin()
-		mock.ExpectPrepare("INSERT INTO")
+		stmt = mock.ExpectPrepare("INSERT INTO")
+		for i := 0; i < 100; i++ {
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
+				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
+				r.Role, 0,
+			).WillReturnResult(sqlmock.NewResult(1, 1))
+		}
 		mock.ExpectCommit()
 
 		clickHouseDB := &ClickHouseDB_Mock{
@@ -44,7 +66,7 @@ func TestClickHouse(t *testing.T) {
 		clickHouse := NewClickHouse(c, clickHouseDB)
 
 		for i := 0; i < 2100; i++ {
-			if err = clickHouse.Add(&StatRecord{Timestamp: time.Now()}); err != nil {
+			if err = clickHouse.Add(&StatRecord{}); err != nil {
 				t.Errorf("Error while adding stats: %s", err)
 			}
 		}
