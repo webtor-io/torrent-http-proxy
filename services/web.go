@@ -183,8 +183,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r, ok := claims["role"].(string); ok {
 		role = r
 	}
-	if r, ok := claims["ads"].(string); ok {
-		ads, _ = strconv.ParseBool(r)
+	if r, ok := claims["ads"].(bool); ok {
+		ads = r
 	}
 	domain := "default"
 	if d, ok := claims["domain"].(string); ok {
