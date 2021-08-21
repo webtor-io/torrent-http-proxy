@@ -114,7 +114,7 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 	if s.replicated {
 		_, err = db.Exec(fmt.Sprintf(strings.TrimSpace(`
 			CREATE TABLE IF NOT EXISTS %v_all on cluster '{cluster}' as %v
-			ENGINE = Distributed('{cluster}', default, %v)
+			ENGINE = Distributed('{cluster}', default, %v, rand())
 		`), table, table, table))
 	}
 	return err
