@@ -2,6 +2,7 @@ package services
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 const (
 	CLICKHOUSE_BATCH_SIZE = "clickhouse-batch-size"
+	CLICKHOUSE_REPLICATED = "clickhouse-replicated"
 )
 
 func RegisterClickHouseFlags(c *cli.App) {
@@ -23,16 +25,22 @@ func RegisterClickHouseFlags(c *cli.App) {
 		Value:  1000,
 		EnvVar: "CLICKHOUSE_BATCH_SIZE",
 	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   CLICKHOUSE_REPLICATED,
+		Usage:  "clickhouse replication enabled",
+		EnvVar: "CLICKHOUSE_REPLICATED",
+	})
 }
 
 type ClickHouse struct {
-	db        DBProvider
-	batchSize int
-	batch     []*StatRecord
-	mux       sync.Mutex
-	storeMux  sync.Mutex
-	init      sync.Once
-	nodeName  string
+	db         DBProvider
+	batchSize  int
+	batch      []*StatRecord
+	mux        sync.Mutex
+	storeMux   sync.Mutex
+	init       sync.Once
+	nodeName   string
+	replicated bool
 }
 
 type StatRecord struct {
@@ -58,16 +66,25 @@ type StatRecord struct {
 func NewClickHouse(c *cli.Context, db DBProvider) *ClickHouse {
 
 	return &ClickHouse{
-		db:        db,
-		batchSize: c.Int(CLICKHOUSE_BATCH_SIZE),
-		batch:     make([]*StatRecord, 0, c.Int(CLICKHOUSE_BATCH_SIZE)),
-		nodeName:  c.String(MY_NODE_NAME),
+		db:         db,
+		batchSize:  c.Int(CLICKHOUSE_BATCH_SIZE),
+		batch:      make([]*StatRecord, 0, c.Int(CLICKHOUSE_BATCH_SIZE)),
+		nodeName:   c.String(MY_NODE_NAME),
+		replicated: c.Bool(CLICKHOUSE_REPLICATED),
 	}
 }
 
 func (s *ClickHouse) makeTable(db *sql.DB) error {
-	_, err := db.Exec(strings.TrimSpace(`
-		CREATE TABLE IF NOT EXISTS proxy_stat (
+	table := "proxy_stat"
+	tableExpr := table
+	engine := "MergeTree()"
+	ttl := "3 MONTH"
+	if s.replicated {
+		tableExpr += " on cluster '{cluster}'"
+		engine = "ReplicatedMergeTree('/clickhouse/{installation}/{cluster}/tables/{shard}/{database}/{table}', '{replica}')"
+	}
+	_, err := db.Exec(fmt.Sprintf(strings.TrimSpace(`
+		CREATE TABLE IF NOT EXISTS %v (
 			timestamp      DateTime,
 			api_key        String,
 			client         String,
@@ -86,11 +103,20 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 			role           String,
 			ads            Boolean,
 			node           String
-		) engine = MergeTree()
+		) engine = %v
 		PARTITION BY toYYYYMM(timestamp)
 		ORDER BY (timestamp)
-		TTL timestamp + INTERVAL 3 MONTH
-	`))
+		TTL timestamp + INTERVAL %v
+	`), tableExpr, engine, ttl))
+	if err != nil {
+		return err
+	}
+	if s.replicated {
+		_, err = db.Exec(fmt.Sprintf(strings.TrimSpace(`
+			CREATE TABLE IF NOT EXISTS %v_all on cluster '{cluster}' as %v
+			ENGINE = Distributed('{cluster}', default, %v)
+		`), table, table, table))
+	}
 	return err
 }
 
