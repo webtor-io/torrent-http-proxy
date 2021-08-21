@@ -32,6 +32,7 @@ type ClickHouse struct {
 	mux       sync.Mutex
 	storeMux  sync.Mutex
 	init      sync.Once
+	nodeName  string
 }
 
 type StatRecord struct {
@@ -60,6 +61,7 @@ func NewClickHouse(c *cli.Context, db DBProvider) *ClickHouse {
 		db:        db,
 		batchSize: c.Int(CLICKHOUSE_BATCH_SIZE),
 		batch:     make([]*StatRecord, 0, c.Int(CLICKHOUSE_BATCH_SIZE)),
+		nodeName:  c.String(MY_NODE_NAME),
 	}
 }
 
@@ -82,7 +84,8 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 			edge           String,
 			source         String,
 			role           String,
-			ads            Boolean
+			ads            Boolean,
+			node           String
 		) engine = MergeTree()
 		PARTITION BY toYYYYMM(timestamp)
 		ORDER BY (timestamp)
@@ -121,7 +124,7 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	}
 	stmt, err := tx.Prepare(`INSERT INTO proxy_stat (timestamp, api_key, client, bytes_written, ttfb,
 		duration, path, infohash, original_path, session_id, domain, status, grouped_status, edge,
-		source, role, ads) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return errors.Wrapf(err, "Failed to prepare")
 	}
@@ -135,7 +138,7 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
 			r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 			r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-			r.Role, adsInt,
+			r.Role, adsInt, s.nodeName,
 		)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to exec")

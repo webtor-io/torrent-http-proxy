@@ -209,7 +209,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				GroupedStatus: uint64(wi.GroupedStatusCode()),
 				InfoHash:      src.InfoHash,
 				OriginalPath:  src.OriginPath,
-				Path:          src.Path,
+				Path:          r.URL.Path,
 				Role:          role,
 				SessionID:     sessionID,
 				Source:        string(source),
