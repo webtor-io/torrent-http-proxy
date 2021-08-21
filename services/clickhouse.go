@@ -148,9 +148,13 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	if err != nil {
 		return errors.Wrapf(err, "Failed to begin")
 	}
-	stmt, err := tx.Prepare(`INSERT INTO proxy_stat (timestamp, api_key, client, bytes_written, ttfb,
+	table := "proxy_stat"
+	if s.replicated {
+		table += "_all"
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf(`INSERT INTO %v (timestamp, api_key, client, bytes_written, ttfb,
 		duration, path, infohash, original_path, session_id, domain, status, grouped_status, edge,
-		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table))
 	if err != nil {
 		return errors.Wrapf(err, "Failed to prepare")
 	}
