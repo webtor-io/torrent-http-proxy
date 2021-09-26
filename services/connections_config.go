@@ -26,6 +26,8 @@ type JobConfig struct {
 	Image                              string
 	CPURequests                        string
 	CPULimits                          string
+	MemoryRequests                     string
+	MemoryLimits                       string
 	Grace                              int
 	IgnoredPaths                       []string
 	UseSnapshot                        string
@@ -92,6 +94,8 @@ const (
 	SEEDER_IMAGE                           = "seeder-image"
 	SEEDER_CPU_REQUESTS                    = "seeder-cpu-requests"
 	SEEDER_CPU_LIMITS                      = "seeder-cpu-limits"
+	SEEDER_MEMORY_REQUESTS                 = "seeder-memory-requests"
+	SEEDER_MEMORY_LIMITS                   = "seeder-memory-limits"
 	SEEDER_GRACE                           = "seeder-grace"
 	SEEDER_AFFINITY_KEY                    = "seeder-affinity-key"
 	SEEDER_AFFINITY_VALUE                  = "seeder-affinity-value"
@@ -99,6 +103,8 @@ const (
 	TRANSCODER_IMAGE                       = "transcoder-image"
 	TRANSCODER_CPU_REQUESTS                = "transcoder-cpu-requests"
 	TRANSCODER_CPU_LIMITS                  = "transcoder-cpu-limits"
+	TRANSCODER_MEMORY_REQUESTS             = "transcoder-memory-requests"
+	TRANSCODER_MEMORY_LIMITS               = "transcoder-memory-limits"
 	TRANSCODER_GRACE                       = "transcoder-grace"
 	TRANSCODER_AFFINITY_KEY                = "transcoder-affinity-key"
 	TRANSCODER_AFFINITY_VALUE              = "transcoder-affinity-value"
@@ -142,6 +148,18 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  "",
 		EnvVar: "SEEDER_CPU_LIMITS",
 	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_MEMORY_REQUESTS,
+		Usage:  "Seeder Memory Requests",
+		Value:  "",
+		EnvVar: "SEEDER_MEMORY_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_MEMORY_LIMITS,
+		Usage:  "Seeder Memory Limits",
+		Value:  "",
+		EnvVar: "SEEDER_MEMORY_LIMITS",
+	})
 	c.Flags = append(c.Flags, cli.IntFlag{
 		Name:   SEEDER_GRACE,
 		Usage:  "Seeder Grace (sec)",
@@ -165,6 +183,18 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "Transcoder CPU Limits",
 		Value:  "",
 		EnvVar: "TRANSCODER_CPU_LIMITS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_MEMORY_REQUESTS,
+		Usage:  "Transcoder Memory Requests",
+		Value:  "",
+		EnvVar: "TRANSCODER_MEMORY_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_MEMORY_LIMITS,
+		Usage:  "Transcoder Memory Limits",
+		Value:  "",
+		EnvVar: "TRANSCODER_MEMORY_LIMITS",
 	})
 	c.Flags = append(c.Flags, cli.IntFlag{
 		Name:   TRANSCODER_GRACE,
@@ -282,6 +312,8 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				Image:                              c.String(SEEDER_IMAGE),
 				CPURequests:                        c.String(SEEDER_CPU_REQUESTS),
 				CPULimits:                          c.String(SEEDER_CPU_LIMITS),
+				MemoryRequests:                     c.String(SEEDER_MEMORY_REQUESTS),
+				MemoryLimits:                       c.String(SEEDER_MEMORY_LIMITS),
 				AWSAccessKeyID:                     c.String(AWS_ACCESS_KEY_ID),
 				AWSSecretAccessKey:                 c.String(AWS_SECRET_ACCESS_KEY),
 				AWSBucket:                          c.String(AWS_BUCKET),
@@ -310,6 +342,8 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				Image:                    c.String(TRANSCODER_IMAGE),
 				CPURequests:              c.String(TRANSCODER_CPU_REQUESTS),
 				CPULimits:                c.String(TRANSCODER_CPU_LIMITS),
+				MemoryRequests:           c.String(TRANSCODER_MEMORY_REQUESTS),
+				MemoryLimits:             c.String(TRANSCODER_MEMORY_LIMITS),
 				AWSAccessKeyID:           c.String(AWS_ACCESS_KEY_ID),
 				AWSSecretAccessKey:       c.String(AWS_SECRET_ACCESS_KEY),
 				AWSBucket:                c.String(AWS_BUCKET),

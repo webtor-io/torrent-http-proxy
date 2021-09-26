@@ -288,15 +288,25 @@ func (s *JobLocation) waitReady(pod *corev1.Pod, ctx context.Context) (*corev1.P
 
 func (s *JobLocation) makeResources() corev1.ResourceRequirements {
 	res := corev1.ResourceRequirements{}
-	if s.cfg.CPURequests != "" {
-		res.Requests = corev1.ResourceList{
-			corev1.ResourceCPU: resource.MustParse(s.cfg.CPURequests),
+	if s.cfg.CPURequests != "" || s.cfg.MemoryRequests != "" {
+		requests := corev1.ResourceList{}
+		if s.cfg.CPURequests != "" {
+			requests[corev1.ResourceCPU] = resource.MustParse(s.cfg.CPURequests)
 		}
+		if s.cfg.MemoryRequests != "" {
+			requests[corev1.ResourceMemory] = resource.MustParse(s.cfg.MemoryRequests)
+		}
+		res.Requests = requests
 	}
-	if s.cfg.CPULimits != "" {
-		res.Limits = corev1.ResourceList{
-			corev1.ResourceCPU: resource.MustParse(s.cfg.CPULimits),
+	if s.cfg.CPULimits != "" || s.cfg.MemoryLimits != "" {
+		limits := corev1.ResourceList{}
+		if s.cfg.CPULimits != "" {
+			limits[corev1.ResourceCPU] = resource.MustParse(s.cfg.CPULimits)
 		}
+		if s.cfg.MemoryLimits != "" {
+			limits[corev1.ResourceMemory] = resource.MustParse(s.cfg.MemoryLimits)
+		}
+		res.Limits = limits
 	}
 	return res
 
