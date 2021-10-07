@@ -18,6 +18,7 @@ const (
 
 type ServiceConfig struct {
 	EnvName string
+	Headers map[string]string
 }
 
 type JobConfig struct {
@@ -45,6 +46,7 @@ type JobConfig struct {
 	RequestAffinity                    bool
 	AffinityKey                        string
 	AffinityValue                      string
+	Env                                map[string]string
 }
 
 type ConnectionConfig struct {
@@ -59,7 +61,7 @@ type ConnectionsConfig map[string]*ConnectionConfig
 
 func (s ConnectionsConfig) GetMods() []string {
 	res := []string{}
-	for k, _ := range map[string]*ConnectionConfig(s) {
+	for k := range map[string]*ConnectionConfig(s) {
 		if k != "default" {
 			res = append(res, k)
 		}
@@ -333,6 +335,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				AffinityValue:                      c.String(SEEDER_AFFINITY_VALUE),
 			},
 		},
+		// Single online content transcoder
 		"hls": &ConnectionConfig{
 			Name:           "content-transcoder",
 			ConnectionType: ConnectionType_JOB,
@@ -358,6 +361,55 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
 				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
 				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),
+			},
+		},
+		// Multibitrate background content transcoder
+		"mhls": &ConnectionConfig{
+			Name:           "mb-content-transcoder",
+			ConnectionType: ConnectionType_JOB,
+			JobConfig: JobConfig{
+				Type:                     JobType_TRANSCODER,
+				Name:                     c.String(JOB_PREFIX) + "mb-transcoder",
+				Image:                    c.String(TRANSCODER_IMAGE),
+				CPURequests:              c.String(TRANSCODER_CPU_REQUESTS),
+				CPULimits:                c.String(TRANSCODER_CPU_LIMITS),
+				MemoryRequests:           c.String(TRANSCODER_MEMORY_REQUESTS),
+				MemoryLimits:             c.String(TRANSCODER_MEMORY_LIMITS),
+				AWSAccessKeyID:           c.String(AWS_ACCESS_KEY_ID),
+				AWSSecretAccessKey:       c.String(AWS_SECRET_ACCESS_KEY),
+				AWSBucket:                c.String(AWS_BUCKET),
+				AWSBucketSpread:          c.String(AWS_BUCKET_SPREAD),
+				AWSNoSSL:                 c.String(AWS_NO_SSL),
+				AWSEndpoint:              c.String(AWS_ENDPOINT),
+				AWSRegion:                c.String(AWS_REGION),
+				UseSnapshot:              c.String(USE_SNAPSHOT),
+				SnapshotDownloadRatio:    0,
+				SnapshotTorrentSizeLimit: c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
+				Grace:                    c.Int(TRANSCODER_GRACE),
+				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
+				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
+				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),
+				Env: map[string]string{
+					"STREAM_MODE": "multibitrate",
+					"KEY_PREFIX":  "mb-transcoder",
+				},
+			},
+		},
+		"trc": &ConnectionConfig{
+			Name:           "transcode-web-cache",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "TRANSCODE_WEB_CACHE",
+			},
+		},
+		"mtrc": &ConnectionConfig{
+			Name:           "mb-transcode-web-cache",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "TRANSCODE_WEB_CACHE",
+				Headers: map[string]string{
+					"X-Key-Prefix": "mb-transcoder",
+				},
 			},
 		},
 		"vtt": &ConnectionConfig{
@@ -421,13 +473,6 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
 				EnvName: "TORRENT_WEB_CACHE",
-			},
-		},
-		"trc": &ConnectionConfig{
-			Name:           "transcode-web-cache",
-			ConnectionType: ConnectionType_SERVICE,
-			ServiceConfig: ServiceConfig{
-				EnvName: "TRANSCODE_WEB_CACHE",
 			},
 		},
 		"abuse": &ConnectionConfig{

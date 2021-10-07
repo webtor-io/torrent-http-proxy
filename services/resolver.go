@@ -53,7 +53,7 @@ func NewResolver(baseURL string, cfg *ConnectionsConfig, svcLocPool *ServiceLoca
 }
 
 func (s *Resolver) getInit(src *Source) *Init {
-	init := &Init{}
+	var init *Init
 	if src.Mod != nil {
 		init = &Init{
 			InitParams: &InitParams{

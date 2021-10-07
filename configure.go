@@ -113,7 +113,7 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool, clickHouse)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool, clickHouse, config)
 	defer web.Close()
 
 	// Setting GRPC Proxy

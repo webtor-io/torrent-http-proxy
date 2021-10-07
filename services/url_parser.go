@@ -40,6 +40,13 @@ func (s *Source) GetKey() string {
 	return key
 }
 
+func (s *Source) GetEdgeType() string {
+	if s.Mod != nil {
+		return s.Mod.Type
+	}
+	return s.Type
+}
+
 func (s *Source) GetEdgeName() string {
 	if s.Mod != nil {
 		return s.Mod.Name

@@ -37,6 +37,7 @@ type Web struct {
 	clickHouse *ClickHouse
 	baseURL    string
 	claims     *Claims
+	cfg        *ConnectionsConfig
 }
 
 const (
@@ -94,10 +95,10 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse) *Web {
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig) *Web {
 	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
 		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
-		subdomains: subs, bucketPool: bp, clickHouse: ch,
+		subdomains: subs, bucketPool: bp, clickHouse: ch, cfg: cfg,
 	}
 }
 
@@ -271,10 +272,20 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Client":      clientName,
 		"X-Session-ID":  sessionID,
 	}
+
 	rate, ok := claims["rate"].(string)
 	if ok {
 		headers["X-Download-Rate"] = rate
 	}
+
+	cfg := s.cfg.GetMod(src.GetEdgeType())
+
+	if cfg.Headers != nil {
+		for k, v := range cfg.Headers {
+			headers[k] = v
+		}
+	}
+
 	if source == External {
 		b, err := s.bucketPool.Get(claims)
 		if err != nil {
@@ -286,6 +297,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			w = NewThrottledRequestWrtier(w, b)
 		}
 	}
+
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}

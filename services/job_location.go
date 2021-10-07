@@ -573,6 +573,15 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.AWSEndpoint,
 		},
 	}
+	if s.cfg.Env != nil {
+		for k, v := range s.cfg.Env {
+			env = append(env, corev1.EnvVar{
+				Name:  k,
+				Value: v,
+			})
+		}
+	}
+
 	for k, v := range annotations {
 		envName := strings.Replace(strings.ToUpper(k), "-", "_", -1)
 		env = append(env, corev1.EnvVar{
