@@ -32,6 +32,7 @@ type JobConfig struct {
 	Grace                              int
 	IgnoredPaths                       []string
 	UseSnapshot                        string
+	ToCompletion                       bool
 	SnapshotStartFullDownloadThreshold float64
 	SnapshotStartThreshold             float64
 	SnapshotDownloadRatio              float64
@@ -383,9 +384,10 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				AWSEndpoint:              c.String(AWS_ENDPOINT),
 				AWSRegion:                c.String(AWS_REGION),
 				UseSnapshot:              c.String(USE_SNAPSHOT),
+				ToCompletion:             true,
 				SnapshotDownloadRatio:    0,
 				SnapshotTorrentSizeLimit: c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
-				Grace:                    c.Int(TRANSCODER_GRACE),
+				Grace:                    0,
 				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
 				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
 				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),

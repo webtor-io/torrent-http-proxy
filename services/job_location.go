@@ -528,11 +528,14 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Value: s.cfg.UseSnapshot,
 		},
 		{
+			Name:  "TO_COMPLETION",
+			Value: fmt.Sprintf("%v", s.cfg.ToCompletion),
+		},
+		{
 			Name:  "SNAPSHOT_START_THRESHOLD",
 			Value: fmt.Sprintf("%f", s.cfg.SnapshotStartThreshold),
 		},
 		{
-
 			Name:  "SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD",
 			Value: fmt.Sprintf("%f", s.cfg.SnapshotStartFullDownloadThreshold),
 		},
