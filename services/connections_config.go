@@ -397,6 +397,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				},
 			},
 		},
+		"mhlsp": &ConnectionConfig{
+			Name:           "mb-content-transcoder-pooler",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "MB_CONTENT_TRANSCODER_POOLER",
+			},
+		},
 		"trc": &ConnectionConfig{
 			Name:           "transcode-web-cache",
 			ConnectionType: ConnectionType_SERVICE,
