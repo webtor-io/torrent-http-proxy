@@ -112,6 +112,10 @@ const (
 	TRANSCODER_AFFINITY_KEY                = "transcoder-affinity-key"
 	TRANSCODER_AFFINITY_VALUE              = "transcoder-affinity-value"
 	TRANSCODER_REQUEST_AFFINITY            = "transcoder-request-affinity"
+	MB_TRANSCODER_CPU_REQUESTS             = "mb-transcoder-cpu-requests"
+	MB_TRANSCODER_CPU_LIMITS               = "mb-transcoder-cpu-limits"
+	MB_TRANSCODER_MEMORY_REQUESTS          = "mb-transcoder-memory-requests"
+	MB_TRANSCODER_MEMORY_LIMITS            = "mb-transcoder-memory-limits"
 	USE_SNAPSHOT                           = "use-snapshot"
 	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
 	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
@@ -198,6 +202,30 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "Transcoder Memory Limits",
 		Value:  "",
 		EnvVar: "TRANSCODER_MEMORY_LIMITS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_CPU_REQUESTS,
+		Usage:  "Multibitrate Transcoder CPU Requests",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_CPU_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_CPU_LIMITS,
+		Usage:  "Multibitrate Transcoder CPU Limits",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_CPU_LIMITS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_MEMORY_REQUESTS,
+		Usage:  "Multibitrate Transcoder Memory Requests",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_MEMORY_REQUESTS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_MEMORY_LIMITS,
+		Usage:  "Multibitrate Transcoder Memory Limits",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_MEMORY_LIMITS",
 	})
 	c.Flags = append(c.Flags, cli.IntFlag{
 		Name:   TRANSCODER_GRACE,
@@ -372,10 +400,10 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				Type:                     JobType_TRANSCODER,
 				Name:                     c.String(JOB_PREFIX) + "mb-transcoder",
 				Image:                    c.String(TRANSCODER_IMAGE),
-				CPURequests:              c.String(TRANSCODER_CPU_REQUESTS),
-				CPULimits:                c.String(TRANSCODER_CPU_LIMITS),
-				MemoryRequests:           c.String(TRANSCODER_MEMORY_REQUESTS),
-				MemoryLimits:             c.String(TRANSCODER_MEMORY_LIMITS),
+				CPURequests:              c.String(MB_TRANSCODER_CPU_REQUESTS),
+				CPULimits:                c.String(MB_TRANSCODER_CPU_LIMITS),
+				MemoryRequests:           c.String(MB_TRANSCODER_MEMORY_REQUESTS),
+				MemoryLimits:             c.String(MB_TRANSCODER_MEMORY_LIMITS),
 				AWSAccessKeyID:           c.String(AWS_ACCESS_KEY_ID),
 				AWSSecretAccessKey:       c.String(AWS_SECRET_ACCESS_KEY),
 				AWSBucket:                c.String(AWS_BUCKET),
