@@ -47,9 +47,9 @@ func (s *AccessHistory) Store(oip string, oua string, nip string, nua string) (b
 			return true, s.limit - len(s.m[okey])
 		}
 	}
-	s.m[okey] = append(s.m[okey], nkey)
-	if len(s.m[okey]) > s.limit {
+	if len(s.m[okey]) >= s.limit {
 		return false, 0
 	}
+	s.m[okey] = append(s.m[okey], nkey)
 	return true, s.limit - len(s.m[okey])
 }
