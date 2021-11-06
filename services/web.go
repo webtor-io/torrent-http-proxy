@@ -38,6 +38,7 @@ type Web struct {
 	baseURL    string
 	claims     *Claims
 	cfg        *ConnectionsConfig
+	ah         *AccessHistory
 }
 
 const (
@@ -95,10 +96,21 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig) *Web {
-	return &Web{host: c.String(WEB_HOST), port: c.Int(WEB_PORT),
-		parser: parser, r: r, pr: pr, baseURL: baseURL, grpc: grpc, claims: claims,
-		subdomains: subs, bucketPool: bp, clickHouse: ch, cfg: cfg,
+func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig, ah *AccessHistory) *Web {
+	return &Web{
+		host:       c.String(WEB_HOST),
+		port:       c.Int(WEB_PORT),
+		parser:     parser,
+		r:          r,
+		pr:         pr,
+		baseURL:    baseURL,
+		grpc:       grpc,
+		claims:     claims,
+		subdomains: subs,
+		bucketPool: bp,
+		clickHouse: ch,
+		cfg:        cfg,
+		ah:         ah,
 	}
 }
 
@@ -163,11 +175,14 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		source = External
 		remoteAddress, raOK := claims["remoteAddress"].(string)
 		ua, uaOK := claims["agent"].(string)
-		if raOK && uaOK && s.getIP(r) != remoteAddress && r.Header.Get("User-Agent") != ua {
-			logger.Warningf("IP and UA changed, got ua=%v ip=%v x-forwarded-for=%v, expected ua=%v ip=%v so deny access",
-				r.Header.Get("User-Agent"), s.getIP(r), r.Header.Get("X-FORWARDED-FOR"), ua, remoteAddress)
-			w.WriteHeader(http.StatusForbidden)
-			return
+		if raOK && uaOK && (s.getIP(r) != remoteAddress || r.Header.Get("User-Agent") != ua) {
+			ok, left := s.ah.Store(remoteAddress, ua, s.getIP(r), r.Header.Get("User-Agent"))
+			logger.Warningf("IP or UA changed got ua=%v ip=%v x-forwarded-for=%v, expected ua=%v ip=%v, changes left=%v, access=%v",
+				r.Header.Get("User-Agent"), s.getIP(r), r.Header.Get("X-FORWARDED-FOR"), ua, remoteAddress, left, ok)
+			if !ok {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 		}
 	}
 

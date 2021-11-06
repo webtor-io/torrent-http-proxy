@@ -112,8 +112,12 @@ func run(c *cli.Context) error {
 		}
 	}
 
+	// Setting AccessHistory
+	accessHistory := s.NewAccessHistory()
+
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool, bucketPool, clickHouse, config)
+	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool,
+		bucketPool, clickHouse, config, accessHistory)
 	defer web.Close()
 
 	// Setting GRPC Proxy
