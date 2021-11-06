@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ACCESS_HISTORY_LIMIT  = 3
+	ACCESS_HISTORY_LIMIT  = 10
 	ACCESS_HISTORY_EXPIRE = 3 * time.Hour
 )
 
