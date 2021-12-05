@@ -137,7 +137,8 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
-		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
+		// conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
+		conn, err := s.dial(ctx, cl, src, grpcOpts, invoke)
 		return outCtx, conn, err
 	}
 	// Server with logging and monitoring enabled.

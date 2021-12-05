@@ -51,7 +51,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 		"clientName": clientName,
 	})
 	// return &Location{Unavailable: true}, nil
-	if !params.RunIfNotExists || invoke == false {
+	if !params.RunIfNotExists || !invoke {
 		l, ok := s.sm.Load(key)
 		if !ok {
 			al, loaded := s.locks.LoadOrStore(key, NewAccessLock())
