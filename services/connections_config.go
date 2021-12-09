@@ -533,6 +533,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "TORRENT_STORE",
 			},
 		},
+		"store-new": &ConnectionConfig{
+			Name:           "torrent-store-new",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "TORRENT_STORE_NEW",
+			},
+		},
 		"vod": &ConnectionConfig{
 			Name:           "nginx-vod",
 			ConnectionType: ConnectionType_SERVICE,
