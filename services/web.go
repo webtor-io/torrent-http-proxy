@@ -25,25 +25,27 @@ const (
 )
 
 type Web struct {
-	host       string
-	port       int
-	ln         net.Listener
-	r          *Resolver
-	pr         *HTTPProxyPool
-	parser     *URLParser
-	grpc       *HTTPGRPCProxyPool
-	subdomains *SubdomainsPool
-	bucketPool *BucketPool
-	clickHouse *ClickHouse
-	baseURL    string
-	claims     *Claims
-	cfg        *ConnectionsConfig
-	ah         *AccessHistory
+	host           string
+	port           int
+	ln             net.Listener
+	r              *Resolver
+	pr             *HTTPProxyPool
+	parser         *URLParser
+	grpc           *HTTPGRPCProxyPool
+	subdomains     *SubdomainsPool
+	bucketPool     *BucketPool
+	clickHouse     *ClickHouse
+	baseURL        string
+	claims         *Claims
+	cfg            *ConnectionsConfig
+	ah             *AccessHistory
+	bandwidthLimit bool
 }
 
 const (
-	WEB_HOST = "host"
-	WEB_PORT = "port"
+	WEB_HOST            = "host"
+	WEB_PORT            = "port"
+	USE_BANDWIDTH_LIMIT = "use-bandwidth-limit"
 )
 
 var (
@@ -98,19 +100,20 @@ func init() {
 
 func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig, ah *AccessHistory) *Web {
 	return &Web{
-		host:       c.String(WEB_HOST),
-		port:       c.Int(WEB_PORT),
-		parser:     parser,
-		r:          r,
-		pr:         pr,
-		baseURL:    baseURL,
-		grpc:       grpc,
-		claims:     claims,
-		subdomains: subs,
-		bucketPool: bp,
-		clickHouse: ch,
-		cfg:        cfg,
-		ah:         ah,
+		host:           c.String(WEB_HOST),
+		port:           c.Int(WEB_PORT),
+		parser:         parser,
+		r:              r,
+		pr:             pr,
+		baseURL:        baseURL,
+		grpc:           grpc,
+		claims:         claims,
+		subdomains:     subs,
+		bucketPool:     bp,
+		clickHouse:     ch,
+		cfg:            cfg,
+		ah:             ah,
+		bandwidthLimit: c.Bool(USE_BANDWIDTH_LIMIT),
 	}
 }
 
@@ -124,6 +127,11 @@ func RegisterWebFlags(c *cli.App) {
 		Name:  WEB_PORT,
 		Usage: "http listening port",
 		Value: 8080,
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   USE_BANDWIDTH_LIMIT,
+		Usage:  "use bandwidth limit",
+		EnvVar: "USE_BANDWIDTH_LIMIT",
 	})
 }
 
@@ -303,7 +311,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 	}
 
-	if source == External {
+	if s.bandwidthLimit && source == External {
 		b, err := s.bucketPool.Get(claims)
 		if err != nil {
 			logger.WithError(err).Errorf("Failed to get bucket")
