@@ -265,6 +265,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"ttfb":     wi.ttfb.Seconds(),
 			"duration": time.Since(wi.start).Seconds(),
 			"status":   strconv.Itoa(wi.statusCode),
+			"rate":     claims["rate"].(string),
 		})
 		if wi.GroupedStatusCode() == 500 {
 			l.Error("Failed to serve request")
