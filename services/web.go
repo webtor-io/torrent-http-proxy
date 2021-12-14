@@ -255,17 +255,18 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			strconv.Itoa(wi.GroupedStatusCode()),
 		).Add(float64(wi.bytesWritten))
 		l := logger.WithFields(logrus.Fields{
-			"client":   clientName,
-			"domain":   domain,
-			"role":     role,
-			"source":   string(source),
-			"edge":     src.GetEdgeName(),
-			"infohash": src.InfoHash,
-			"path":     src.Path,
-			"ttfb":     wi.ttfb.Seconds(),
-			"duration": time.Since(wi.start).Seconds(),
-			"status":   strconv.Itoa(wi.statusCode),
-			"rate":     claims["rate"].(string),
+			"client":     clientName,
+			"domain":     domain,
+			"role":       role,
+			"source":     string(source),
+			"edge":       src.GetEdgeName(),
+			"infohash":   src.InfoHash,
+			"path":       src.Path,
+			"ttfb":       wi.ttfb.Seconds(),
+			"duration":   time.Since(wi.start).Seconds(),
+			"status":     strconv.Itoa(wi.statusCode),
+			"rate":       claims["rate"].(string),
+			"session_id": sessionID,
 		})
 		if wi.GroupedStatusCode() == 500 {
 			l.Error("Failed to serve request")
