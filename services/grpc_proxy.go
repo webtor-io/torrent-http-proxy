@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	GRPC_PROXY_DIAL_TRIES   = 5
-	GRPC_PROXY_REDIAL_DELAY = 1
-	GRPC_TIMEOUT            = 30
+	GRPC_PROXY_DIAL_TRIES    int = 5
+	GRPC_PROXY_REDIAL_DELAY  int = 1
+	GRPC_PROXY_UNARY_TIMEOUT int = 30
 )
 
 type GRPCProxy struct {
@@ -64,6 +64,13 @@ func (s *GRPCProxy) dialWithRetry(ctx context.Context, cl *Client, src *Source, 
 	}
 	return
 }
+func unaryClientTimeoutInterceptor(t time.Duration) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx, cancel := context.WithTimeout(ctx, t)
+		defer cancel()
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
 
 func (s *GRPCProxy) get() *grpc.Server {
 	// logger := logrus.NewEntry(logrus.StandardLogger())
@@ -79,7 +86,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		grpc.WithCodec(proxy.Codec()),
 		grpc.WithInsecure(),
 		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
-		// grpc.WithUnaryInterceptor(grpcretry.UnaryClientInterceptor(retryOpts...)),
+		grpc.WithUnaryInterceptor(unaryClientTimeoutInterceptor(time.Duration(GRPC_PROXY_UNARY_TIMEOUT) * time.Second)),
 	}
 
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
@@ -136,8 +143,8 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// the actual connection to the backend will not be established.
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
+		outCtx := metadata.NewOutgoingContext(ctx, mdCopy)
 		// conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
-		outCtx, _ := context.WithTimeout(metadata.NewOutgoingContext(ctx, mdCopy), time.Duration(30)*time.Second)
 		conn, err := s.dial(ctx, cl, src, grpcOpts, invoke)
 		return outCtx, conn, err
 	}

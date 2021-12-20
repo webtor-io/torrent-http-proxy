@@ -3,6 +3,7 @@ package services
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
 )
@@ -15,13 +16,14 @@ type HTTPGRPCProxy struct {
 }
 
 func NewHTTPGRPCProxy(p *GRPCProxy) *HTTPGRPCProxy {
-	return &HTTPGRPCProxy{p: p, inited: false}
+	return &HTTPGRPCProxy{p: p}
 }
 
 func (s *HTTPGRPCProxy) get() *grpcweb.WrappedGrpcServer {
 	g := s.p.Get()
 	w := grpcweb.WrapServer(g,
 		grpcweb.WithWebsockets(true),
+		grpcweb.WithWebsocketPingInterval(30*time.Second),
 		grpcweb.WithOriginFunc(makeHttpOriginFunc()),
 		grpcweb.WithWebsocketOriginFunc(makeWebsocketOriginFunc()),
 		grpcweb.WithCorsForRegisteredEndpointsOnly(false),

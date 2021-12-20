@@ -20,6 +20,7 @@ separate http.Server that serves over TLS:
     tlsHttpServer.Handler = http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
     	if wrappedGrpc.IsGrpcWebRequest(req) {
     		wrappedGrpc.ServeHTTP(resp, req)
+    		return
     	}
     	// Fall back to other servers.
     	http.DefaultServeMux.ServeHTTP(resp, req)
@@ -28,6 +29,15 @@ separate http.Server that serves over TLS:
 If you'd like to have a standalone binary, please take a look at `grpcwebproxy`.
 
 ## Usage
+
+#### func  ClientHealthCheck
+
+```go
+func ClientHealthCheck(ctx context.Context, backendConn *grpc.ClientConn, service string, setServingStatus func(serving bool)) error
+```
+Client health check function is also part of the grpc/internal package The
+following code is a simplified version of client.go For more details see:
+https://pkg.go.dev/google.golang.org/grpc/health
 
 #### func  ListGRPCResources
 
@@ -108,6 +118,25 @@ endpoints (e.g. for proxying).
 The default behaviour is `true`, i.e. only allows CORS requests for registered
 endpoints.
 
+#### func  WithEndpointsFunc
+
+```go
+func WithEndpointsFunc(endpointsFunc func() []string) Option
+```
+WithEndpointsFunc allows for providing a custom function that provides all
+supported endpoints for use when the when `WithCorsForRegisteredEndpoints`
+option` is not set to false (i.e. the default state).
+
+When wrapping a http.Handler with `WrapHttpHandler`, failing to specify the
+`WithEndpointsFunc` option will cause all CORS requests to result in a 403 error
+for websocket requests (if websockets are enabled) or be passed to the handler
+http.Handler or grpc.Server backend (i.e. as if it wasn't wrapped).
+
+When wrapping grpc.Server with `WrapGrpcServer`, registered endpoints will be
+automatically detected, however if this `WithEndpointsFunc` option is specified,
+the server will not be queried for its endpoints and this function will be
+called instead.
+
 #### func  WithOriginFunc
 
 ```go
@@ -136,6 +165,16 @@ requests - usually to check that the origin is valid.
 The default behaviour is to check that the origin of the request matches the
 host of the request and deny all requests from remote origins.
 
+#### func  WithWebsocketPingInterval
+
+```go
+func WithWebsocketPingInterval(websocketPingInterval time.Duration) Option
+```
+WithWebsocketPingInterval enables websocket keepalive pinging with the
+configured timeout.
+
+The default behaviour is to disable websocket pinging.
+
 #### func  WithWebsockets
 
 ```go
@@ -146,6 +185,16 @@ bidirectional requests.
 
 The default behaviour is false, i.e. to disallow websockets
 
+#### func  WithWebsocketsMessageReadLimit
+
+```go
+func WithWebsocketsMessageReadLimit(websocketReadLimit int64) Option
+```
+WithWebsocketsMessageReadLimit sets the maximum message read limit on the
+underlying websocket.
+
+The default message read limit is 32769 bytes
+
 #### type WrappedGrpcServer
 
 ```go
@@ -154,12 +203,24 @@ type WrappedGrpcServer struct {
 ```
 
 
+#### func  WrapHandler
+
+```go
+func WrapHandler(handler http.Handler, options ...Option) *WrappedGrpcServer
+```
+WrapHandler takes a http.Handler (such as a http.Mux) and returns a
+*WrappedGrpcServer that provides gRPC-Web Compatibility.
+
+This behaves nearly identically to WrapServer except when the
+WithCorsForRegisteredEndpointsOnly setting is true. Then a WithEndpointsFunc
+option must be provided or all CORS requests will NOT be handled.
+
 #### func  WrapServer
 
 ```go
 func WrapServer(server *grpc.Server, options ...Option) *WrappedGrpcServer
 ```
-WrapServer takes a gRPC Server in Go and returns a WrappedGrpcServer that
+WrapServer takes a gRPC Server in Go and returns a *WrappedGrpcServer that
 provides gRPC-Web Compatibility.
 
 The internal implementation fakes out a http.Request that carries standard gRPC,
