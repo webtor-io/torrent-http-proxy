@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	GRPC_PROXY_DIAL_TRIES   int = 5
-	GRPC_PROXY_REDIAL_DELAY int = 1
+	GRPC_PROXY_DIAL_TRIES   = 5
+	GRPC_PROXY_REDIAL_DELAY = 1
+	GRPC_TIMEOUT            = 30
 )
 
 type GRPCProxy struct {
@@ -118,7 +119,6 @@ func (s *GRPCProxy) get() *grpc.Server {
 		if len(md.Get("invoke")) != 0 && md.Get("invoke")[0] == "false" {
 			invoke = false
 		}
-		outCtx, _ := context.WithCancel(ctx)
 		mdCopy := md.Copy()
 		mdCopy.Set("source-url", s.baseURL+"/"+src.InfoHash+src.Path+"?"+src.Query)
 		mdCopy.Set("proxy-url", s.baseURL)
@@ -136,8 +136,8 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// the actual connection to the backend will not be established.
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
-		outCtx = metadata.NewOutgoingContext(outCtx, mdCopy)
 		// conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
+		outCtx, _ := context.WithTimeout(metadata.NewOutgoingContext(ctx, mdCopy), time.Duration(30)*time.Second)
 		conn, err := s.dial(ctx, cl, src, grpcOpts, invoke)
 		return outCtx, conn, err
 	}
