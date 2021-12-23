@@ -116,6 +116,8 @@ const (
 	MB_TRANSCODER_CPU_LIMITS               = "mb-transcoder-cpu-limits"
 	MB_TRANSCODER_MEMORY_REQUESTS          = "mb-transcoder-memory-requests"
 	MB_TRANSCODER_MEMORY_LIMITS            = "mb-transcoder-memory-limits"
+	MB_TRANSCODER_AFFINITY_KEY             = "mb-transcoder-affinity-key"
+	MB_TRANSCODER_AFFINITY_VALUE           = "mb-transcoder-affinity-value"
 	USE_SNAPSHOT                           = "use-snapshot"
 	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
 	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
@@ -320,6 +322,18 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  "",
 		EnvVar: "TRANSCODER_AFFINITY_VALUE",
 	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_AFFINITY_KEY,
+		Usage:  "Multibitrate Transcoder Affinity Key",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_AFFINITY_KEY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_AFFINITY_VALUE,
+		Usage:  "Multibitrate Transcoder Affinity Value",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_AFFINITY_VALUE",
+	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
 		Name:   SEEDER_REQUEST_AFFINITY,
 		Usage:  "Seeder request affinity",
@@ -416,9 +430,9 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				SnapshotDownloadRatio:    0,
 				SnapshotTorrentSizeLimit: c.Int64(SNAPSHOT_TORRENT_SIZE_LIMIT),
 				Grace:                    0,
-				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
-				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
-				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),
+				RequestAffinity:          false,
+				AffinityKey:              c.String(MB_TRANSCODER_AFFINITY_KEY),
+				AffinityValue:            c.String(MB_TRANSCODER_AFFINITY_VALUE),
 				Env: map[string]string{
 					"STREAM_MODE": "multibitrate",
 					"KEY_PREFIX":  "mb-transcoder",
