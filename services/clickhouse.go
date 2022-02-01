@@ -101,7 +101,7 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 			edge           String,
 			source         String,
 			role           String,
-			ads            Boolean,
+			ads            UInt8,
 			node           String
 		) engine = %v
 		PARTITION BY toYYYYMM(timestamp)
@@ -160,15 +160,15 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	}
 	defer stmt.Close()
 	for _, r := range sr {
-		var adsInt int8
+		var adsUInt uint8
 		if r.Ads {
-			adsInt = 1
+			adsUInt = 1
 		}
 		_, err = stmt.Exec(
 			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
 			r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 			r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-			r.Role, adsInt, s.nodeName,
+			r.Role, adsUInt, s.nodeName,
 		)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to exec")
