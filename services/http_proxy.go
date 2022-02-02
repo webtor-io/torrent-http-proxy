@@ -159,9 +159,9 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 		t = &stubTransport{http.DefaultTransport}
 	} else {
 		t = &http.Transport{
-			// Dial: func(network, addr string) (net.Conn, error) {
-			// 	return s.dialWithRetry(network, HTTP_PROXY_DIAL_TRIES, HTTP_PROXY_REDIAL_DELAY)
-			// },
+			Dial: func(network, addr string) (net.Conn, error) {
+				return s.dialWithRetry(network, HTTP_PROXY_DIAL_TRIES, HTTP_PROXY_REDIAL_DELAY)
+			},
 			MaxIdleConns:        500,
 			MaxIdleConnsPerHost: 500,
 			MaxConnsPerHost:     500,
