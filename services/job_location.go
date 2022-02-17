@@ -660,9 +660,12 @@ func (s *JobLocation) invoke() (*Location, error) {
 										Path: POD_LIVENESS_PATH,
 									},
 								},
+								InitialDelaySeconds: int32(10),
+								PeriodSeconds:       int32(10),
+								FailureThreshold:    int32(10),
+								TimeoutSeconds:      int32(10),
 							},
 							ReadinessProbe: &corev1.Probe{
-								PeriodSeconds: 1,
 								Handler: corev1.Handler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Port: intstr.IntOrString{
@@ -672,6 +675,10 @@ func (s *JobLocation) invoke() (*Location, error) {
 										Path: POD_READINESS_PATH,
 									},
 								},
+								InitialDelaySeconds: int32(10),
+								PeriodSeconds:       int32(10),
+								FailureThreshold:    int32(10),
+								TimeoutSeconds:      int32(10),
 							},
 						},
 					},
