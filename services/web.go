@@ -262,6 +262,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			src.Path,
 			strconv.Itoa(wi.GroupedStatusCode()),
 		).Add(float64(wi.bytesWritten))
+		rate, _ := claims["rate"].(string)
 		l := logger.WithFields(logrus.Fields{
 			"client":     clientName,
 			"domain":     domain,
@@ -273,7 +274,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"ttfb":       wi.ttfb.Seconds(),
 			"duration":   time.Since(wi.start).Seconds(),
 			"status":     strconv.Itoa(wi.statusCode),
-			"rate":       claims["rate"].(string),
+			"rate":       rate,
 			"session_id": sessionID,
 		})
 		if wi.GroupedStatusCode() == 500 {
