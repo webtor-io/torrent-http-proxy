@@ -417,6 +417,7 @@ func (s *Web) Serve() error {
 			strings.HasPrefix(r.URL.Path, "/favicon") ||
 			strings.HasPrefix(r.URL.Path, "/ads.txt") ||
 			strings.HasPrefix(r.URL.Path, "/robots.txt") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.WriteHeader(200)
 			return
 		}
