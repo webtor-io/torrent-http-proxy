@@ -505,6 +505,13 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				EnvName: "VIDEO_THUMBNAILS_GENERATOR",
 			},
 		},
+		"rest": &ConnectionConfig{
+			Name:           "rest",
+			ConnectionType: ConnectionType_SERVICE,
+			ServiceConfig: ServiceConfig{
+				EnvName: "REST_API",
+			},
+		},
 		"it": &ConnectionConfig{
 			Name:           "image-transformer",
 			ConnectionType: ConnectionType_SERVICE,
