@@ -1,6 +1,10 @@
 package services
 
-import "github.com/urfave/cli"
+import (
+	"strings"
+
+	"github.com/urfave/cli"
+)
 
 type ConnectionType int
 
@@ -48,6 +52,7 @@ type JobConfig struct {
 	AffinityKey                        string
 	AffinityValue                      string
 	Env                                map[string]string
+	Labels                             map[string]string
 }
 
 type ConnectionConfig struct {
@@ -103,6 +108,7 @@ const (
 	SEEDER_AFFINITY_KEY                    = "seeder-affinity-key"
 	SEEDER_AFFINITY_VALUE                  = "seeder-affinity-value"
 	SEEDER_REQUEST_AFFINITY                = "seeder-request-affinity"
+	SEEDER_LABELS                          = "seeder-labels"
 	TRANSCODER_IMAGE                       = "transcoder-image"
 	TRANSCODER_CPU_REQUESTS                = "transcoder-cpu-requests"
 	TRANSCODER_CPU_LIMITS                  = "transcoder-cpu-limits"
@@ -112,12 +118,14 @@ const (
 	TRANSCODER_AFFINITY_KEY                = "transcoder-affinity-key"
 	TRANSCODER_AFFINITY_VALUE              = "transcoder-affinity-value"
 	TRANSCODER_REQUEST_AFFINITY            = "transcoder-request-affinity"
+	TRANSCODER_LABELS                      = "transcoder-labels"
 	MB_TRANSCODER_CPU_REQUESTS             = "mb-transcoder-cpu-requests"
 	MB_TRANSCODER_CPU_LIMITS               = "mb-transcoder-cpu-limits"
 	MB_TRANSCODER_MEMORY_REQUESTS          = "mb-transcoder-memory-requests"
 	MB_TRANSCODER_MEMORY_LIMITS            = "mb-transcoder-memory-limits"
 	MB_TRANSCODER_AFFINITY_KEY             = "mb-transcoder-affinity-key"
 	MB_TRANSCODER_AFFINITY_VALUE           = "mb-transcoder-affinity-value"
+	MB_TRANSCODER_LABELS                   = "mb-transcoder-labels"
 	USE_SNAPSHOT                           = "use-snapshot"
 	SNAPSHOT_START_THRESHOLD               = "snapshot-start-threshold"
 	SNAPSHOT_START_FULL_DOWNLOAD_THRESHOLD = "snapshot-start-full-download-threshold"
@@ -334,6 +342,12 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Value:  "",
 		EnvVar: "MB_TRANSCODER_AFFINITY_VALUE",
 	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   MB_TRANSCODER_LABELS,
+		Usage:  "Multibitrate Transcoder Labels",
+		Value:  "",
+		EnvVar: "MB_TRANSCODER_LABELS",
+	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
 		Name:   SEEDER_REQUEST_AFFINITY,
 		Usage:  "Seeder request affinity",
@@ -344,6 +358,30 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		Usage:  "Transcoder request affinity",
 		EnvVar: "TRANSCODER_REQUEST_AFFINITY",
 	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_LABELS,
+		Usage:  "Seeder additional labels",
+		EnvVar: "SEEDER_LABELS",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   TRANSCODER_LABELS,
+		Usage:  "Transcoder additional labels",
+		EnvVar: "TRANSCODER_LABELS",
+	})
+}
+
+func processLabels(s string) map[string]string {
+	r := map[string]string{}
+	if s == "" {
+		return r
+	}
+	for _, v := range strings.Split(s, ",") {
+		vv := strings.Split(v, "=")
+		if len(vv) == 2 {
+			r[vv[0]] = vv[1]
+		}
+	}
+	return r
 }
 
 func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
@@ -376,6 +414,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				RequestAffinity:                    c.Bool(SEEDER_REQUEST_AFFINITY),
 				AffinityKey:                        c.String(SEEDER_AFFINITY_KEY),
 				AffinityValue:                      c.String(SEEDER_AFFINITY_VALUE),
+				Labels:                             processLabels(c.String(SEEDER_LABELS)),
 			},
 		},
 		// Single online content transcoder
@@ -404,6 +443,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				RequestAffinity:          c.Bool(TRANSCODER_REQUEST_AFFINITY),
 				AffinityKey:              c.String(TRANSCODER_AFFINITY_KEY),
 				AffinityValue:            c.String(TRANSCODER_AFFINITY_VALUE),
+				Labels:                   processLabels(c.String(TRANSCODER_LABELS)),
 			},
 		},
 		// Multibitrate background content transcoder
@@ -437,6 +477,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 					"STREAM_MODE": "multibitrate",
 					"KEY_PREFIX":  "mb-transcoder",
 				},
+				Labels: processLabels(c.String(MB_TRANSCODER_LABELS)),
 			},
 		},
 		"mhlsp": &ConnectionConfig{

@@ -517,6 +517,11 @@ func (s *JobLocation) invoke() (*Location, error) {
 			labels[k] = v
 		}
 	}
+	for k, v := range s.cfg.Labels {
+		if validLabelValue.MatchString(v) && len(v) < 64 {
+			labels[k] = v
+		}
+	}
 	meta := metav1.ObjectMeta{
 		Name:        jobName,
 		Labels:      labels,
