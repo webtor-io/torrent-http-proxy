@@ -53,6 +53,7 @@ type JobConfig struct {
 	AffinityValue                      string
 	Env                                map[string]string
 	Labels                             map[string]string
+	HTTPProxy                          string
 }
 
 type ConnectionConfig struct {
@@ -109,6 +110,7 @@ const (
 	SEEDER_AFFINITY_VALUE                  = "seeder-affinity-value"
 	SEEDER_REQUEST_AFFINITY                = "seeder-request-affinity"
 	SEEDER_LABELS                          = "seeder-labels"
+	SEEDER_HTTP_PROXY                      = "seeder-http-proxy"
 	TRANSCODER_IMAGE                       = "transcoder-image"
 	TRANSCODER_CPU_REQUESTS                = "transcoder-cpu-requests"
 	TRANSCODER_CPU_LIMITS                  = "transcoder-cpu-limits"
@@ -364,6 +366,11 @@ func RegisterConnectionConfigFlags(c *cli.App) {
 		EnvVar: "SEEDER_LABELS",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   SEEDER_HTTP_PROXY,
+		Usage:  "Seeder HTTP proxy",
+		EnvVar: "SEEDER_HTTP_PROXY",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   TRANSCODER_LABELS,
 		Usage:  "Transcoder additional labels",
 		EnvVar: "TRANSCODER_LABELS",
@@ -415,6 +422,7 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 				AffinityKey:                        c.String(SEEDER_AFFINITY_KEY),
 				AffinityValue:                      c.String(SEEDER_AFFINITY_VALUE),
 				Labels:                             processLabels(c.String(SEEDER_LABELS)),
+				HTTPProxy:                          c.String(SEEDER_HTTP_PROXY),
 			},
 		},
 		// Single online content transcoder

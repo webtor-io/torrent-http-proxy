@@ -580,6 +580,10 @@ func (s *JobLocation) invoke() (*Location, error) {
 			Name:  "AWS_ENDPOINT",
 			Value: s.cfg.AWSEndpoint,
 		},
+		{
+			Name:  "HTTP_PROXY",
+			Value: s.cfg.HTTPProxy,
+		},
 	}
 	if s.cfg.Env != nil {
 		for k, v := range s.cfg.Env {
