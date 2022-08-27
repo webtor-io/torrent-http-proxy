@@ -42,7 +42,6 @@ const (
 	JOB_NODE_AFFINITY_KEY   = "job-node-affinity-key"
 	JOB_NODE_AFFINITY_VALUE = "job-node-affinity-value"
 	JOB_NAMESPACE           = "job-namespace"
-	MY_NODE_NAME            = "my-node-name"
 )
 
 var (
@@ -112,21 +111,17 @@ func RegisterJobFlags(c *cli.App) {
 		Value:  "webtor",
 		EnvVar: "JOB_NAMESPACE",
 	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   MY_NODE_NAME,
-		Usage:  "My node name",
-		Value:  "",
-		EnvVar: "MY_NODE_NAME",
-	})
 }
 
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
 		logger: logger, l: l,
-		naKey: c.String(JOB_NODE_AFFINITY_KEY), naVal: c.String(JOB_NODE_AFFINITY_VALUE),
-		namespace: c.String(JOB_NAMESPACE), extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
-		nn: c.String(MY_NODE_NAME),
+		naKey:          c.String(JOB_NODE_AFFINITY_KEY),
+		naVal:          c.String(JOB_NODE_AFFINITY_VALUE),
+		namespace:      c.String(JOB_NAMESPACE),
+		extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		nn:             c.String(MY_NODE_NAME),
 	}
 }
 
@@ -146,32 +141,9 @@ func isPodReady(pod *corev1.Pod) bool {
 }
 
 func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
-	cl, err := s.cl.Get()
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get K8S client")
-	}
-	extIP := ""
-	nodeName := pod.Spec.NodeName
-	nodes, err := cl.CoreV1().Nodes().List(metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("metadata.name", nodeName).String(),
-	})
-	if err != nil {
-		s.logger.WithError(err).Errorf("Failed to get node with name=%s", nodeName)
-	}
-	if len(nodes.Items) == 0 {
-		s.logger.Warnf("No nodes found by name=%s", nodeName)
-	}
-	if err == nil && len(nodes.Items) > 0 {
-		for _, a := range nodes.Items[0].Status.Addresses {
-			if a.Type == corev1.NodeAddressType(s.extAddressType) {
-				extIP = a.Address
-			}
-		}
-	}
-
 	w, err := s.waitFinish(pod)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to init expire channel")
+		return nil, errors.Wrap(err, "failed to init expire channel")
 	}
 	return &Location{
 		IP: net.ParseIP(pod.Status.PodIP),
@@ -180,7 +152,6 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
 			GRPC:  PORT_GRPC,
 			Probe: PORT_PROBE,
 		},
-		HostIP:      net.ParseIP(extIP),
 		Unavailable: false,
 		Expire:      w,
 	}, nil
@@ -189,13 +160,13 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
 func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get K8S client")
+		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(metav1.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector("metadata.name", pod.Name).String(),
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create watcher")
+		return nil, errors.Wrap(err, "failed to create watcher")
 	}
 	watchSuccess := make(chan *corev1.Pod)
 	go func() {
@@ -205,7 +176,7 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 			s.logger.Info(pod.Status.Phase)
 
 			if isPodFinished(pod) {
-				s.logger.Info("Pod finished!")
+				s.logger.Info("pod finished!")
 				watchSuccess <- pod
 			}
 		}
@@ -225,11 +196,11 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 			// s.logger.Infof("Checking url=%s", url)
 			res, err := netClient.Get(url)
 			if res != nil && res.StatusCode != http.StatusOK {
-				err = errors.Errorf("Got not OK status code=%v", res.StatusCode)
+				err = errors.Errorf("got not OK status code=%v", res.StatusCode)
 			}
 			if err != nil {
 				tries++
-				s.logger.WithError(err).Warn("Failed to check pod status")
+				s.logger.WithError(err).Warn("failed to check pod status")
 				if tries >= HEALTH_CHECK_TRIES {
 					httpHealthCheck <- err
 					return
@@ -244,10 +215,10 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 	go func() {
 		select {
 		case <-watchSuccess:
-			s.logger.Info("Pod finished")
+			s.logger.Info("pod finished")
 			finished = true
 		case err := <-httpHealthCheck:
-			s.logger.WithError(err).Warnf("Job health check failed for pod=%v", pod.Name)
+			s.logger.WithError(err).Warnf("job health check failed for pod=%v", pod.Name)
 		}
 		watcher.Stop()
 		close(resCh)
@@ -258,13 +229,13 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 func (s *JobLocation) waitReady(pod *corev1.Pod, ctx context.Context) (*corev1.Pod, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get K8S client")
+		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(metav1.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector("metadata.name", pod.Name).String(),
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create watcher")
+		return nil, errors.Wrap(err, "failed to create watcher")
 	}
 	defer watcher.Stop()
 	watchSuccess := make(chan *corev1.Pod)
@@ -273,7 +244,7 @@ func (s *JobLocation) waitReady(pod *corev1.Pod, ctx context.Context) (*corev1.P
 			pod := event.Object.(*corev1.Pod)
 
 			if isPodReady(pod) {
-				s.logger.Info("Pod ready!")
+				s.logger.Info("pod ready!")
 				watchSuccess <- pod
 			}
 		}
@@ -368,14 +339,14 @@ func (s *JobLocation) makeNodeAffinity() []corev1.PreferredSchedulingTerm {
 func (s *JobLocation) isInited() (bool, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
-		return false, errors.Wrap(err, "Failed to get K8S client")
+		return false, errors.Wrap(err, "failed to get K8S client")
 	}
 	opts := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id),
 	}
 	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
 	if err != nil {
-		return false, errors.Wrap(err, "Failed to find active job")
+		return false, errors.Wrap(err, "failed to find active job")
 	}
 	for _, p := range pods.Items {
 		if !isPodFinished(&p) {
@@ -388,7 +359,7 @@ func (s *JobLocation) isInited() (bool, error) {
 func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod, error) {
 	cl, err := s.cl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get K8S client")
+		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 
 	selector := fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id)
@@ -400,28 +371,28 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 	}
 	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to find active job")
+		return nil, errors.Wrap(err, "failed to find active job")
 	}
 	for _, p := range pods.Items {
 		if isPodReady(&p) {
-			s.logger.Info("Pod ready already!")
+			s.logger.Info("pod ready already!")
 			return &p, nil
 		}
 	}
 	for _, p := range pods.Items {
 		if !isPodFinished(&p) {
-			s.logger.Info("Starting pod found, waiting...")
+			s.logger.Info("starting pod found, waiting...")
 			wp, err := s.waitReady(&p, ctx)
 			if err != nil {
-				return nil, errors.Wrap(err, "Failed to wait for pod")
+				return nil, errors.Wrap(err, "failed to wait for pod")
 			}
-			s.logger.Info("Pod ready at last!")
+			s.logger.Info("pod ready at last!")
 			return wp, nil
 		}
 	}
 	watcher, err := cl.CoreV1().Pods(s.namespace).Watch(opts)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create watcher")
+		return nil, errors.Wrap(err, "failed to create watcher")
 	}
 	defer watcher.Stop()
 	watchSuccess := make(chan *corev1.Pod)
@@ -443,20 +414,20 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 }
 
 func (s *JobLocation) invoke() (*Location, error) {
-	s.logger.Info("Job initialization started")
+	s.logger.Info("job initialization started")
 	start := time.Now()
 	cl, err := s.cl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get K8S client")
+		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 	wasLocked := false
 	l, err := s.l.Get().Obtain(s.id, time.Second*POD_LOCK_DURATION, nil)
 	if err == redislock.ErrNotObtained {
-		s.logger.Warn("Failed to obtain lock")
+		s.logger.Warn("failed to obtain lock")
 		wasLocked = true
 		time.Sleep(time.Second * POD_LOCK_STANDBY)
 	} else if err != nil {
-		return nil, errors.Wrap(err, "Failed to set lock")
+		return nil, errors.Wrap(err, "failed to set lock")
 	} else {
 		defer l.Release()
 	}
@@ -465,7 +436,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 	for i := 0; i < POD_INIT_TRIES; i++ {
 		isInited, err = s.isInited()
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to check is there any inited job")
+			return nil, errors.Wrap(err, "failed to check is there any inited job")
 		}
 		if isInited || !wasLocked {
 			break
@@ -477,17 +448,17 @@ func (s *JobLocation) invoke() (*Location, error) {
 	if isInited {
 		pod, err := s.waitForPod(ctx, "")
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to wait for pod")
+			return nil, errors.Wrap(err, "failed to wait for pod")
 		}
 		loc, err := s.podToLocation(pod)
 
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to convert pod to location")
+			return nil, errors.Wrap(err, "failed to convert pod to location")
 		}
 		return loc, nil
 	}
 	if wasLocked {
-		return nil, errors.Errorf("Failed to allocate existent pod")
+		return nil, errors.Errorf("failed to allocate existent pod")
 	}
 	clientName := "default"
 	if s.acl != nil {
@@ -698,21 +669,21 @@ func (s *JobLocation) invoke() (*Location, error) {
 	})
 	s.logger.WithField("duration", time.Since(addStart).Milliseconds()).Info("Job added")
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create job")
+		return nil, errors.Wrap(err, "failed to create job")
 	}
 
 	pod, err := s.waitForPod(ctx, jobName)
 
 	if err != nil {
 		_ = cl.BatchV1().Jobs(s.namespace).Delete(jobName, &metav1.DeleteOptions{})
-		s.logger.WithError(err).WithField("duration", time.Since(start).Milliseconds()).Error("Failed to initialize job")
-		return nil, errors.Wrap(err, "Failed to initialize job")
+		s.logger.WithError(err).WithField("duration", time.Since(start).Milliseconds()).Error("failed to initialize job")
+		return nil, errors.Wrap(err, "failed to initialize job")
 	}
 
 	loc, err := s.podToLocation(pod)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to convert pod to location")
+		return nil, errors.Wrap(err, "failed to convert pod to location")
 	}
 	return loc, nil
 
@@ -725,13 +696,13 @@ func (s *JobLocation) wait() (*Location, error) {
 	pod, err := s.waitForPod(ctx, "")
 
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to initialize job")
+		return nil, errors.Wrap(err, "failed to initialize job")
 	}
 
 	loc, err := s.podToLocation(pod)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to convert pod to location")
+		return nil, errors.Wrap(err, "failed to convert pod to location")
 	}
 	return loc, nil
 }
@@ -744,9 +715,9 @@ func (s *JobLocation) Wait() (*Location, error) {
 	}
 	s.loc, s.err = s.wait()
 	if s.err != nil {
-		s.logger.WithError(s.err).Info("Failed to get job location")
+		s.logger.WithError(s.err).Info("failed to get job location")
 	} else {
-		s.logger.WithField("location", s.loc.IP).Info("Got job location")
+		s.logger.WithField("location", s.loc.IP).Info("got job location")
 	}
 	s.inited = true
 	return s.loc, s.err
@@ -777,10 +748,10 @@ func (s *JobLocation) Invoke(purge bool) (*Location, error) {
 	promJobInvokeCurrent.WithLabelValues(s.cfg.Name).Dec()
 	promJobInvokeDuration.WithLabelValues(s.cfg.Name).Observe(time.Since(now).Seconds())
 	if s.err != nil {
-		s.logger.WithError(s.err).Info("Failed to get job location")
+		s.logger.WithError(s.err).Info("failed to get job location")
 		promJobInvokeErrors.WithLabelValues(s.cfg.Name).Inc()
 	} else {
-		s.logger.WithField("location", s.loc.IP).Info("Got job location")
+		s.logger.WithField("location", s.loc.IP).Info("got job location")
 	}
 	s.inited = true
 	return s.loc, s.err

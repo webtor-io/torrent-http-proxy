@@ -22,6 +22,8 @@ func configure(app *cli.App) {
 	s.RegisterSubdomainsFlags(app)
 	s.RegisterClickHouseFlags(app)
 	s.RegisterClickHouseDBFlags(app)
+	s.RegisterCommonFlags(app)
+	s.RegisterEndpointsFlags(app)
 
 	app.Action = run
 }
@@ -32,7 +34,7 @@ func run(c *cli.Context) error {
 	clients, err := s.NewClients()
 
 	if err != nil {
-		log.WithError(err).Error("Got clients error")
+		log.WithError(err).Error("got clients error")
 		return err
 	}
 
@@ -64,8 +66,11 @@ func run(c *cli.Context) error {
 	// Setting JobLocationPool
 	jobLocPool := s.NewJobLocationPool(c, k8sClient, locker)
 
+	// Setting EndpointsPool
+	endpointsPool := s.NewEndpointsPool(c, k8sClient)
+
 	// Setting ServiceLocationPool
-	svcLocPool := s.NewServiceLocationPool()
+	svcLocPool := s.NewServiceLocationPool(c, endpointsPool)
 
 	// Setting Resolver
 	resolver := s.NewResolver(baseURL, config, svcLocPool, jobLocPool)
@@ -85,7 +90,7 @@ func run(c *cli.Context) error {
 	claims := s.NewClaims(clients)
 
 	if err != nil {
-		log.WithError(err).Error("Got claim error")
+		log.WithError(err).Error("got claim error")
 		return err
 	}
 
@@ -133,7 +138,7 @@ func run(c *cli.Context) error {
 	// And SERVE!
 	err = serve.Serve()
 	if err != nil {
-		log.WithError(err).Error("Got serve error")
+		log.WithError(err).Error("got serve error")
 	}
 	return err
 }

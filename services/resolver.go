@@ -2,6 +2,7 @@ package services
 
 import (
 	"net"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -18,7 +19,6 @@ type Location struct {
 	Ports
 	IP          net.IP
 	Unavailable bool
-	HostIP      net.IP
 	Expire      chan bool
 }
 
@@ -81,20 +81,22 @@ func (s *Resolver) getInit(src *Source) *Init {
 
 func (s *Resolver) process(i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	if i.ConnectionConfig.ConnectionType == ConnectionType_SERVICE {
-		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, purge)
+		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, i.InitParams, purge)
 	} else {
 		return s.jobLocPool.Get(&i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)
 	}
 }
 
 func (s *Resolver) Resolve(src *Source, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
+	start := time.Now()
 	logger = logger.WithField("purge", purge)
 	init := s.getInit(src)
 	l, err := s.process(init, logger, purge, invoke, cl)
+	logger = logger.WithField("duration", time.Since(start).Milliseconds())
 	if err != nil {
-		logger.WithError(err).Error("Failed to resolve location")
-		return nil, errors.Wrap(err, "Failed to resolve location")
+		logger.WithError(err).Error("failed to resolve location")
+		return nil, errors.Wrap(err, "failed to resolve location")
 	}
-	logger.WithField("location", l.IP).Info("Location resolved")
+	logger.WithField("location", l.IP).Info("location resolved")
 	return l, nil
 }

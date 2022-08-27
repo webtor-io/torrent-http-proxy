@@ -56,28 +56,28 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 		if !ok {
 			al, loaded := s.locks.LoadOrStore(key, NewAccessLock())
 			if !loaded {
-				logger.Info("Setting lock")
+				logger.Info("setting lock")
 				go func() {
 					jl := NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl)
 					l, err := jl.Wait()
 					if err != nil || l == nil {
-						logger.Info("Failed to wait for job location")
+						logger.Info("failed to wait for job location")
 					} else {
 						s.sm.LoadOrStore(key, jl)
 						go func() {
 							<-l.Expire
 							s.sm.Delete(key)
-							logger.Info("Job deleted from pool")
+							logger.Info("job deleted from pool")
 						}()
 					}
-					logger.Info("Unlocking")
+					logger.Info("unlocking")
 					al.(*AccessLock).Unlock()
 					s.locks.Delete(key)
 				}()
 			}
-			logger.Info("Wait to unlock")
+			logger.Info("wait to unlock")
 			<-al.(*AccessLock).Unlocked()
-			logger.Info("Unlocked")
+			logger.Info("unlocked")
 			l, ok := s.sm.Load(key)
 			if !ok {
 				return &Location{Unavailable: true}, nil
@@ -94,7 +94,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 		go func() {
 			<-l.Expire
 			s.sm.Delete(key)
-			logger.Info("Job deleted from pool")
+			logger.Info("job deleted from pool")
 		}()
 	}
 	if err != nil || l == nil {

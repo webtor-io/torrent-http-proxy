@@ -15,7 +15,6 @@ const (
 
 type SubdomainsPool struct {
 	sm     sync.Map
-	timers sync.Map
 	expire time.Duration
 	c      *cli.Context
 	k8s    *K8SClient
@@ -28,16 +27,12 @@ func NewSubdomainsPool(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool) *Subd
 
 func (s *SubdomainsPool) Get(infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pools []string) ([]NodeStatWithScore, []string, error) {
 	key := fmt.Sprintf("%v-%v-%v-%v-%v", infoHash, skipActiveJobSearch, useCPU, useBandwidth, strings.Join(pools, "-"))
-	v, _ := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, s.nsp, infoHash, skipActiveJobSearch, useCPU, useBandwidth, pools))
-	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
-	timer := t.(*time.Timer)
-	if !tLoaded {
+	v, loaded := s.sm.LoadOrStore(key, NewSubdomains(s.c, s.k8s, s.nsp, infoHash, skipActiveJobSearch, useCPU, useBandwidth, pools))
+	if !loaded {
 		go func() {
-			<-timer.C
+			<-time.After(s.expire)
 			s.sm.Delete(key)
-			s.timers.Delete(key)
 		}()
 	}
-
 	return v.(*Subdomains).Get()
 }

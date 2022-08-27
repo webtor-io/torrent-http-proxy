@@ -14,5 +14,7 @@
 
 tmp
 
+.DS_Store
+
 torrent-http-proxy
 telepresence.log

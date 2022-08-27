@@ -21,8 +21,10 @@ const (
 )
 
 type ServiceConfig struct {
-	EnvName string
-	Headers map[string]string
+	Name            string
+	Distribution    DISTRIBUTION
+	PreferLocalNode bool
+	Headers         map[string]string
 }
 
 type JobConfig struct {
@@ -397,7 +399,9 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "torrent-web-seeder",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TORRENT_WEB_SEEDER",
+				Name:            "torrent-web-seeder",
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
 		// Single online content transcoder
@@ -467,137 +471,141 @@ func NewConnectionsConfig(c *cli.Context) *ConnectionsConfig {
 			Name:           "mb-content-transcoder-pooler",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "MB_CONTENT_TRANSCODER_POOLER",
+				Name: "mb-content-transcoder-pooler",
 			},
 		},
 		"trc": &ConnectionConfig{
 			Name:           "transcode-web-cache",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TRANSCODE_WEB_CACHE",
+				Name:            "transcode-web-cache",
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
 		"mtrc": &ConnectionConfig{
 			Name:           "mb-transcode-web-cache",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TRANSCODE_WEB_CACHE",
+				Name: "transcode-web-cache",
 				Headers: map[string]string{
 					"X-Key-Prefix": "mb-transcoder",
 				},
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
 		"vtt": &ConnectionConfig{
 			Name:           "srt2vtt",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "SRT2VTT",
+				Name: "srt2vtt",
 			},
 		},
 		"cp": &ConnectionConfig{
 			Name:           "content-prober",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "CONTENT_PROBER",
+				Name: "content-prober",
 			},
 		},
 		"ext": &ConnectionConfig{
 			Name:           "external-proxy",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "EXTERNAL_PROXY",
+				Name: "external-proxy",
 			},
 		},
 		"arch": &ConnectionConfig{
 			Name:           "torrent-archiver",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TORRENT_ARCHIVER",
+				Name:            "torrent-archiver",
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
 		"vi": &ConnectionConfig{
 			Name:           "video-info",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "VIDEO_INFO",
+				Name: "video-info",
 			},
 		},
 		"vtg": &ConnectionConfig{
 			Name:           "video-thumbnails-generator",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "VIDEO_THUMBNAILS_GENERATOR",
+				Name: "video-thumbnails-generator",
 			},
 		},
 		"rest": &ConnectionConfig{
 			Name:           "rest",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "REST_API",
+				Name: "rest",
 			},
 		},
 		"it": &ConnectionConfig{
 			Name:           "image-transformer",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "IMAGE_TRANSFORMER",
+				Name: "image-transformer",
 			},
 		},
 		"tracker": &ConnectionConfig{
 			Name:           "webtorrent-tracker",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "WEBTORRENT_TRACKER",
+				Name: "webtorrent-tracker",
 			},
 		},
 		"tc": &ConnectionConfig{
 			Name:           "torrent-web-cache",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TORRENT_WEB_CACHE",
+				Name:            "torrent-web-cache",
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
 		"abuse": &ConnectionConfig{
 			Name:           "abuse-store",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "ABUSE_STORE",
+				Name: "abuse-store",
 			},
 		},
 		"magnet2torrent": &ConnectionConfig{
 			Name:           "magnet2torrent",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "MAGNET2TORRENT",
+				Name: "magnet2torrent",
 			},
 		},
 		"store": &ConnectionConfig{
 			Name:           "torrent-store",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "TORRENT_STORE",
-			},
-		},
-		"store-new": &ConnectionConfig{
-			Name:           "torrent-store-new",
-			ConnectionType: ConnectionType_SERVICE,
-			ServiceConfig: ServiceConfig{
-				EnvName: "TORRENT_STORE_NEW",
+				Name: "torrent-store",
 			},
 		},
 		"vod": &ConnectionConfig{
 			Name:           "nginx-vod",
 			ConnectionType: ConnectionType_SERVICE,
 			ServiceConfig: ServiceConfig{
-				EnvName: "NGINX_VOD",
+				Name:            "nginx-vod",
+				Distribution:    NODE_HASH,
+				PreferLocalNode: true,
 			},
 		},
-		"dp": &ConnectionConfig{
-			Name:           "download-progress",
-			ConnectionType: ConnectionType_SERVICE,
-			ServiceConfig: ServiceConfig{
-				EnvName: "DOWNLOAD_PROGRESS",
-			},
-		},
+		// "dp": &ConnectionConfig{
+		// 	Name:           "download-progress",
+		// 	ConnectionType: ConnectionType_SERVICE,
+		// 	ServiceConfig: ServiceConfig{
+		// 		Name:    "download-progress",
+		// 		EnvName: "DOWNLOAD_PROGRESS",
+		// 	},
+		// },
 	}
 }
