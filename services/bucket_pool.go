@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	BUCKET_TTL = 30 * 60
+	bucketTTL = 30 * 60
 )
 
 type BucketPool struct {
@@ -23,7 +23,7 @@ type BucketPool struct {
 }
 
 func NewBucketPool() *BucketPool {
-	return &BucketPool{expire: time.Duration(BUCKET_TTL) * time.Second}
+	return &BucketPool{expire: time.Duration(bucketTTL) * time.Second}
 }
 
 func (s *BucketPool) Get(mc jwt.MapClaims) (*ratelimit.Bucket, error) {

@@ -80,7 +80,7 @@ func (s *Resolver) getInit(src *Source) *Init {
 }
 
 func (s *Resolver) process(i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
-	if i.ConnectionConfig.ConnectionType == ConnectionType_SERVICE {
+	if i.ConnectionConfig.ConnectionType == ConnectionTypeService {
 		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, i.InitParams, purge)
 	} else {
 		return s.jobLocPool.Get(&i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)

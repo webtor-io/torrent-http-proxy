@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	HTTP_PROXY_TTL = 60 * 5
+	httpProxyTTL = 60 * 5
 )
 
 type HTTPProxyPool struct {
@@ -21,7 +21,7 @@ type HTTPProxyPool struct {
 }
 
 func NewHTTPProxyPool(r *Resolver) *HTTPProxyPool {
-	return &HTTPProxyPool{expire: time.Duration(HTTP_PROXY_TTL) * time.Second, r: r}
+	return &HTTPProxyPool{expire: time.Duration(httpProxyTTL) * time.Second, r: r}
 }
 
 func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool, cl *Client) (*httputil.ReverseProxy, error) {

@@ -65,7 +65,7 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 	}
 	index := len(path)
 	exist := false
-	p := []string{}
+	var p []string
 	e := ""
 	name := ""
 	newPath := ""
@@ -126,7 +126,7 @@ func NewURLParser(c *ConnectionsConfig) *URLParser {
 	}
 }
 
-// ParseURL extracts information about source and additional modifiacation of it
+// Parse extracts information about source and additional modifiacation of it
 func (s *URLParser) Parse(url *url.URL) (*Source, error) {
 	urlPath := url.Path
 	if urlPath == "" {

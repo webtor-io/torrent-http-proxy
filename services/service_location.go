@@ -17,8 +17,8 @@ import (
 type DISTRIBUTION int
 
 const (
-	HASH DISTRIBUTION = iota
-	NODE_HASH
+	Hash DISTRIBUTION = iota
+	NodeHash
 )
 
 var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
@@ -38,7 +38,7 @@ func NewServiceLocation(c *cli.Context, cfg *ServiceConfig, params *InitParams, 
 	return &ServiceLocation{
 		cfg:    cfg,
 		ep:     ep,
-		nn:     c.String(MY_NODE_NAME),
+		nn:     c.String(myNodeNameFlag),
 		params: params,
 	}
 }
@@ -94,7 +94,7 @@ func (s *ServiceLocation) distributeByNodeHash(as []corev1.EndpointAddress) (*co
 		return as[i].IP > as[j].IP
 	})
 	nodesM := map[string]bool{}
-	nodes := []string{}
+	var nodes []string
 	for _, a := range as {
 		nodesM[*a.NodeName] = true
 	}
@@ -111,7 +111,7 @@ func (s *ServiceLocation) distributeByNodeHash(as []corev1.EndpointAddress) (*co
 	total := 1048575 * 1000
 	nodeInterval := total / len(nodes)
 	for i := 0; i < len(nodes); i++ {
-		nas := []corev1.EndpointAddress{}
+		var nas []corev1.EndpointAddress
 		for _, a := range as {
 			if *a.NodeName == nodes[i] {
 				nas = append(nas, a)
@@ -142,16 +142,16 @@ func (s *ServiceLocation) get() (*Location, error) {
 	var a *corev1.EndpointAddress
 	if !sha1R.Match([]byte(s.params.InfoHash)) {
 		a = &as[rand.Intn(len(as))]
-	} else if s.cfg.Distribution == HASH {
+	} else if s.cfg.Distribution == Hash {
 		a, err = s.distributeByHash(as)
-	} else if s.cfg.Distribution == NODE_HASH {
+	} else if s.cfg.Distribution == NodeHash {
 		a, err = s.distributeByNodeHash(as)
 	}
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to distribute")
 	}
 	if a != nil && s.nn != "" && *a.NodeName != s.nn && s.cfg.PreferLocalNode {
-		las := []corev1.EndpointAddress{}
+		var las []corev1.EndpointAddress
 		for _, a := range as {
 			if *a.NodeName == s.nn {
 				las = append(las, a)

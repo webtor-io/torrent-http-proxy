@@ -43,9 +43,9 @@ type Web struct {
 }
 
 const (
-	WEB_HOST            = "host"
-	WEB_PORT            = "port"
-	USE_BANDWIDTH_LIMIT = "use-bandwidth-limit"
+	webHostFlag           = "host"
+	webPortFlag           = "port"
+	useBandwidthLimitFlag = "use-bandwidth-limit"
 )
 
 var (
@@ -100,8 +100,8 @@ func init() {
 
 func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig, ah *AccessHistory) *Web {
 	return &Web{
-		host:           c.String(WEB_HOST),
-		port:           c.Int(WEB_PORT),
+		host:           c.String(webHostFlag),
+		port:           c.Int(webPortFlag),
 		parser:         parser,
 		r:              r,
 		pr:             pr,
@@ -113,26 +113,28 @@ func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *
 		clickHouse:     ch,
 		cfg:            cfg,
 		ah:             ah,
-		bandwidthLimit: c.Bool(USE_BANDWIDTH_LIMIT),
+		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
 	}
 }
 
-func RegisterWebFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:  WEB_HOST,
-		Usage: "listening host",
-		Value: "",
-	})
-	c.Flags = append(c.Flags, cli.IntFlag{
-		Name:  WEB_PORT,
-		Usage: "http listening port",
-		Value: 8080,
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   USE_BANDWIDTH_LIMIT,
-		Usage:  "use bandwidth limit",
-		EnvVar: "USE_BANDWIDTH_LIMIT",
-	})
+func RegisterWebFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:  webHostFlag,
+			Usage: "listening host",
+			Value: "",
+		},
+		cli.IntFlag{
+			Name:  webPortFlag,
+			Usage: "http listening port",
+			Value: 8080,
+		},
+		cli.BoolFlag{
+			Name:   useBandwidthLimitFlag,
+			Usage:  "use bandwidth limit",
+			EnvVar: "USE_BANDWIDTH_LIMIT",
+		},
+	)
 }
 
 func isAllowed(r *http.Request) bool {
@@ -367,8 +369,8 @@ func (s *Web) Serve() error {
 	}
 
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
-		fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
+		_, _ = fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
+		_, _ = fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
 	})
 	mux.HandleFunc("/subdomains.json", func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.URL.Query().Get("api-key")
@@ -398,7 +400,7 @@ func (s *Web) Serve() error {
 			w.WriteHeader(500)
 			return
 		}
-		json, err := json.Marshal(subs)
+		jsonData, err := json.Marshal(subs)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to marshal subdomains")
 			w.WriteHeader(500)
@@ -407,9 +409,9 @@ func (s *Web) Serve() error {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("debug") == "true" {
-			w.Write([]byte(fmt.Sprintf("%+v", sc)))
+			_, _ = w.Write([]byte(fmt.Sprintf("%+v", sc)))
 		} else {
-			w.Write(json)
+			_, _ = w.Write(jsonData)
 		}
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -501,6 +503,6 @@ func (s *Web) Serve() error {
 
 func (s *Web) Close() {
 	if s.ln != nil {
-		s.ln.Close()
+		_ = s.ln.Close()
 	}
 }

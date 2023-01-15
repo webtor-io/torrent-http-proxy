@@ -10,17 +10,18 @@ import (
 	"github.com/urfave/cli"
 )
 
-type ClickHouseDB_Mock struct {
+type ClickHouseDBMock struct {
 	db *sql.DB
 }
 
-func (s *ClickHouseDB_Mock) Get() (*sql.DB, error) {
+func (s *ClickHouseDBMock) Get() (*sql.DB, error) {
 	return s.db, nil
 }
 
 func TestClickHouse(t *testing.T) {
 	app := cli.NewApp()
-	RegisterClickHouseFlags(app)
+	app.Flags = []cli.Flag{}
+	app.Flags = RegisterClickHouseFlags(app.Flags)
 	app.Action = func(c *cli.Context) error {
 		db, mock, err := sqlmock.New()
 		if err != nil {
@@ -59,7 +60,7 @@ func TestClickHouse(t *testing.T) {
 		}
 		mock.ExpectCommit()
 
-		clickHouseDB := &ClickHouseDB_Mock{
+		clickHouseDB := &ClickHouseDBMock{
 			db: db,
 		}
 
@@ -89,5 +90,5 @@ func TestClickHouse(t *testing.T) {
 		return nil
 	}
 	args := os.Args[0:1]
-	app.Run(args)
+	_ = app.Run(args)
 }

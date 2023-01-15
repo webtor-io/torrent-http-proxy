@@ -9,21 +9,21 @@ import (
 
 func configure(app *cli.App) {
 	app.Flags = []cli.Flag{}
-
-	s.RegisterWebFlags(app)
-	s.RegisterGRPCFlags(app)
-	cs.RegisterRedisClientFlags(app)
-	s.RegisterJobFlags(app)
-	s.RegisterConnectionConfigFlags(app)
-	cs.RegisterProbeFlags(app)
-	s.RegisterNodesStatFlags(app)
-	s.RegisterPromFlags(app)
-	s.RegisterPromClientFlags(app)
-	s.RegisterSubdomainsFlags(app)
-	s.RegisterClickHouseFlags(app)
-	s.RegisterClickHouseDBFlags(app)
-	s.RegisterCommonFlags(app)
-	s.RegisterEndpointsFlags(app)
+	app.Flags = cs.RegisterRedisClientFlags(app.Flags)
+	app.Flags = cs.RegisterProbeFlags(app.Flags)
+	app.Flags = cs.RegisterPromFlags(app.Flags)
+	app.Flags = cs.RegisterPprofFlags(app.Flags)
+	app.Flags = s.RegisterWebFlags(app.Flags)
+	app.Flags = s.RegisterGRPCFlags(app.Flags)
+	app.Flags = s.RegisterJobFlags(app.Flags)
+	app.Flags = s.RegisterConnectionConfigFlags(app.Flags)
+	app.Flags = s.RegisterNodesStatFlags(app.Flags)
+	app.Flags = s.RegisterPromClientFlags(app.Flags)
+	app.Flags = s.RegisterSubdomainsFlags(app.Flags)
+	app.Flags = s.RegisterClickHouseFlags(app.Flags)
+	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
+	app.Flags = s.RegisterCommonFlags(app.Flags)
+	app.Flags = s.RegisterEndpointsFlags(app.Flags)
 
 	app.Action = run
 }
@@ -80,7 +80,11 @@ func run(c *cli.Context) error {
 	defer probe.Close()
 
 	// Setting Prom
-	prom := s.NewProm(c)
+	prom := cs.NewProm(c)
+	defer prom.Close()
+
+	// Setting Pprof
+	pprof := cs.NewPprof(c)
 	defer prom.Close()
 
 	// Setting HTTP Proxy Pool
@@ -98,14 +102,14 @@ func run(c *cli.Context) error {
 	grpcProxyPool := s.NewHTTPGRPCProxyPool(baseURL, claims, resolver)
 
 	// Setting NodesStat Pool
-	nodesStatPool := s.NewNodesStatPool(c, promClient, k8sClient, log.NewEntry(log.StandardLogger()))
+	nodesStatPool := s.NewNodesStatPool(c, promClient, k8sClient)
 
 	// Setting Subdomains Pool
 	subdomainsPool := s.NewSubdomainsPool(c, k8sClient, nodesStatPool)
 
 	var clickHouse *s.ClickHouse
 
-	if c.String(s.CLICKHOUSE_DSN) != "" {
+	if c.String(s.ClickhouseDSNFlag) != "" {
 		// Setting ClickHouse DB
 		clickHouseDB := s.NewClickHouseDB(c)
 		defer clickHouseDB.Close()
@@ -133,7 +137,7 @@ func run(c *cli.Context) error {
 	defer grpcServer.Close()
 
 	// Setting ServeService
-	serve := cs.NewServe(probe, web, grpcServer, prom)
+	serve := cs.NewServe(probe, web, grpcServer, prom, pprof)
 
 	// And SERVE!
 	err = serve.Serve()

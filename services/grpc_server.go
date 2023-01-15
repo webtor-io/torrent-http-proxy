@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	GRPC_HOST_FLAG = "grpc-host"
-	GRPC_PORT_FLAG = "grpc-port"
+	grpcHostFlag = "grpc-host"
+	grpcPortFlag = "grpc-port"
 )
 
 type GRPCServer struct {
@@ -22,20 +22,22 @@ type GRPCServer struct {
 }
 
 func NewGRPCServer(c *cli.Context, p *GRPCProxy) *GRPCServer {
-	return &GRPCServer{host: c.String(GRPC_HOST_FLAG), port: c.Int(GRPC_PORT_FLAG), p: p}
+	return &GRPCServer{host: c.String(grpcHostFlag), port: c.Int(grpcPortFlag), p: p}
 }
 
-func RegisterGRPCFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:  GRPC_HOST_FLAG,
-		Usage: "grpc listening host",
-		Value: "",
-	})
-	c.Flags = append(c.Flags, cli.IntFlag{
-		Name:  GRPC_PORT_FLAG,
-		Usage: "grpc listening port",
-		Value: 50051,
-	})
+func RegisterGRPCFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:  grpcHostFlag,
+			Usage: "grpc listening host",
+			Value: "",
+		},
+		cli.IntFlag{
+			Name:  grpcPortFlag,
+			Usage: "grpc listening port",
+			Value: 50051,
+		},
+	)
 }
 
 func (s *GRPCServer) Serve() error {
@@ -52,6 +54,6 @@ func (s *GRPCServer) Serve() error {
 
 func (s *GRPCServer) Close() {
 	if s.ln != nil {
-		s.ln.Close()
+		_ = s.ln.Close()
 	}
 }

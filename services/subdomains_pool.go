@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SUBDOMAINS_TTL = 30
+	subdomainsTTL = 30
 )
 
 type SubdomainsPool struct {
@@ -22,7 +22,7 @@ type SubdomainsPool struct {
 }
 
 func NewSubdomainsPool(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool) *SubdomainsPool {
-	return &SubdomainsPool{c: c, k8s: k8s, nsp: nsp, expire: time.Duration(SUBDOMAINS_TTL) * time.Second}
+	return &SubdomainsPool{c: c, k8s: k8s, nsp: nsp, expire: time.Duration(subdomainsTTL) * time.Second}
 }
 
 func (s *SubdomainsPool) Get(infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pools []string) ([]NodeStatWithScore, []string, error) {

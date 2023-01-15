@@ -34,5 +34,5 @@ func TestUrlParse(t *testing.T) {
 		return nil
 	}
 	args := os.Args[0:1]
-	app.Run(args)
+	_ = app.Run(args)
 }

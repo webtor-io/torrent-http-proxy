@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	GRPC_PROXY_TTL = 60
+	grpcProxyTTL = 60
 )
 
 type HTTPGRPCProxyPool struct {
@@ -22,7 +22,7 @@ type HTTPGRPCProxyPool struct {
 }
 
 func NewHTTPGRPCProxyPool(bu string, claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
-	return &HTTPGRPCProxyPool{baseURL: bu, claims: claims, expire: time.Duration(GRPC_PROXY_TTL) * time.Second, r: r}
+	return &HTTPGRPCProxyPool{baseURL: bu, claims: claims, expire: time.Duration(grpcProxyTTL) * time.Second, r: r}
 }
 
 func (s *HTTPGRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {

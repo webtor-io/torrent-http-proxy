@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	SERVICE_LOCATION_TTL = 60
+	serviceLocationTTL = 60
 )
 
 type ServiceLocationPool struct {
@@ -22,7 +22,7 @@ func NewServiceLocationPool(c *cli.Context, ep *EndpointsPool) *ServiceLocationP
 	return &ServiceLocationPool{
 		c:      c,
 		ep:     ep,
-		expire: time.Duration(SERVICE_LOCATION_TTL) * time.Second,
+		expire: time.Duration(serviceLocationTTL) * time.Second,
 	}
 }
 

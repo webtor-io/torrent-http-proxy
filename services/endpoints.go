@@ -10,16 +10,18 @@ import (
 )
 
 const (
-	ENDPOINTS_NAMESPACE = "endpoints-namespace"
+	endpointsNamespaceFlag = "endpoints-namespace"
 )
 
-func RegisterEndpointsFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   ENDPOINTS_NAMESPACE,
-		Usage:  "Endpoints namespace",
-		Value:  "webtor",
-		EnvVar: "ENDPOINTS_NAMESPACE",
-	})
+func RegisterEndpointsFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   endpointsNamespaceFlag,
+			Usage:  "Endpoints namespace",
+			Value:  "webtor",
+			EnvVar: "ENDPOINTS_NAMESPACE",
+		},
+	)
 }
 
 type Endpoints struct {
@@ -36,7 +38,7 @@ func NewEndpoints(c *cli.Context, cl *K8SClient, name string) *Endpoints {
 	return &Endpoints{
 		cl:        cl,
 		name:      name,
-		namespace: c.String(ENDPOINTS_NAMESPACE),
+		namespace: c.String(endpointsNamespaceFlag),
 	}
 }
 

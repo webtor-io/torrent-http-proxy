@@ -3,7 +3,7 @@ package services
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -18,10 +18,8 @@ import (
 )
 
 const (
-	HTTP_PROXY_DIAL_TIMEOUT int = 3
-	HTTP_PROXY_DIAL_TRIES   int = 5
-	HTTP_PROXY_REDIAL_DELAY int = 1
-	MAX_IDLE_CONNECTIONS    int = 20 * 5
+	httpProxyDialTries   int = 5
+	httpProxyRedialDelay int = 1
 )
 
 var (
@@ -137,7 +135,7 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Body:          ioutil.NopCloser(bytes.NewBufferString("")),
+		Body:          io.NopCloser(bytes.NewBufferString("")),
 		ContentLength: int64(0),
 		Request:       req,
 		Header:        make(http.Header, 0),
@@ -160,7 +158,7 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	} else {
 		t = &http.Transport{
 			Dial: func(network, addr string) (net.Conn, error) {
-				return s.dialWithRetry(network, HTTP_PROXY_DIAL_TRIES, HTTP_PROXY_REDIAL_DELAY)
+				return s.dialWithRetry(network, httpProxyDialTries, httpProxyRedialDelay)
 			},
 			MaxIdleConns:        500,
 			MaxIdleConnsPerHost: 500,

@@ -9,28 +9,28 @@ import (
 	"github.com/pkg/errors"
 )
 
-type throttledResponseWriter struct {
+type ThrottledResponseWriter struct {
 	http.ResponseWriter
 	b *ratelimit.Bucket
 }
 
-func NewThrottledRequestWrtier(w http.ResponseWriter, b *ratelimit.Bucket) *throttledResponseWriter {
-	return &throttledResponseWriter{
+func NewThrottledRequestWrtier(w http.ResponseWriter, b *ratelimit.Bucket) *ThrottledResponseWriter {
+	return &ThrottledResponseWriter{
 		ResponseWriter: w,
 		b:              b,
 	}
 }
 
-func (w *throttledResponseWriter) WriteHeader(statusCode int) {
+func (w *ThrottledResponseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
-func (w *throttledResponseWriter) Write(p []byte) (int, error) {
+func (w *ThrottledResponseWriter) Write(p []byte) (int, error) {
 	w.b.Wait(int64(len(p)))
 	return w.ResponseWriter.Write(p)
 }
 
-func (w *throttledResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (w *ThrottledResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, errors.New("type assertion failed http.ResponseWriter not a http.Hijacker")
@@ -38,7 +38,7 @@ func (w *throttledResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 	return h.Hijack()
 }
 
-func (w *throttledResponseWriter) Flush() {
+func (w *ThrottledResponseWriter) Flush() {
 	f, ok := w.ResponseWriter.(http.Flusher)
 	if !ok {
 		return
@@ -49,7 +49,7 @@ func (w *throttledResponseWriter) Flush() {
 
 // Check interface implementations.
 var (
-	_ http.ResponseWriter = &throttledResponseWriter{}
-	_ http.Hijacker       = &throttledResponseWriter{}
-	_ http.Flusher        = &throttledResponseWriter{}
+	_ http.ResponseWriter = &ThrottledResponseWriter{}
+	_ http.Hijacker       = &ThrottledResponseWriter{}
+	_ http.Flusher        = &ThrottledResponseWriter{}
 )

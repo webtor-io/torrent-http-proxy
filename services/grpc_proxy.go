@@ -17,13 +17,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
 )
 
 const (
-	GRPC_PROXY_DIAL_TRIES    int = 5
-	GRPC_PROXY_REDIAL_DELAY  int = 1
-	GRPC_PROXY_UNARY_TIMEOUT int = 30
+	grpcProxyDialTries    int = 5
+	grpcProxyRedialDelay  int = 1
+	grpcProxyUnaryTimeout int = 30
 )
 
 type GRPCProxy struct {
@@ -86,7 +86,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		grpc.WithCodec(proxy.Codec()),
 		grpc.WithInsecure(),
 		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
-		grpc.WithUnaryInterceptor(unaryClientTimeoutInterceptor(time.Duration(GRPC_PROXY_UNARY_TIMEOUT) * time.Second)),
+		grpc.WithUnaryInterceptor(unaryClientTimeoutInterceptor(time.Duration(grpcProxyUnaryTimeout) * time.Second)),
 	}
 
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
@@ -144,7 +144,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx := metadata.NewOutgoingContext(ctx, mdCopy)
-		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, GRPC_PROXY_DIAL_TRIES, GRPC_PROXY_REDIAL_DELAY)
+		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, grpcProxyDialTries, grpcProxyRedialDelay)
 		// conn, err := s.dial(ctx, cl, src, grpcOpts, invoke)
 		return outCtx, conn, err
 	}
@@ -152,11 +152,11 @@ func (s *GRPCProxy) get() *grpc.Server {
 	g := grpc.NewServer(
 		grpc.CustomCodec(proxy.Codec()), // needed for proxy to function.
 		grpc.UnknownServiceHandler(proxy.TransparentHandler(director)),
-		grpc_middleware.WithUnaryServerChain(
+		grpcMiddleware.WithUnaryServerChain(
 		// grpc_logrus.UnaryServerInterceptor(logger),
 		// grpc_prometheus.UnaryServerInterceptor,
 		),
-		grpc_middleware.WithStreamServerChain(
+		grpcMiddleware.WithStreamServerChain(
 		// grpc_logrus.StreamServerInterceptor(logger),
 		// grpc_prometheus.StreamServerInterceptor,
 		),

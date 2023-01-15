@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"regexp"
 	"sort"
 	"strconv"
 	"sync"
@@ -16,14 +15,11 @@ import (
 )
 
 const (
-	WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE = "origin-host-redirect-address-type"
-	WEB_ORIGIN_HOST_REDIRECT              = "origin-host-redirect"
-	WEB_ORIGIN_HOST_REDIRECT_PREFIX       = "origin-host-redirect-prefix"
-	MAX_SUBDOMAINS                        = 3
-	INFOHASH_MAX_SPREAD                   = 1
+	webOriginHostRedirectAddressTypeFlag = "origin-host-redirect-address-type"
+	webOriginHostRedirectPrefixFlag      = "origin-host-redirect-prefix"
+	maxSubdomains                        = 3
+	infohashMaxSpread                    = 1
 )
-
-var hexIPPattern = regexp.MustCompile(`[^\.]*`)
 
 type Subdomains struct {
 	subs                []string
@@ -43,28 +39,30 @@ type Subdomains struct {
 	skipActiveJobSearch bool
 }
 
-func RegisterSubdomainsFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_PREFIX,
-		Usage:  "subdomain prefix of host to be redirected",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_PREFIX",
-		Value:  "abra--",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE,
-		Usage:  "preferred node address type",
-		EnvVar: "WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE",
-		Value:  "ExternalIP",
-	})
+func RegisterSubdomainsFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   webOriginHostRedirectPrefixFlag,
+			Usage:  "subdomain prefix of host to be redirected",
+			EnvVar: "WEB_ORIGIN_HOST_REDIRECT_PREFIX",
+			Value:  "abra--",
+		},
+		cli.StringFlag{
+			Name:   webOriginHostRedirectAddressTypeFlag,
+			Usage:  "preferred node address type",
+			EnvVar: "WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE",
+			Value:  "ExternalIP",
+		},
+	)
 }
 
 func NewSubdomains(c *cli.Context, k8s *K8SClient, nsp *NodesStatPool, infoHash string, skipActiveJobSearch bool, useCPU bool, useBandwidth bool, pools []string) *Subdomains {
 	return &Subdomains{
 		k8s:                 k8s,
 		nsp:                 nsp,
-		jobNamespace:        c.String(JOB_NAMESPACE),
-		redirectPrefix:      c.String(WEB_ORIGIN_HOST_REDIRECT_PREFIX),
-		redirectAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		jobNamespace:        c.String(jobNamespaceFlag),
+		redirectPrefix:      c.String(webOriginHostRedirectPrefixFlag),
+		redirectAddressType: c.String(webOriginHostRedirectAddressTypeFlag),
 		infoHash:            infoHash,
 		useCPU:              useCPU,
 		useBandwidth:        useBandwidth,
@@ -80,7 +78,7 @@ type NodeStatWithScore struct {
 }
 
 func (s *Subdomains) filterByPool(stats []NodeStatWithScore, pool string) []NodeStatWithScore {
-	res := []NodeStatWithScore{}
+	var res []NodeStatWithScore
 	for _, st := range stats {
 		for _, p := range st.Pool {
 			if pool == p {
@@ -92,7 +90,7 @@ func (s *Subdomains) filterByPool(stats []NodeStatWithScore, pool string) []Node
 }
 
 func (s *Subdomains) filterWithZeroScore(stats []NodeStatWithScore) []NodeStatWithScore {
-	res := []NodeStatWithScore{}
+	var res []NodeStatWithScore
 	for _, st := range stats {
 		if st.Score != 0 {
 			res = append(res, st)
@@ -106,12 +104,12 @@ func (s *Subdomains) filterByActivePod(stats []NodeStatWithScore) ([]NodeStatWit
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get k8s client")
 	}
-	nodeNames := []string{}
+	var nodeNames []string
 	infoHash := s.infoHash
 	timeout := int64(30)
 	if infoHash != "" {
 		opts := metav1.ListOptions{
-			LabelSelector:  fmt.Sprintf("%vinfo-hash=%v", K8S_LABEL_PREFIX, infoHash),
+			LabelSelector:  fmt.Sprintf("%vinfo-hash=%v", k8SLabelPrefix, infoHash),
 			TimeoutSeconds: &timeout,
 		}
 		pods, err := cl.CoreV1().Pods(s.jobNamespace).List(opts)
@@ -127,7 +125,7 @@ func (s *Subdomains) filterByActivePod(stats []NodeStatWithScore) ([]NodeStatWit
 	if len(nodeNames) == 0 {
 		return stats, nil
 	}
-	res := []NodeStatWithScore{}
+	var res []NodeStatWithScore
 	for _, nn := range nodeNames {
 		for _, st := range stats {
 			if nn == st.Name {
@@ -145,7 +143,7 @@ func (s *Subdomains) updateScoreByCPU(stats []NodeStatWithScore) []NodeStatWithS
 		} else if v.NodeCPU.Current >= v.NodeCPU.High {
 			stats[i].Score = 0
 		} else {
-			ratio := float64(v.NodeCPU.High-v.NodeCPU.Current) / float64(v.NodeCPU.High-v.NodeCPU.Low)
+			ratio := (v.NodeCPU.High - v.NodeCPU.Current) / (v.NodeCPU.High - v.NodeCPU.Low)
 			stats[i].Score = stats[i].Score * ratio * ratio
 		}
 	}
@@ -195,10 +193,10 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore, useCPU boo
 	}
 
 	spread := int(math.Floor(float64(len(stats)) / 2))
-	if spread > INFOHASH_MAX_SPREAD {
-		spread = INFOHASH_MAX_SPREAD
+	if spread > infohashMaxSpread {
+		spread = infohashMaxSpread
 	}
-	for i, _ := range stats {
+	for i := range stats {
 		stats[i].Distance = spread + 1
 	}
 	for n := -spread; n <= spread; n++ {
@@ -212,7 +210,7 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore, useCPU boo
 		d := math.Abs(float64(n))
 		stats[m].Distance = int(d)
 	}
-	for i, _ := range stats {
+	for i := range stats {
 		if stats[i].Distance == 0 {
 			continue
 		}
@@ -256,7 +254,7 @@ func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, err
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get nodes stat")
 	}
-	sc := []NodeStatWithScore{}
+	var sc []NodeStatWithScore
 	for _, s := range stats {
 		sc = append(sc, NodeStatWithScore{
 			NodeStat: s,
@@ -296,15 +294,15 @@ func (s *Subdomains) get() ([]NodeStatWithScore, []string, error) {
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "Failed to get sorted nodes stat")
 	}
-	res := []string{}
+	var res []string
 	for _, st := range stats {
 		byteIP := net.ParseIP(st.IP)
 		hexIP := fmt.Sprintf("%02x%02x%02x%02x", byteIP[12], byteIP[13], byteIP[14], byteIP[15])
 		res = append(res, s.redirectPrefix+hexIP)
 	}
 	l := len(res)
-	if l > MAX_SUBDOMAINS {
-		l = MAX_SUBDOMAINS
+	if l > maxSubdomains {
+		l = maxSubdomains
 	}
 	return stats, res[0:l], nil
 }

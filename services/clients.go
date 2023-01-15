@@ -1,7 +1,7 @@
 package services
 
 import (
-	"io/ioutil"
+	"os"
 	"path/filepath"
 
 	"github.com/pkg/errors"
@@ -19,7 +19,7 @@ type Clients []Client
 func NewClients() (*Clients, error) {
 	var cc Clients
 	filename, _ := filepath.Abs("/etc/config/clients.yaml")
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 
 	if err != nil {
 		return &cc, nil

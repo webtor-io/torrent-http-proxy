@@ -27,21 +27,21 @@ import (
 )
 
 const (
-	PORT_HTTP               = 8080
-	PORT_PROBE              = 8081
-	PORT_GRPC               = 50051
-	HEALTH_CHECK_TIMEOUT    = 5
-	HEALTH_CHECK_INTERVAL   = 5
-	HEALTH_CHECK_TRIES      = 3
-	POD_LOCK_DURATION       = 30
-	POD_LOCK_STANDBY        = 1
-	POD_INIT_INTERVAL       = 3
-	POD_INIT_TRIES          = 5
-	POD_LIVENESS_PATH       = "/liveness"
-	POD_READINESS_PATH      = "/readiness"
-	JOB_NODE_AFFINITY_KEY   = "job-node-affinity-key"
-	JOB_NODE_AFFINITY_VALUE = "job-node-affinity-value"
-	JOB_NAMESPACE           = "job-namespace"
+	podHTTPPort              = 8080
+	podProbePort             = 8081
+	podGRPCPort              = 50051
+	podHealthCheckTimeout    = 5
+	podHealthCheckInterval   = 5
+	podHealthCheckTries      = 3
+	podLockDuration          = 30
+	podLockStandby           = 1
+	podInitInterval          = 3
+	podInitTries             = 5
+	podLivenessPath          = "/liveness"
+	podReadinessPath         = "/readiness"
+	jobNodeAffinityKeyFlag   = "job-node-affinity-key"
+	jobNodeAffinityValueFlag = "job-node-affinity-value"
+	jobNamespaceFlag         = "job-namespace"
 )
 
 var (
@@ -92,36 +92,38 @@ type JobLocation struct {
 	nn             string
 }
 
-func RegisterJobFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_AFFINITY_KEY,
-		Usage:  "Node Affinity Key",
-		Value:  "",
-		EnvVar: "JOB_NODE_AFFINITY_KEY",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NODE_AFFINITY_VALUE,
-		Usage:  "Node Affinity Value",
-		Value:  "",
-		EnvVar: "JOB_NODE_AFFINITY_VALUE",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   JOB_NAMESPACE,
-		Usage:  "Job namespace",
-		Value:  "webtor",
-		EnvVar: "JOB_NAMESPACE",
-	})
+func RegisterJobFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   jobNodeAffinityKeyFlag,
+			Usage:  "Node Affinity Key",
+			Value:  "",
+			EnvVar: "JOB_NODE_AFFINITY_KEY",
+		},
+		cli.StringFlag{
+			Name:   jobNodeAffinityValueFlag,
+			Usage:  "Node Affinity Value",
+			Value:  "",
+			EnvVar: "JOB_NODE_AFFINITY_VALUE",
+		},
+		cli.StringFlag{
+			Name:   jobNamespaceFlag,
+			Usage:  "Job namespace",
+			Value:  "webtor",
+			EnvVar: "JOB_NAMESPACE",
+		},
+	)
 }
 
 func NewJobLocation(c *cli.Context, cfg *JobConfig, params *InitParams, cl *K8SClient, logger *logrus.Entry, l *Locker, acl *Client) *JobLocation {
 	id := MakeJobID(cfg, params)
 	return &JobLocation{cfg: cfg, params: params, cl: cl, id: id, inited: false, acl: acl,
 		logger: logger, l: l,
-		naKey:          c.String(JOB_NODE_AFFINITY_KEY),
-		naVal:          c.String(JOB_NODE_AFFINITY_VALUE),
-		namespace:      c.String(JOB_NAMESPACE),
-		extAddressType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
-		nn:             c.String(MY_NODE_NAME),
+		naKey:          c.String(jobNodeAffinityKeyFlag),
+		naVal:          c.String(jobNodeAffinityValueFlag),
+		namespace:      c.String(jobNamespaceFlag),
+		extAddressType: c.String(webOriginHostRedirectAddressTypeFlag),
+		nn:             c.String(myNodeNameFlag),
 	}
 }
 
@@ -148,9 +150,9 @@ func (s *JobLocation) podToLocation(pod *corev1.Pod) (*Location, error) {
 	return &Location{
 		IP: net.ParseIP(pod.Status.PodIP),
 		Ports: Ports{
-			HTTP:  PORT_HTTP,
-			GRPC:  PORT_GRPC,
-			Probe: PORT_PROBE,
+			HTTP:  podHTTPPort,
+			GRPC:  podGRPCPort,
+			Probe: podProbePort,
 		},
 		Unavailable: false,
 		Expire:      w,
@@ -185,10 +187,10 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 	finished := false
 	go func() {
 		netClient := &http.Client{
-			Timeout: time.Second * HEALTH_CHECK_TIMEOUT,
+			Timeout: time.Second * podHealthCheckTimeout,
 		}
 		tries := 0
-		url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, PORT_PROBE, POD_LIVENESS_PATH)
+		url := fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, podProbePort, podLivenessPath)
 		for {
 			if finished {
 				return
@@ -201,14 +203,14 @@ func (s *JobLocation) waitFinish(pod *corev1.Pod) (chan bool, error) {
 			if err != nil {
 				tries++
 				s.logger.WithError(err).Warn("failed to check pod status")
-				if tries >= HEALTH_CHECK_TRIES {
+				if tries >= podHealthCheckTries {
 					httpHealthCheck <- err
 					return
 				}
 			} else if res.StatusCode == http.StatusOK {
 				tries = 0
 			}
-			time.Sleep(time.Second * HEALTH_CHECK_INTERVAL)
+			time.Sleep(time.Second * podHealthCheckInterval)
 		}
 	}()
 	resCh := make(chan bool)
@@ -295,11 +297,11 @@ func (s *JobLocation) makeNodeSelector() map[string]string {
 }
 
 func (s *JobLocation) makeRequiredNodeAffinity() *corev1.NodeSelector {
-	nst := []corev1.NodeSelectorTerm{}
+	var nst []corev1.NodeSelectorTerm
 	nst = append(nst, corev1.NodeSelectorTerm{
 		MatchExpressions: []corev1.NodeSelectorRequirement{
 			{
-				Key:      fmt.Sprintf("%vno-job", K8S_LABEL_PREFIX),
+				Key:      fmt.Sprintf("%vno-job", k8SLabelPrefix),
 				Operator: corev1.NodeSelectorOpNotIn,
 				Values:   []string{"true"},
 			},
@@ -308,7 +310,7 @@ func (s *JobLocation) makeRequiredNodeAffinity() *corev1.NodeSelector {
 	nst = append(nst, corev1.NodeSelectorTerm{
 		MatchExpressions: []corev1.NodeSelectorRequirement{
 			{
-				Key:      fmt.Sprintf("%vno-%v", K8S_LABEL_PREFIX, s.cfg.Name),
+				Key:      fmt.Sprintf("%vno-%v", k8SLabelPrefix, s.cfg.Name),
 				Operator: corev1.NodeSelectorOpNotIn,
 				Values:   []string{"true"},
 			},
@@ -318,7 +320,7 @@ func (s *JobLocation) makeRequiredNodeAffinity() *corev1.NodeSelector {
 }
 
 func (s *JobLocation) makeNodeAffinity() []corev1.PreferredSchedulingTerm {
-	aff := []corev1.PreferredSchedulingTerm{}
+	var aff []corev1.PreferredSchedulingTerm
 	if s.cfg.RequestAffinity && s.nn != "" {
 		aff = append(aff, corev1.PreferredSchedulingTerm{
 			Weight: 100,
@@ -342,7 +344,7 @@ func (s *JobLocation) isInited() (bool, error) {
 		return false, errors.Wrap(err, "failed to get K8S client")
 	}
 	opts := metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id),
+		LabelSelector: fmt.Sprintf("%vjob-id=%v", k8SLabelPrefix, s.id),
 	}
 	pods, err := cl.CoreV1().Pods(s.namespace).List(opts)
 	if err != nil {
@@ -362,7 +364,7 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 
-	selector := fmt.Sprintf("%vjob-id=%v", K8S_LABEL_PREFIX, s.id)
+	selector := fmt.Sprintf("%vjob-id=%v", k8SLabelPrefix, s.id)
 	if name != "" {
 		selector = fmt.Sprintf("job-name=%v", name)
 	}
@@ -421,19 +423,21 @@ func (s *JobLocation) invoke() (*Location, error) {
 		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 	wasLocked := false
-	l, err := s.l.Get().Obtain(s.id, time.Second*POD_LOCK_DURATION, nil)
+	l, err := s.l.Get().Obtain(s.id, time.Second*podLockDuration, nil)
 	if err == redislock.ErrNotObtained {
 		s.logger.Warn("failed to obtain lock")
 		wasLocked = true
-		time.Sleep(time.Second * POD_LOCK_STANDBY)
+		time.Sleep(time.Second * podLockStandby)
 	} else if err != nil {
 		return nil, errors.Wrap(err, "failed to set lock")
 	} else {
-		defer l.Release()
+		defer func(l *redislock.Lock) {
+			_ = l.Release()
+		}(l)
 	}
 
 	isInited := false
-	for i := 0; i < POD_INIT_TRIES; i++ {
+	for i := 0; i < podInitTries; i++ {
 		isInited, err = s.isInited()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to check is there any inited job")
@@ -441,7 +445,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		if isInited || !wasLocked {
 			break
 		}
-		time.Sleep(time.Second * POD_INIT_INTERVAL)
+		time.Sleep(time.Second * podInitInterval)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -479,7 +483,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 	}
 	annotationsWithPrefix := map[string]string{}
 	for k, v := range annotations {
-		annotationsWithPrefix[fmt.Sprintf("%v%v", K8S_LABEL_PREFIX, k)] = v
+		annotationsWithPrefix[fmt.Sprintf("%v%v", k8SLabelPrefix, k)] = v
 	}
 	validLabelValue := regexp.MustCompile(`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`)
 	labels := map[string]string{}
@@ -593,7 +597,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 									PodAffinityTerm: corev1.PodAffinityTerm{
 										LabelSelector: &metav1.LabelSelector{
 											MatchLabels: map[string]string{
-												fmt.Sprintf("%vinfo-hash", K8S_LABEL_PREFIX): s.params.InfoHash,
+												fmt.Sprintf("%vinfo-hash", k8SLabelPrefix): s.params.InfoHash,
 											},
 										},
 										TopologyKey: "kubernetes.io/hostname",
@@ -616,17 +620,17 @@ func (s *JobLocation) invoke() (*Location, error) {
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
-									ContainerPort: int32(PORT_GRPC),
+									ContainerPort: int32(podGRPCPort),
 									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "http",
-									ContainerPort: int32(PORT_HTTP),
+									ContainerPort: int32(podHTTPPort),
 									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "probe",
-									ContainerPort: int32(PORT_PROBE),
+									ContainerPort: int32(podProbePort),
 									Protocol:      corev1.ProtocolTCP,
 								},
 							},
@@ -637,7 +641,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 											Type:   intstr.String,
 											StrVal: "probe",
 										},
-										Path: POD_LIVENESS_PATH,
+										Path: podLivenessPath,
 									},
 								},
 								InitialDelaySeconds: int32(10),
@@ -652,7 +656,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 											Type:   intstr.String,
 											StrVal: "probe",
 										},
-										Path: POD_READINESS_PATH,
+										Path: podReadinessPath,
 									},
 								},
 								InitialDelaySeconds: int32(0),

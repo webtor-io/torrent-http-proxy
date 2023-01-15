@@ -18,30 +18,32 @@ import (
 )
 
 const (
-	NODE_HIGH_BANDWIDTH = "node-high-bandwidth"
-	NODE_LOW_BANDWIDTH  = "node-low-bandwidth"
-	NODE_NETWORK_IFACE  = "node-netowrk-iface"
+	nodeHighBandwidthFlag = "node-high-bandwidth"
+	nodeLowBandwidthFlag  = "node-low-bandwidth"
+	nodeNetworkIfaceFlag  = "node-netowrk-iface"
 )
 
-func RegisterNodesStatFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.Uint64Flag{
-		Name:   NODE_HIGH_BANDWIDTH,
-		Usage:  "node high bandwidth watermark",
-		EnvVar: "NODE_HIGH_BANDWIDTH",
-		Value:  100 * 1000 * 1000, // 100Mbps
-	})
-	c.Flags = append(c.Flags, cli.Uint64Flag{
-		Name:   NODE_LOW_BANDWIDTH,
-		Usage:  "node low bandwidth watermark",
-		EnvVar: "NODE_LOW_BANDWIDTH",
-		Value:  85 * 1000 * 1000, // 85Mbps
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   NODE_NETWORK_IFACE,
-		Usage:  "node network interface",
-		EnvVar: "NODE_NETWORK_IFACE",
-		Value:  "eth0",
-	})
+func RegisterNodesStatFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.Uint64Flag{
+			Name:   nodeHighBandwidthFlag,
+			Usage:  "node high bandwidth watermark",
+			EnvVar: "NODE_HIGH_BANDWIDTH",
+			Value:  100 * 1000 * 1000, // 100Mbps
+		},
+		cli.Uint64Flag{
+			Name:   nodeLowBandwidthFlag,
+			Usage:  "node low bandwidth watermark",
+			EnvVar: "NODE_LOW_BANDWIDTH",
+			Value:  85 * 1000 * 1000, // 85Mbps
+		},
+		cli.StringFlag{
+			Name:   nodeNetworkIfaceFlag,
+			Usage:  "node network interface",
+			EnvVar: "NODE_NETWORK_IFACE",
+			Value:  "eth0",
+		},
+	)
 }
 
 type NodeBandwidth struct {
@@ -79,14 +81,14 @@ type NodesStat struct {
 	raType  string
 }
 
-func NewNodesStat(c *cli.Context, pcl *PromClient, kcl *K8SClient, l *logrus.Entry) *NodesStat {
+func NewNodesStat(c *cli.Context, pcl *PromClient, kcl *K8SClient) *NodesStat {
 	return &NodesStat{
 		pcl:    pcl,
 		kcl:    kcl,
-		bwHigh: c.Uint64(NODE_HIGH_BANDWIDTH),
-		bwLow:  c.Uint64(NODE_LOW_BANDWIDTH),
-		iface:  c.String(NODE_NETWORK_IFACE),
-		raType: c.String(WEB_ORIGIN_HOST_REDIRECT_ADDRESS_TYPE),
+		bwHigh: c.Uint64(nodeHighBandwidthFlag),
+		bwLow:  c.Uint64(nodeLowBandwidthFlag),
+		iface:  c.String(nodeNetworkIfaceFlag),
+		raType: c.String(webOriginHostRedirectAddressTypeFlag),
 	}
 }
 
@@ -131,7 +133,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get nodes")
 	}
-	res := []NodeStat{}
+	var res []NodeStat
 	for _, n := range nodes.Items {
 		ready := false
 		for _, c := range n.Status.Conditions {
@@ -156,34 +158,34 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 			return nil, errors.Wrapf(err, "Failed to parse allocateble cpu value=%v", a.String())
 		}
 		cpuLow := cpuHigh - 1
-		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-high", K8S_LABEL_PREFIX)]; ok {
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-high", k8SLabelPrefix)]; ok {
 			bwHigh, err = bytefmt.ToBytes(v)
 			if err != nil {
 				return nil, errors.Wrapf(err, "Failed to parse bandwidth-high value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-low", K8S_LABEL_PREFIX)]; ok {
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-low", k8SLabelPrefix)]; ok {
 			bwLow, err = bytefmt.ToBytes(v)
 			if err != nil {
 				return nil, errors.Wrapf(err, "Failed to parse bandwidth-low value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-high", K8S_LABEL_PREFIX)]; ok {
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-high", k8SLabelPrefix)]; ok {
 			cpuHigh, err = parseCPUTime(v)
 			if err != nil {
 				return nil, errors.Wrapf(err, "Failed to parse cpu-high value=%v", v)
 			}
 		}
-		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-low", K8S_LABEL_PREFIX)]; ok {
+		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-low", k8SLabelPrefix)]; ok {
 			cpuLow, err = parseCPUTime(v)
 			if err != nil {
 				return nil, errors.Wrapf(err, "Failed to parse cpu-low value=%v", v)
 			}
 		}
-		pools := []string{}
+		var pools []string
 		for k, v := range n.GetLabels() {
-			if strings.HasPrefix(k, K8S_LABEL_PREFIX) && strings.HasSuffix(k, "pool") && v == "true" {
-				pools = append(pools, strings.TrimSuffix(strings.TrimPrefix(k, K8S_LABEL_PREFIX), "-pool"))
+			if strings.HasPrefix(k, k8SLabelPrefix) && strings.HasSuffix(k, "pool") && v == "true" {
+				pools = append(pools, strings.TrimSuffix(strings.TrimPrefix(k, k8SLabelPrefix), "-pool"))
 			}
 		}
 		res = append(res, NodeStat{

@@ -9,16 +9,18 @@ import (
 )
 
 const (
-	PROM_ADDR = "prom-addr"
+	promAddrFlag = "prom-addr"
 )
 
-func RegisterPromClientFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   PROM_ADDR,
-		Usage:  "Prometheus connection address",
-		Value:  "",
-		EnvVar: "PROM_ADDR",
-	})
+func RegisterPromClientFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   promAddrFlag,
+			Usage:  "Prometheus connection address",
+			Value:  "",
+			EnvVar: "PROM_ADDR",
+		},
+	)
 }
 
 type PromClient struct {
@@ -31,7 +33,7 @@ type PromClient struct {
 
 func NewPromClient(c *cli.Context) *PromClient {
 	return &PromClient{
-		addr: c.String(PROM_ADDR),
+		addr: c.String(promAddrFlag),
 	}
 }
 

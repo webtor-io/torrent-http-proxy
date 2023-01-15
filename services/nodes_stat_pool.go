@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	NODES_STATS_TTL = 30
+	nodesStatsTTL = 30
 )
 
 type NodesStatPool struct {
@@ -22,15 +22,15 @@ type NodesStatPool struct {
 	stats  *NodesStat
 }
 
-func NewNodesStatPool(c *cli.Context, pcl *PromClient, kcl *K8SClient, l *logrus.Entry) *NodesStatPool {
-	return &NodesStatPool{c: c, kcl: kcl, pcl: pcl, expire: time.Duration(NODES_STATS_TTL) * time.Second}
+func NewNodesStatPool(c *cli.Context, pcl *PromClient, kcl *K8SClient) *NodesStatPool {
+	return &NodesStatPool{c: c, kcl: kcl, pcl: pcl, expire: time.Duration(nodesStatsTTL) * time.Second}
 }
 
 func (s *NodesStatPool) Get() ([]NodeStat, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.stats == nil {
-		s.stats = NewNodesStat(s.c, s.pcl, s.kcl, s.l)
+		s.stats = NewNodesStat(s.c, s.pcl, s.kcl)
 		go func() {
 			<-time.After(s.expire)
 			s.stats = nil

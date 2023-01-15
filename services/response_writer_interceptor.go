@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-type responseWriterInterceptor struct {
+type ResponseWriterInterceptor struct {
 	http.ResponseWriter
 	statusCode   int
 	bytesWritten int
@@ -17,23 +17,23 @@ type responseWriterInterceptor struct {
 	ttfb         time.Duration
 }
 
-func NewResponseWrtierInterceptor(w http.ResponseWriter) *responseWriterInterceptor {
-	return &responseWriterInterceptor{
+func NewResponseWrtierInterceptor(w http.ResponseWriter) *ResponseWriterInterceptor {
+	return &ResponseWriterInterceptor{
 		statusCode:     http.StatusOK,
 		ResponseWriter: w,
 		start:          time.Now(),
 	}
 }
 
-func (w *responseWriterInterceptor) WriteHeader(statusCode int) {
+func (w *ResponseWriterInterceptor) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
-func (w *responseWriterInterceptor) GroupedStatusCode() int {
+func (w *ResponseWriterInterceptor) GroupedStatusCode() int {
 	return w.statusCode / 100 * 100
 }
 
-func (w *responseWriterInterceptor) Write(p []byte) (int, error) {
+func (w *ResponseWriterInterceptor) Write(p []byte) (int, error) {
 	if w.bytesWritten == 0 {
 		w.ttfb = time.Since(w.start)
 	}
@@ -41,7 +41,7 @@ func (w *responseWriterInterceptor) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-func (w *responseWriterInterceptor) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (w *ResponseWriterInterceptor) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, errors.New("type assertion failed http.ResponseWriter not a http.Hijacker")
@@ -49,7 +49,7 @@ func (w *responseWriterInterceptor) Hijack() (net.Conn, *bufio.ReadWriter, error
 	return h.Hijack()
 }
 
-func (w *responseWriterInterceptor) Flush() {
+func (w *ResponseWriterInterceptor) Flush() {
 	f, ok := w.ResponseWriter.(http.Flusher)
 	if !ok {
 		return
@@ -60,7 +60,7 @@ func (w *responseWriterInterceptor) Flush() {
 
 // Check interface implementations.
 var (
-	_ http.ResponseWriter = &responseWriterInterceptor{}
-	_ http.Hijacker       = &responseWriterInterceptor{}
-	_ http.Flusher        = &responseWriterInterceptor{}
+	_ http.ResponseWriter = &ResponseWriterInterceptor{}
+	_ http.Hijacker       = &ResponseWriterInterceptor{}
+	_ http.Flusher        = &ResponseWriterInterceptor{}
 )

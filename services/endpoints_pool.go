@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	ENDPOINTS_TTL = 30
+	endpointsTTL = 30
 )
 
 type EndpointsPool struct {
@@ -23,7 +23,7 @@ func NewEndpointsPool(c *cli.Context, cl *K8SClient) *EndpointsPool {
 	return &EndpointsPool{
 		c:      c,
 		cl:     cl,
-		expire: time.Duration(ENDPOINTS_TTL) * time.Second,
+		expire: time.Duration(endpointsTTL) * time.Second,
 	}
 }
 

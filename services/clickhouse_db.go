@@ -13,16 +13,18 @@ type DBProvider interface {
 }
 
 const (
-	CLICKHOUSE_DSN = "clickhouse-dsn"
+	ClickhouseDSNFlag = "clickhouse-dsn"
 )
 
-func RegisterClickHouseDBFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   CLICKHOUSE_DSN,
-		Usage:  "clickhouse dsn",
-		Value:  "",
-		EnvVar: "CLICKHOUSE_DSN",
-	})
+func RegisterClickHouseDBFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   ClickhouseDSNFlag,
+			Usage:  "clickhouse dsn",
+			Value:  "",
+			EnvVar: "CLICKHOUSE_DSN",
+		},
+	)
 }
 
 type ClickHouseDB struct {
@@ -34,7 +36,7 @@ type ClickHouseDB struct {
 
 func NewClickHouseDB(c *cli.Context) *ClickHouseDB {
 	return &ClickHouseDB{
-		dsn: c.String(CLICKHOUSE_DSN),
+		dsn: c.String(ClickhouseDSNFlag),
 	}
 }
 
@@ -47,6 +49,6 @@ func (s *ClickHouseDB) Get() (*sql.DB, error) {
 
 func (s *ClickHouseDB) Close() {
 	if s.db != nil {
-		s.db.Close()
+		_ = s.db.Close()
 	}
 }

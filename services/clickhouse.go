@@ -14,22 +14,23 @@ import (
 )
 
 const (
-	CLICKHOUSE_BATCH_SIZE = "clickhouse-batch-size"
-	CLICKHOUSE_REPLICATED = "clickhouse-replicated"
+	clickhouseBatchSizeFlag  = "clickhouse-batch-size"
+	clickhouseReplicatedFlag = "clickhouse-replicated"
 )
 
-func RegisterClickHouseFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.IntFlag{
-		Name:   CLICKHOUSE_BATCH_SIZE,
-		Usage:  "clickhouse batch size",
-		Value:  1000,
-		EnvVar: "CLICKHOUSE_BATCH_SIZE",
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   CLICKHOUSE_REPLICATED,
-		Usage:  "clickhouse replication enabled",
-		EnvVar: "CLICKHOUSE_REPLICATED",
-	})
+func RegisterClickHouseFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.IntFlag{
+			Name:   clickhouseBatchSizeFlag,
+			Usage:  "clickhouse batch size",
+			Value:  1000,
+			EnvVar: "CLICKHOUSE_BATCH_SIZE",
+		},
+		cli.BoolFlag{
+			Name:   clickhouseReplicatedFlag,
+			Usage:  "clickhouse replication enabled",
+			EnvVar: "CLICKHOUSE_REPLICATED",
+		})
 }
 
 type ClickHouse struct {
@@ -67,10 +68,10 @@ func NewClickHouse(c *cli.Context, db DBProvider) *ClickHouse {
 
 	return &ClickHouse{
 		db:         db,
-		batchSize:  c.Int(CLICKHOUSE_BATCH_SIZE),
-		batch:      make([]*StatRecord, 0, c.Int(CLICKHOUSE_BATCH_SIZE)),
-		nodeName:   c.String(MY_NODE_NAME),
-		replicated: c.Bool(CLICKHOUSE_REPLICATED),
+		batchSize:  c.Int(clickhouseBatchSizeFlag),
+		batch:      make([]*StatRecord, 0, c.Int(clickhouseBatchSizeFlag)),
+		nodeName:   c.String(myNodeNameFlag),
+		replicated: c.Bool(clickhouseReplicatedFlag),
 	}
 }
 
@@ -158,7 +159,9 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	if err != nil {
 		return errors.Wrapf(err, "Failed to prepare")
 	}
-	defer stmt.Close()
+	defer func(stmt *sql.Stmt) {
+		_ = stmt.Close()
+	}(stmt)
 	for _, r := range sr {
 		var adsUInt uint8
 		if r.Ads {
@@ -200,6 +203,6 @@ func (s *ClickHouse) Add(sr *StatRecord) error {
 }
 
 func (s *ClickHouse) Close() {
-	s.store(s.batch)
+	_ = s.store(s.batch)
 	s.batch = []*StatRecord{}
 }

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	ACCESS_HISTORY_LIMIT  = 10
-	ACCESS_HISTORY_EXPIRE = 3 * time.Hour
+	accessHistoryLimit  = 10
+	accessHistoryExpire = 3 * time.Hour
 )
 
 type AccessHistory struct {
@@ -22,8 +22,8 @@ type AccessHistory struct {
 func NewAccessHistory() *AccessHistory {
 	return &AccessHistory{
 		m:      map[string][]string{},
-		limit:  ACCESS_HISTORY_LIMIT,
-		expire: ACCESS_HISTORY_EXPIRE,
+		limit:  accessHistoryLimit,
+		expire: accessHistoryExpire,
 	}
 }
 
