@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"sync"
 
-	_ "github.com/ClickHouse/clickhouse-go"
+	_ "github.com/ClickHouse/clickhouse-go/v2"
+	_ "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/urfave/cli"
 )
 

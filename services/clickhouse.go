@@ -163,15 +163,15 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 		_ = stmt.Close()
 	}(stmt)
 	for _, r := range sr {
-		var adsUInt uint8
-		if r.Ads {
-			adsUInt = 1
-		}
+		//var adsUInt uint8
+		//if r.Ads {
+		//	adsUInt = 1
+		//}
 		_, err = stmt.Exec(
-			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
-			r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
-			r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-			r.Role, adsUInt, s.nodeName,
+			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, uint32(r.TTFB),
+			uint32(r.Duration), r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
+			r.Domain, uint16(r.Status), uint16(r.GroupedStatus), r.Edge, r.Source,
+			r.Role, r.Ads, s.nodeName,
 		)
 		if err != nil {
 			return errors.Wrapf(err, "failed to exec")
