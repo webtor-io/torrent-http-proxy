@@ -11,7 +11,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/improbable-eng/grpc-web v0.15.0
 	github.com/juju/ratelimit v1.0.1
-	github.com/mwitkow/grpc-proxy v0.0.0-20220126150247-db34e7bfee32
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
 	github.com/prometheus/common v0.39.0
@@ -58,6 +57,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/testify v1.8.1 // indirect
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect
+	github.com/vgough/grpc-proxy v0.0.0-20210913231538-71832b651269 // indirect
 	github.com/vmihailenco/bufpool v0.1.11 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.3.5 // indirect
 	github.com/vmihailenco/tagparser v0.1.2 // indirect
