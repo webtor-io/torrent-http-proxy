@@ -126,28 +126,28 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	if len(sr) == 0 {
 		return nil
 	}
-	logrus.Infof("Storing %v rows to ClickHouse", len(sr))
+	logrus.Infof("storing %v rows to ClickHouse", len(sr))
 	defer func() {
-		logrus.Infof("Finish storing %v rows to ClickHouse", len(sr))
+		logrus.Infof("finish storing %v rows to ClickHouse", len(sr))
 		s.storeMux.Unlock()
 	}()
 	db, err := s.db.Get()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to get ClickHouse DB")
+		return errors.Wrapf(err, "failed to get ClickHouse DB")
 	}
 	s.init.Do(func() {
 		err = s.makeTable(db)
 	})
 	if err != nil {
-		return errors.Wrapf(err, "Failed to create table")
+		return errors.Wrapf(err, "failed to create table")
 	}
 	err = db.Ping()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to ping")
+		return errors.Wrapf(err, "failed to ping")
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to begin")
+		return errors.Wrapf(err, "failed to begin")
 	}
 	table := "proxy_stat"
 	if s.replicated {
@@ -157,7 +157,7 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 		duration, path, infohash, original_path, session_id, domain, status, grouped_status, edge,
 		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table))
 	if err != nil {
-		return errors.Wrapf(err, "Failed to prepare")
+		return errors.Wrapf(err, "failed to prepare")
 	}
 	defer func(stmt *sql.Stmt) {
 		_ = stmt.Close()
@@ -174,12 +174,12 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 			r.Role, adsUInt, s.nodeName,
 		)
 		if err != nil {
-			return errors.Wrapf(err, "Failed to exec")
+			return errors.Wrapf(err, "failed to exec")
 		}
 	}
 	err = tx.Commit()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to commit")
+		return errors.Wrapf(err, "failed to commit")
 	}
 	return nil
 }
@@ -192,7 +192,7 @@ func (s *ClickHouse) Add(sr *StatRecord) error {
 		go func(b []*StatRecord) {
 			err := s.store(b)
 			if err != nil {
-				logrus.WithError(err).Warn("Failed to store to ClickHouse")
+				logrus.WithError(err).Warn("failed to store to ClickHouse")
 			}
 		}(s.batch)
 		s.mux.Lock()

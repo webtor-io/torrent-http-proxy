@@ -27,7 +27,7 @@ func NewClients() (*Clients, error) {
 
 	err = yaml.Unmarshal(data, &cc)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to unmarshal clients config")
+		return nil, errors.Wrap(err, "failed to unmarshal clients config")
 	}
 	return &cc, nil
 }

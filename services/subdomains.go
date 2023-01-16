@@ -102,7 +102,7 @@ func (s *Subdomains) filterWithZeroScore(stats []NodeStatWithScore) []NodeStatWi
 func (s *Subdomains) filterByActivePod(stats []NodeStatWithScore) ([]NodeStatWithScore, error) {
 	cl, err := s.k8s.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get k8s client")
+		return nil, errors.Wrap(err, "failed to get k8s client")
 	}
 	var nodeNames []string
 	infoHash := s.infoHash
@@ -114,7 +114,7 @@ func (s *Subdomains) filterByActivePod(stats []NodeStatWithScore) ([]NodeStatWit
 		}
 		pods, err := cl.CoreV1().Pods(s.jobNamespace).List(opts)
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to find active job")
+			return nil, errors.Wrap(err, "failed to find active job")
 		}
 		for _, p := range pods.Items {
 			if p.Status.Phase != corev1.PodFailed {
@@ -163,7 +163,7 @@ func (s *Subdomains) updateScoreByInfoHash(stats []NodeStatWithScore, useCPU boo
 	hex := s.infoHash[0:5]
 	num, err := strconv.ParseInt(hex, 16, 64)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to parse hex from infohash=%v", s.infoHash)
+		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", s.infoHash)
 	}
 	num = num * 1000
 	total := 1048575 * 1000
@@ -240,7 +240,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 	for _, p := range s.pools {
 		sc, err := s.getScoredStatsByPool(p)
 		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to get nodes stat for pool %v", p)
+			return nil, errors.Wrapf(err, "failed to get nodes stat for pool %v", p)
 		}
 		if len(sc) > 0 {
 			return sc, nil
@@ -252,7 +252,7 @@ func (s *Subdomains) getScoredStats() ([]NodeStatWithScore, error) {
 func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, error) {
 	stats, err := s.nsp.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get nodes stat")
+		return nil, errors.Wrap(err, "failed to get nodes stat")
 	}
 	var sc []NodeStatWithScore
 	for _, s := range stats {
@@ -268,7 +268,7 @@ func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, err
 	if !s.skipActiveJobSearch {
 		sc, err = s.filterByActivePod(sc)
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to filter by active job")
+			return nil, errors.Wrap(err, "failed to filter by active job")
 		}
 	}
 	if s.useCPU {
@@ -279,7 +279,7 @@ func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, err
 	}
 	sc, err = s.updateScoreByInfoHash(sc, s.useCPU)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to update score by hash")
+		return nil, errors.Wrap(err, "failed to update score by hash")
 	}
 	sort.Slice(sc, func(i, j int) bool {
 		return sc[i].Score > sc[j].Score
@@ -292,7 +292,7 @@ func (s *Subdomains) getScoredStatsByPool(pool string) ([]NodeStatWithScore, err
 func (s *Subdomains) get() ([]NodeStatWithScore, []string, error) {
 	stats, err := s.getScoredStats()
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "Failed to get sorted nodes stat")
+		return nil, nil, errors.Wrap(err, "failed to get sorted nodes stat")
 	}
 	var res []string
 	for _, st := range stats {

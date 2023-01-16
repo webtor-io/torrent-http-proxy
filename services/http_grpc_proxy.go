@@ -42,6 +42,13 @@ func (s *HTTPGRPCProxy) Get() *grpcweb.WrappedGrpcServer {
 	return s.v
 }
 
+func (s *HTTPGRPCProxy) Close() {
+	if s.v == nil {
+		return
+	}
+	s.p.Close()
+}
+
 func makeHttpOriginFunc() func(origin string) bool {
 	return func(origin string) bool {
 		return true

@@ -95,11 +95,11 @@ func NewNodesStat(c *cli.Context, pcl *PromClient, kcl *K8SClient) *NodesStat {
 func (s *NodesStat) get() ([]NodeStat, error) {
 	ns, err := s.getKubeStats()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get stats from k8s")
+		return nil, errors.Wrap(err, "failed to get stats from k8s")
 	}
 	ps, err := s.getPromStats(ns)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get stats from prom")
+		return nil, errors.Wrap(err, "failed to get stats from prom")
 	}
 	if ps == nil {
 		return ns, nil
@@ -123,7 +123,7 @@ func parseCPUTime(t string) (float64, error) {
 func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 	cl, err := s.kcl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get k8s client")
+		return nil, errors.Wrap(err, "failed to get k8s client")
 	}
 	timeout := int64(5)
 	opts := metav1.ListOptions{
@@ -131,7 +131,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 	}
 	nodes, err := cl.CoreV1().Nodes().List(opts)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get nodes")
+		return nil, errors.Wrap(err, "failed to get nodes")
 	}
 	var res []NodeStat
 	for _, n := range nodes.Items {
@@ -155,31 +155,31 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 		a := n.Status.Allocatable[corev1.ResourceCPU]
 		cpuHigh, err := parseCPUTime(a.String())
 		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to parse allocateble cpu value=%v", a.String())
+			return nil, errors.Wrapf(err, "failed to parse allocateble cpu value=%v", a.String())
 		}
 		cpuLow := cpuHigh - 1
 		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-high", k8SLabelPrefix)]; ok {
 			bwHigh, err = bytefmt.ToBytes(v)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to parse bandwidth-high value=%v", v)
+				return nil, errors.Wrapf(err, "failed to parse bandwidth-high value=%v", v)
 			}
 		}
 		if v, ok := n.GetLabels()[fmt.Sprintf("%vbandwidth-low", k8SLabelPrefix)]; ok {
 			bwLow, err = bytefmt.ToBytes(v)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to parse bandwidth-low value=%v", v)
+				return nil, errors.Wrapf(err, "failed to parse bandwidth-low value=%v", v)
 			}
 		}
 		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-high", k8SLabelPrefix)]; ok {
 			cpuHigh, err = parseCPUTime(v)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to parse cpu-high value=%v", v)
+				return nil, errors.Wrapf(err, "failed to parse cpu-high value=%v", v)
 			}
 		}
 		if v, ok := n.GetLabels()[fmt.Sprintf("%vcpu-low", k8SLabelPrefix)]; ok {
 			cpuLow, err = parseCPUTime(v)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to parse cpu-low value=%v", v)
+				return nil, errors.Wrapf(err, "failed to parse cpu-low value=%v", v)
 			}
 		}
 		var pools []string
@@ -208,7 +208,7 @@ func (s *NodesStat) getKubeStats() ([]NodeStat, error) {
 func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 	cl, err := s.pcl.Get()
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get prometheus client")
+		return nil, errors.Wrap(err, "failed to get prometheus client")
 	}
 	if cl == nil {
 		return nil, nil
@@ -222,7 +222,7 @@ func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 	}
 	data, ok := val.(model.Vector)
 	if !ok {
-		return nil, errors.Errorf("Failed to parse response %v", val)
+		return nil, errors.Errorf("failed to parse response %v", val)
 	}
 	for _, d := range data {
 		for i, n := range ns {
@@ -238,7 +238,7 @@ func (s *NodesStat) getPromStats(ns []NodeStat) ([]NodeStat, error) {
 	}
 	data, ok = val.(model.Vector)
 	if !ok {
-		return nil, errors.Errorf("Failed to parse response %v", val)
+		return nil, errors.Errorf("failed to parse response %v", val)
 	}
 	for _, d := range data {
 		for i, n := range ns {

@@ -38,12 +38,14 @@ func (s *HTTPGRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.Wra
 	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.c, s.baseURL, s.claims, s.r, src, nil, logger)))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
+	proxy := v.(*HTTPGRPCProxy)
 	if !tLoaded {
-		go func() {
+		go func(timer *time.Timer, proxy *HTTPGRPCProxy) {
 			<-timer.C
 			s.sm.Delete(key)
 			s.timers.Delete(key)
-		}()
+			proxy.Close()
+		}(timer, proxy)
 	} else {
 		timer.Reset(s.expire)
 	}

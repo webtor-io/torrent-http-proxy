@@ -68,23 +68,23 @@ func TestClickHouse(t *testing.T) {
 
 		for i := 0; i < 2100; i++ {
 			if err = clickHouse.Add(&StatRecord{}); err != nil {
-				t.Errorf("Error while adding stats: %s", err)
+				t.Errorf("error while adding stats: %s", err)
 			}
 		}
 		<-time.After(time.Millisecond * 100)
 
 		if len(clickHouse.batch) != 100 {
-			t.Errorf("Expected batch size %v got %v", 100, len(clickHouse.batch))
+			t.Errorf("expected batch size %v got %v", 100, len(clickHouse.batch))
 		}
 
 		clickHouse.Close()
 
 		if len(clickHouse.batch) != 0 {
-			t.Errorf("Expected empty batch but %v records still reamins", len(clickHouse.batch))
+			t.Errorf("expected empty batch but %v records still reamins", len(clickHouse.batch))
 		}
 
 		if err := mock.ExpectationsWereMet(); err != nil {
-			t.Errorf("There were unfulfilled expectations: %s", err)
+			t.Errorf("there were unfulfilled expectations: %s", err)
 		}
 
 		return nil

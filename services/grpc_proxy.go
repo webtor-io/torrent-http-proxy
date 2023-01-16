@@ -82,7 +82,7 @@ func NewGRPCProxy(c *cli.Context, bu string, claims *Claims, r *Resolver, src *S
 func (s *GRPCProxy) dial(ctx context.Context, cl *Client, src *Source, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
 	loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get location")
+		s.logger.WithError(err).Error("failed to get location")
 		return nil, status.Errorf(codes.Unavailable, "Unavailable")
 	}
 	if loc.Unavailable {
@@ -143,21 +143,21 @@ func (s *GRPCProxy) get() *grpc.Server {
 		}
 		_, cl, err := s.claims.Get(md.Get("token")[0], apiKey)
 		if err != nil {
-			return nil, nil, errors.Wrap(err, "Failed to get claims")
+			return nil, nil, errors.Wrap(err, "failed to get claims")
 		}
 		src := s.src
 		if path != "" && s.src == nil && s.parser != nil {
 			nu, err := url.Parse(path)
 			if err != nil {
-				return nil, nil, errors.Wrapf(err, "Failed to parse url from path %v", path)
+				return nil, nil, errors.Wrapf(err, "failed to parse url from path %v", path)
 			}
 			src, err = s.parser.Parse(nu)
 			if err != nil {
-				return nil, nil, errors.Wrapf(err, "Failed to parse path from metadata %v", path)
+				return nil, nil, errors.Wrapf(err, "failed to parse path from metadata %v", path)
 			}
 		}
 		if src == nil {
-			return nil, nil, errors.Errorf("Failed to find path")
+			return nil, nil, errors.Errorf("failed to find path")
 		}
 
 		invoke := true
@@ -211,4 +211,11 @@ func (s *GRPCProxy) Get() *grpc.Server {
 	s.grpc = s.get()
 	s.inited = true
 	return s.grpc
+}
+
+func (s *GRPCProxy) Close() {
+	if s.grpc == nil {
+		return
+	}
+	s.grpc.Stop()
 }

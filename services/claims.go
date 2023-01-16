@@ -28,7 +28,7 @@ func (s *Claims) Set(apiKey string, claims jwt.Claims) (string, error) {
 
 	cl := s.cs.Get(apiKey)
 	if cl == nil {
-		return "", errors.Errorf("Failed to find secret by API key %v", apiKey)
+		return "", errors.Errorf("failed to find secret by API key %v", apiKey)
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cl.Secret))
@@ -46,13 +46,13 @@ func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client,
 	}
 
 	if tokenString == "" {
-		return nil, nil, errors.Errorf("Failed to get token")
+		return nil, nil, errors.Errorf("failed to get token")
 	}
 
 	cl := s.cs.Get(apiKey)
 
 	if cl == nil {
-		return nil, nil, errors.Errorf("Failed to find secret by API key %v", apiKey)
+		return nil, nil, errors.Errorf("failed to find secret by API key %v", apiKey)
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -64,11 +64,11 @@ func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client,
 		return []byte(cl.Secret), nil
 	})
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "Failed to parse token")
+		return nil, nil, errors.Wrapf(err, "failed to parse token")
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
-		return nil, nil, errors.Wrapf(err, "Failed to validate token")
+		return nil, nil, errors.Wrapf(err, "failed to validate token")
 	}
 	return claims, cl, nil
 }

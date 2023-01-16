@@ -44,11 +44,11 @@ func (s *GRPCServer) Serve() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return errors.Wrap(err, "Failed to grpc listen to tcp connection")
+		return errors.Wrap(err, "failed to grpc listen to tcp connection")
 	}
 	s.ln = ln
 	p := s.p.Get()
-	logrus.Infof("Serving GRPC at %v", addr)
+	logrus.Infof("serving GRPC at %v", addr)
 	return p.Serve(ln)
 }
 

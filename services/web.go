@@ -161,7 +161,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "" || isAllowed(r)) {
 		token, err := s.claims.Set(apiKey, StandardClaims{})
 		if err != nil {
-			logger.WithError(err).Errorf("Failed to set claims")
+			logger.WithError(err).Errorf("failed to set claims")
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -171,11 +171,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			q.Add("token", token)
 			r.URL.RawQuery = q.Encode()
 		}
-		logger.Infof("Got allowed request %v", r.URL.Path)
+		logger.Infof("got allowed request %v", r.URL.Path)
 	}
 	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
-		logger.WithError(err).Warnf("Failed to get claims")
+		logger.WithError(err).Warnf("failed to get claims")
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -245,7 +245,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				Ads:           ads,
 			})
 			if err != nil {
-				logger.WithError(err).Warn("Failed to store data to ClickHouse")
+				logger.WithError(err).Warn("failed to store data to ClickHouse")
 			}
 		}
 		promHTTPProxyRequestDuration.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
@@ -281,7 +281,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"referer":    r.Referer(),
 		})
 		if wi.GroupedStatusCode() == 500 {
-			l.Error("Failed to serve request")
+			l.Error("failed to serve request")
 		} else if wi.GroupedStatusCode() == 200 {
 			l.Info("Request served successfully")
 		} else {
@@ -318,7 +318,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if s.bandwidthLimit && source == External {
 		b, err := s.bucketPool.Get(claims)
 		if err != nil {
-			logger.WithError(err).Errorf("Failed to get bucket")
+			logger.WithError(err).Errorf("failed to get bucket")
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -334,7 +334,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	pr, err := s.pr.Get(src, logger, invoke, cl)
 
 	if err != nil {
-		logger.WithError(err).Errorf("Failed to get proxy")
+		logger.WithError(err).Errorf("failed to get proxy")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -349,7 +349,7 @@ func (s *Web) Serve() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return errors.Wrap(err, "Failed to web listen to tcp connection")
+		return errors.Wrap(err, "failed to web listen to tcp connection")
 	}
 	s.ln = ln
 	mux := http.NewServeMux()
@@ -376,7 +376,7 @@ func (s *Web) Serve() error {
 		apiKey := r.URL.Query().Get("api-key")
 		_, _, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 		if err != nil {
-			logrus.WithError(err).Errorf("Failed to get claims")
+			logrus.WithError(err).Errorf("failed to get claims")
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -396,13 +396,13 @@ func (s *Web) Serve() error {
 			pools,
 		)
 		if err != nil {
-			logrus.WithError(err).Error("Failed to get subdomains")
+			logrus.WithError(err).Error("failed to get subdomains")
 			w.WriteHeader(500)
 			return
 		}
 		jsonData, err := json.Marshal(subs)
 		if err != nil {
-			logrus.WithError(err).Error("Failed to marshal subdomains")
+			logrus.WithError(err).Error("failed to marshal subdomains")
 			w.WriteHeader(500)
 			return
 		}
@@ -431,7 +431,7 @@ func (s *Web) Serve() error {
 		src, err := s.parser.Parse(r.URL)
 
 		if err != nil {
-			logger.WithError(err).Error("Failed to parse url")
+			logger.WithError(err).Error("failed to parse url")
 			w.WriteHeader(500)
 			return
 		}
@@ -470,19 +470,19 @@ func (s *Web) Serve() error {
 		ws, err := s.grpc.Get(src, logger)
 
 		if err != nil {
-			logger.WithError(err).Error("Failed to get GRPC proxy")
+			logger.WithError(err).Error("failed to get GRPC proxy")
 			w.WriteHeader(500)
 			return
 		}
 
 		if ws != nil {
 			if ws.IsGrpcWebRequest(r) {
-				logger.Info("Handling GRPC Web Request")
+				logger.Info("handling GRPC Web Request")
 				ws.HandleGrpcWebRequest(w, r)
 				return
 			}
 			if ws.IsGrpcWebSocketRequest(r) {
-				logger.Info("Handling GRPC WebSocket Request")
+				logger.Info("handling GRPC WebSocket Request")
 				ws.HandleGrpcWebsocketRequest(w, r)
 				return
 			}
@@ -491,7 +491,7 @@ func (s *Web) Serve() error {
 		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
 
 	})
-	logrus.Infof("Serving Web at %v", addr)
+	logrus.Infof("serving Web at %v", addr)
 	srv := &http.Server{
 		Handler: mux,
 		// ReadTimeout:    5 * time.Minute,

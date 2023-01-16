@@ -128,17 +128,17 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 		}
 	}
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to dial")
+		s.logger.WithError(err).Error("failed to dial")
 		promHTTPProxyDialErrors.WithLabelValues(s.src.GetEdgeName()).Inc()
 	}
 	return
 }
 
 func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
-	s.logger.Info("Dialing proxy backend")
+	s.logger.Info("dialing proxy backend")
 	loc, err := s.r.Resolve(s.src, s.logger, purge, s.invoke, s.cl)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get location")
+		s.logger.WithError(err).Error("failed to get location")
 		return nil, err
 	}
 	addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
@@ -147,7 +147,7 @@ func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
 		KeepAlive: 1 * time.Minute,
 	}).Dial(network, addr)
 	if err != nil {
-		s.logger.WithError(err).Warnf("Failed to dial")
+		s.logger.WithError(err).Warnf("failed to dial")
 		return nil, err
 	}
 	return conn, nil
@@ -174,7 +174,7 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	loc, err := s.r.Resolve(s.src, s.logger, false, s.invoke, s.cl)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get location")
+		return nil, errors.Wrap(err, "failed to get location")
 	}
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
