@@ -24,6 +24,8 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
 	app.Flags = s.RegisterCommonFlags(app.Flags)
 	app.Flags = s.RegisterEndpointsFlags(app.Flags)
+	app.Flags = s.RegisterGRPCProxyFlags(app.Flags)
+	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
 
 	app.Action = run
 }
@@ -88,7 +90,7 @@ func run(c *cli.Context) error {
 	defer prom.Close()
 
 	// Setting HTTP Proxy Pool
-	httpProxyPool := s.NewHTTPProxyPool(resolver)
+	httpProxyPool := s.NewHTTPProxyPool(c, resolver)
 
 	// Setting Claims
 	claims := s.NewClaims(clients)
@@ -99,7 +101,7 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting GRPC Proxy Pool
-	grpcProxyPool := s.NewHTTPGRPCProxyPool(baseURL, claims, resolver)
+	grpcProxyPool := s.NewHTTPGRPCProxyPool(c, baseURL, claims, resolver)
 
 	// Setting NodesStat Pool
 	nodesStatPool := s.NewNodesStatPool(c, promClient, k8sClient)
@@ -130,7 +132,7 @@ func run(c *cli.Context) error {
 	defer web.Close()
 
 	// Setting GRPC Proxy
-	grpcProxy := s.NewGRPCProxy(baseURL, claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
+	grpcProxy := s.NewGRPCProxy(c, baseURL, claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
 
 	// Setting GRPC Server
 	grpcServer := s.NewGRPCServer(c, grpcProxy)

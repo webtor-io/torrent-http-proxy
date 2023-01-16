@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"fmt"
+	"github.com/urfave/cli"
 	"io"
 	"net"
 	"net/http"
@@ -18,9 +19,26 @@ import (
 )
 
 const (
-	httpProxyDialTries   int = 5
-	httpProxyRedialDelay int = 1
+	httpProxyRedialTriesFlag = "http-proxy-redial-tries"
+	httpProxyRedialDelayFlag = "http-proxy-redial-delay"
 )
+
+func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.IntFlag{
+			Name:   httpProxyRedialTriesFlag,
+			Usage:  "HTTP proxy redial tries",
+			Value:  2,
+			EnvVar: "HTTP_PROXY_REDIAL_TRIES",
+		},
+		cli.IntFlag{
+			Name:   httpProxyRedialDelayFlag,
+			Usage:  "HTTP proxy redial delay (sec)",
+			Value:  1,
+			EnvVar: "HTTP_PROXY_REDIAL_DELAY",
+		},
+	)
+}
 
 var (
 	promHTTPProxyDialDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -58,10 +76,21 @@ type HTTPProxy struct {
 	src    *Source
 	invoke bool
 	cl     *Client
+	tries  int
+	delay  int
 }
 
-func NewHTTPProxy(r *Resolver, src *Source, logger *logrus.Entry, invoke bool, cl *Client) *HTTPProxy {
-	return &HTTPProxy{r: r, src: src, inited: false, logger: logger, invoke: invoke, cl: cl}
+func NewHTTPProxy(c *cli.Context, r *Resolver, src *Source, logger *logrus.Entry, invoke bool, cl *Client) *HTTPProxy {
+	return &HTTPProxy{
+		r:      r,
+		src:    src,
+		inited: false,
+		logger: logger,
+		invoke: invoke,
+		cl:     cl,
+		tries:  c.Int(httpProxyRedialTriesFlag),
+		delay:  c.Int(httpProxyRedialDelayFlag),
+	}
 }
 
 var corsHeaders = []string{
@@ -158,12 +187,12 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	} else {
 		t = &http.Transport{
 			Dial: func(network, addr string) (net.Conn, error) {
-				return s.dialWithRetry(network, httpProxyDialTries, httpProxyRedialDelay)
+				return s.dialWithRetry(network, s.tries, s.delay)
 			},
-			MaxIdleConns:        500,
-			MaxIdleConnsPerHost: 500,
-			MaxConnsPerHost:     500,
-			IdleConnTimeout:     90 * time.Second,
+			//MaxIdleConns:        500,
+			//MaxIdleConnsPerHost: 500,
+			//MaxConnsPerHost:     500,
+			//IdleConnTimeout:     90 * time.Second,
 		}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)

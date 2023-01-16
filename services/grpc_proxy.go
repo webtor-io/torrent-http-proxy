@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"github.com/urfave/cli"
 	"net/url"
 	"sync"
 	"time"
@@ -21,25 +22,62 @@ import (
 )
 
 const (
-	grpcProxyDialTries    int = 5
-	grpcProxyRedialDelay  int = 1
-	grpcProxyUnaryTimeout int = 30
+	grpcProxyRedialTriesFlag  = "grpc-proxy-redial-tries"
+	grpcProxyRedialDelayFlag  = "grpc-proxy-redial-delay"
+	grpcProxyUnaryTimeoutFlag = "grpc-proxy-unary-timeout"
 )
 
-type GRPCProxy struct {
-	grpc    *grpc.Server
-	claims  *Claims
-	inited  bool
-	mux     sync.Mutex
-	logger  *logrus.Entry
-	r       *Resolver
-	src     *Source
-	parser  *URLParser
-	baseURL string
+func RegisterGRPCProxyFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.IntFlag{
+			Name:   grpcProxyRedialTriesFlag,
+			Usage:  "GRPC proxy redial tries",
+			Value:  2,
+			EnvVar: "GRPC_PROXY_REDIAL_TRIES",
+		},
+		cli.IntFlag{
+			Name:   grpcProxyRedialDelayFlag,
+			Usage:  "GRPC proxy redial delay (sec)",
+			Value:  1,
+			EnvVar: "GRPC_PROXY_REDIAL_DELAY",
+		},
+		cli.IntFlag{
+			Name:   grpcProxyUnaryTimeoutFlag,
+			Usage:  "GRPC proxy unary timeout (sec)",
+			Value:  30,
+			EnvVar: "GRPC_PROXY_UNARY_TIMEOUT",
+		},
+	)
 }
 
-func NewGRPCProxy(bu string, claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
-	return &GRPCProxy{baseURL: bu, claims: claims, r: r, inited: false, src: src, logger: logger, parser: parser}
+type GRPCProxy struct {
+	grpc         *grpc.Server
+	claims       *Claims
+	inited       bool
+	mux          sync.Mutex
+	logger       *logrus.Entry
+	r            *Resolver
+	src          *Source
+	parser       *URLParser
+	baseURL      string
+	tries        int
+	delay        int
+	unaryTimeout int
+}
+
+func NewGRPCProxy(c *cli.Context, bu string, claims *Claims, r *Resolver, src *Source, parser *URLParser, logger *logrus.Entry) *GRPCProxy {
+	return &GRPCProxy{
+		baseURL:      bu,
+		claims:       claims,
+		r:            r,
+		inited:       false,
+		src:          src,
+		logger:       logger,
+		parser:       parser,
+		tries:        c.Int(grpcProxyRedialTriesFlag),
+		delay:        c.Int(grpcProxyRedialDelayFlag),
+		unaryTimeout: c.Int(grpcProxyUnaryTimeoutFlag),
+	}
 }
 func (s *GRPCProxy) dial(ctx context.Context, cl *Client, src *Source, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
 	loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
@@ -86,7 +124,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		grpc.WithCodec(proxy.Codec()),
 		grpc.WithInsecure(),
 		// grpc.WithStreamInterceptor(grpcretry.StreamClientInterceptor(retryOpts...)),
-		grpc.WithUnaryInterceptor(unaryClientTimeoutInterceptor(time.Duration(grpcProxyUnaryTimeout) * time.Second)),
+		grpc.WithUnaryInterceptor(unaryClientTimeoutInterceptor(time.Duration(s.unaryTimeout) * time.Second)),
 	}
 
 	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
@@ -144,7 +182,7 @@ func (s *GRPCProxy) get() *grpc.Server {
 		// https://github.com/improbable-eng/grpc-web/issues/568
 		delete(mdCopy, "connection")
 		outCtx := metadata.NewOutgoingContext(ctx, mdCopy)
-		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, grpcProxyDialTries, grpcProxyRedialDelay)
+		conn, err := s.dialWithRetry(ctx, cl, src, grpcOpts, invoke, s.tries, s.delay)
 		// conn, err := s.dial(ctx, cl, src, grpcOpts, invoke)
 		return outCtx, conn, err
 	}

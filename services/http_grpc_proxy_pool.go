@@ -1,6 +1,7 @@
 package services
 
 import (
+	"github.com/urfave/cli"
 	"sync"
 	"time"
 
@@ -19,15 +20,22 @@ type HTTPGRPCProxyPool struct {
 	expire  time.Duration
 	r       *Resolver
 	baseURL string
+	c       *cli.Context
 }
 
-func NewHTTPGRPCProxyPool(bu string, claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
-	return &HTTPGRPCProxyPool{baseURL: bu, claims: claims, expire: time.Duration(grpcProxyTTL) * time.Second, r: r}
+func NewHTTPGRPCProxyPool(c *cli.Context, bu string, claims *Claims, r *Resolver) *HTTPGRPCProxyPool {
+	return &HTTPGRPCProxyPool{
+		baseURL: bu,
+		claims:  claims,
+		expire:  time.Duration(grpcProxyTTL) * time.Second,
+		r:       r,
+		c:       c,
+	}
 }
 
 func (s *HTTPGRPCProxyPool) Get(src *Source, logger *logrus.Entry) (*grpcweb.WrappedGrpcServer, error) {
 	key := src.GetKey()
-	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.baseURL, s.claims, s.r, src, nil, logger)))
+	v, _ := s.sm.LoadOrStore(key, NewHTTPGRPCProxy(NewGRPCProxy(s.c, s.baseURL, s.claims, s.r, src, nil, logger)))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
 	timer := t.(*time.Timer)
 	if !tLoaded {
