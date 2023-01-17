@@ -16,6 +16,7 @@ import (
 const (
 	clickhouseBatchSizeFlag  = "clickhouse-batch-size"
 	clickhouseReplicatedFlag = "clickhouse-replicated"
+	clickhouseShardedFlag    = "clickhouse-sharded"
 )
 
 func RegisterClickHouseFlags(f []cli.Flag) []cli.Flag {
@@ -30,7 +31,13 @@ func RegisterClickHouseFlags(f []cli.Flag) []cli.Flag {
 			Name:   clickhouseReplicatedFlag,
 			Usage:  "clickhouse replication enabled",
 			EnvVar: "CLICKHOUSE_REPLICATED",
-		})
+		},
+		cli.BoolFlag{
+			Name:   clickhouseShardedFlag,
+			Usage:  "clickhouse sharded enabled",
+			EnvVar: "CLICKHOUSE_SHARDED",
+		},
+	)
 }
 
 type ClickHouse struct {
@@ -42,6 +49,7 @@ type ClickHouse struct {
 	init       sync.Once
 	nodeName   string
 	replicated bool
+	sharded    bool
 }
 
 type StatRecord struct {
@@ -72,6 +80,7 @@ func NewClickHouse(c *cli.Context, db DBProvider) *ClickHouse {
 		batch:      make([]*StatRecord, 0, c.Int(clickhouseBatchSizeFlag)),
 		nodeName:   c.String(myNodeNameFlag),
 		replicated: c.Bool(clickhouseReplicatedFlag),
+		sharded:    c.Bool(clickhouseShardedFlag),
 	}
 }
 
@@ -80,8 +89,10 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 	tableExpr := table
 	engine := "MergeTree()"
 	ttl := "3 MONTH"
-	if s.replicated {
+	if s.sharded {
 		tableExpr += " on cluster '{cluster}'"
+	}
+	if s.replicated {
 		engine = "ReplicatedMergeTree('/clickhouse/{installation}/{cluster}/tables/{shard}/{database}/{table}', '{replica}')"
 	}
 	_, err := db.Exec(fmt.Sprintf(strings.TrimSpace(`
@@ -112,7 +123,7 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if s.replicated {
+	if s.sharded {
 		_, err = db.Exec(fmt.Sprintf(strings.TrimSpace(`
 			CREATE TABLE IF NOT EXISTS %v_all on cluster '{cluster}' as %v
 			ENGINE = Distributed('{cluster}', default, %v, rand())
@@ -163,15 +174,15 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 		_ = stmt.Close()
 	}(stmt)
 	for _, r := range sr {
-		//var adsUInt uint8
-		//if r.Ads {
-		//	adsUInt = 1
-		//}
+		var adsUInt uint8
+		if r.Ads {
+			adsUInt = 1
+		}
 		_, err = stmt.Exec(
 			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, uint32(r.TTFB),
 			uint32(r.Duration), r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 			r.Domain, uint16(r.Status), uint16(r.GroupedStatus), r.Edge, r.Source,
-			r.Role, r.Ads, s.nodeName,
+			r.Role, adsUInt, s.nodeName,
 		)
 		if err != nil {
 			return errors.Wrapf(err, "failed to exec")
