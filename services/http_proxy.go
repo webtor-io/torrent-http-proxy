@@ -189,10 +189,10 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 			Dial: func(network, addr string) (net.Conn, error) {
 				return s.dialWithRetry(network, s.tries, s.delay)
 			},
-			//MaxIdleConns:        500,
-			//MaxIdleConnsPerHost: 500,
-			//MaxConnsPerHost:     500,
-			//IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:        500,
+			MaxIdleConnsPerHost: 500,
+			MaxConnsPerHost:     500,
+			IdleConnTimeout:     90 * time.Second,
 		}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
