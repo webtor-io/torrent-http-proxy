@@ -415,7 +415,7 @@ func (s *JobLocation) waitForPod(ctx context.Context, name string) (*corev1.Pod,
 	}
 }
 
-func (s *JobLocation) invoke() (*Location, error) {
+func (s *JobLocation) invoke(ctx context.Context) (*Location, error) {
 	s.logger.Info("job initialization started")
 	start := time.Now()
 	cl, err := s.cl.Get()
@@ -423,8 +423,8 @@ func (s *JobLocation) invoke() (*Location, error) {
 		return nil, errors.Wrap(err, "failed to get K8S client")
 	}
 	wasLocked := false
-	l, err := s.l.Get().Obtain(s.id, time.Second*podLockDuration, nil)
-	if err == redislock.ErrNotObtained {
+	l, err := s.l.Get().Obtain(ctx, s.id, time.Second*podLockDuration, nil)
+	if errors.Is(err, redislock.ErrNotObtained) {
 		s.logger.Warn("failed to obtain lock")
 		wasLocked = true
 		time.Sleep(time.Second * podLockStandby)
@@ -432,7 +432,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		return nil, errors.Wrap(err, "failed to set lock")
 	} else {
 		defer func(l *redislock.Lock) {
-			_ = l.Release()
+			_ = l.Release(ctx)
 		}(l)
 	}
 
@@ -447,8 +447,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 		}
 		time.Sleep(time.Second * podInitInterval)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+
 	if isInited {
 		pod, err := s.waitForPod(ctx, "")
 		if err != nil {
@@ -693,9 +692,7 @@ func (s *JobLocation) invoke() (*Location, error) {
 
 }
 
-func (s *JobLocation) wait() (*Location, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+func (s *JobLocation) wait(ctx context.Context) (*Location, error) {
 
 	pod, err := s.waitForPod(ctx, "")
 
@@ -711,13 +708,13 @@ func (s *JobLocation) wait() (*Location, error) {
 	return loc, nil
 }
 
-func (s *JobLocation) Wait() (*Location, error) {
+func (s *JobLocation) Wait(ctx context.Context) (*Location, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.inited {
 		return s.loc, s.err
 	}
-	s.loc, s.err = s.wait()
+	s.loc, s.err = s.wait(ctx)
 	if s.err != nil {
 		s.logger.WithError(s.err).Info("failed to get job location")
 	} else {
@@ -736,7 +733,7 @@ func (s *JobLocation) Get() (*Location, error) {
 	return nil, errors.Errorf("JobLocation not inited yet")
 }
 
-func (s *JobLocation) Invoke(purge bool) (*Location, error) {
+func (s *JobLocation) Invoke(ctx context.Context, purge bool) (*Location, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if purge {
@@ -748,7 +745,7 @@ func (s *JobLocation) Invoke(purge bool) (*Location, error) {
 	now := time.Now()
 	promJobInvokeCurrent.WithLabelValues(s.cfg.Name).Inc()
 	promJobInvokeTotal.WithLabelValues(s.cfg.Name).Inc()
-	s.loc, s.err = s.invoke()
+	s.loc, s.err = s.invoke(ctx)
 	promJobInvokeCurrent.WithLabelValues(s.cfg.Name).Dec()
 	promJobInvokeDuration.WithLabelValues(s.cfg.Name).Observe(time.Since(now).Seconds())
 	if s.err != nil {

@@ -80,7 +80,7 @@ func NewGRPCProxy(c *cli.Context, bu string, claims *Claims, r *Resolver, src *S
 	}
 }
 func (s *GRPCProxy) dial(ctx context.Context, cl *Client, src *Source, opts []grpc.DialOption, invoke bool) (*grpc.ClientConn, error) {
-	loc, err := s.r.Resolve(src, s.logger, false, invoke, cl)
+	loc, err := s.r.Resolve(ctx, src, s.logger, false, invoke, cl)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get location")
 		return nil, status.Errorf(codes.Unavailable, "Unavailable")

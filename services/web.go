@@ -331,7 +331,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		r.Header.Set(k, v)
 	}
 
-	pr, err := s.pr.Get(src, logger, invoke, cl)
+	pr, err := s.pr.Get(r.Context(), src, logger, invoke, cl)
 
 	if err != nil {
 		logger.WithError(err).Errorf("failed to get proxy")

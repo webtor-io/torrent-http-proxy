@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"sync"
@@ -39,7 +40,7 @@ func MakeJobID(cfg *JobConfig, params *InitParams) string {
 	return name
 }
 
-func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
+func (s *JobLocationPool) Get(ctx context.Context, cfg *JobConfig, params *InitParams, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	key := MakeJobID(cfg, params)
 	clientName := "default"
 	if cl != nil {
@@ -59,7 +60,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 				logger.Info("setting lock")
 				go func() {
 					jl := NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl)
-					l, err := jl.Wait()
+					l, err := jl.Wait(ctx)
 					if err != nil || l == nil {
 						logger.Info("failed to wait for job location")
 					} else {
@@ -88,7 +89,7 @@ func (s *JobLocationPool) Get(cfg *JobConfig, params *InitParams, logger *logrus
 	}
 
 	v, loaded := s.sm.LoadOrStore(key, NewJobLocation(s.c, cfg, params, s.cl, logger, s.l, cl))
-	l, err := v.(*JobLocation).Invoke(purge)
+	l, err := v.(*JobLocation).Invoke(ctx, purge)
 
 	if !loaded && err == nil && l != nil {
 		go func() {

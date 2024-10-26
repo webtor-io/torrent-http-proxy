@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"net"
 	"time"
 
@@ -79,19 +80,19 @@ func (s *Resolver) getInit(src *Source) *Init {
 	return init
 }
 
-func (s *Resolver) process(i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
+func (s *Resolver) process(ctx context.Context, i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	if i.ConnectionConfig.ConnectionType == ConnectionTypeService {
 		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, i.InitParams, purge)
 	} else {
-		return s.jobLocPool.Get(&i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)
+		return s.jobLocPool.Get(ctx, &i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)
 	}
 }
 
-func (s *Resolver) Resolve(src *Source, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
+func (s *Resolver) Resolve(ctx context.Context, src *Source, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
 	start := time.Now()
 	logger = logger.WithField("purge", purge)
 	init := s.getInit(src)
-	l, err := s.process(init, logger, purge, invoke, cl)
+	l, err := s.process(ctx, init, logger, purge, invoke, cl)
 	logger = logger.WithField("duration", time.Since(start).Milliseconds())
 	if err != nil {
 		logger.WithError(err).Error("failed to resolve location")

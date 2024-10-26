@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/urfave/cli"
 	"io"
@@ -109,7 +110,7 @@ func modifyResponse(r *http.Response) error {
 	return nil
 }
 
-func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn net.Conn, err error) {
+func (s *HTTPProxy) dialWithRetry(ctx context.Context, network string, tries int, delay int) (conn net.Conn, err error) {
 	now := time.Now()
 	promHTTPProxyDialCurrent.WithLabelValues(s.src.GetEdgeName()).Inc()
 	defer func() {
@@ -119,7 +120,7 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 	}()
 	purge := false
 	for i := 0; i < tries; i++ {
-		conn, err = s.dial(network, purge)
+		conn, err = s.dial(ctx, network, purge)
 		if err != nil {
 			purge = true
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -134,9 +135,9 @@ func (s *HTTPProxy) dialWithRetry(network string, tries int, delay int) (conn ne
 	return
 }
 
-func (s *HTTPProxy) dial(network string, purge bool) (net.Conn, error) {
+func (s *HTTPProxy) dial(ctx context.Context, network string, purge bool) (net.Conn, error) {
 	s.logger.Info("dialing proxy backend")
-	loc, err := s.r.Resolve(s.src, s.logger, purge, s.invoke, s.cl)
+	loc, err := s.r.Resolve(ctx, s.src, s.logger, purge, s.invoke, s.cl)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get location")
 		return nil, err
@@ -171,8 +172,8 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	}, nil
 }
 
-func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
-	loc, err := s.r.Resolve(s.src, s.logger, false, s.invoke, s.cl)
+func (s *HTTPProxy) get(ctx context.Context) (*httputil.ReverseProxy, error) {
+	loc, err := s.r.Resolve(ctx, s.src, s.logger, false, s.invoke, s.cl)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get location")
 	}
@@ -187,7 +188,7 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	} else {
 		t = &http.Transport{
 			Dial: func(network, addr string) (net.Conn, error) {
-				return s.dialWithRetry(network, s.tries, s.delay)
+				return s.dialWithRetry(ctx, network, s.tries, s.delay)
 			},
 			MaxIdleConns:        500,
 			MaxIdleConnsPerHost: 500,
@@ -202,13 +203,13 @@ func (s *HTTPProxy) get() (*httputil.ReverseProxy, error) {
 	return p, nil
 }
 
-func (s *HTTPProxy) Get() (*httputil.ReverseProxy, error) {
+func (s *HTTPProxy) Get(ctx context.Context) (*httputil.ReverseProxy, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.inited {
 		return s.proxy, s.err
 	}
-	s.proxy, s.err = s.get()
+	s.proxy, s.err = s.get(ctx)
 	s.inited = true
 	return s.proxy, s.err
 }

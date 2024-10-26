@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"github.com/urfave/cli"
 	"net/http/httputil"
 	"strconv"
@@ -30,7 +31,7 @@ func NewHTTPProxyPool(c *cli.Context, r *Resolver) *HTTPProxyPool {
 	}
 }
 
-func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool, cl *Client) (*httputil.ReverseProxy, error) {
+func (s *HTTPProxyPool) Get(ctx context.Context, src *Source, logger *logrus.Entry, invoke bool, cl *Client) (*httputil.ReverseProxy, error) {
 	key := src.GetKey() + strconv.FormatBool(invoke)
 	v, _ := s.sm.LoadOrStore(key, NewHTTPProxy(s.c, s.r, src, logger, invoke, cl))
 	t, tLoaded := s.timers.LoadOrStore(key, time.NewTimer(s.expire))
@@ -45,5 +46,5 @@ func (s *HTTPProxyPool) Get(src *Source, logger *logrus.Entry, invoke bool, cl *
 		timer.Reset(s.expire)
 	}
 
-	return v.(*HTTPProxy).Get()
+	return v.(*HTTPProxy).Get(ctx)
 }
