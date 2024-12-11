@@ -77,7 +77,7 @@ func (s *ServiceLocation) get(ctx context.Context, cfg *ServiceConfig, src *Sour
 			}
 		}
 		if len(las) > 0 {
-			a, err = s.distributeByHash(nil, las)
+			a, err = s.distributeByHash(src, las)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to distribute locally")
 			}
