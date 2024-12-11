@@ -3,10 +3,32 @@ package services
 import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
 )
 
+const (
+	apiKeyFlag    = "api-key"
+	apiSecretFlag = "api-secret"
+)
+
+func RegisterAPIFlags(flags []cli.Flag) []cli.Flag {
+	return append(flags,
+		cli.StringFlag{
+			Name:   apiKeyFlag,
+			Usage:  "API key for authentication",
+			EnvVar: "API_KEY",
+		},
+		cli.StringFlag{
+			Name:   apiSecretFlag,
+			Usage:  "API secret for authentication",
+			EnvVar: "API_SECRET",
+		},
+	)
+}
+
 type Claims struct {
-	cs *Clients
+	apiKey    string
+	apiSecret string
 }
 type StandardClaims struct {
 	Grace  int    `json:"grace"`
@@ -16,22 +38,24 @@ type StandardClaims struct {
 	jwt.StandardClaims
 }
 
-func NewClaims(cs *Clients) *Claims {
-	return &Claims{cs: cs}
+func NewClaims(c *cli.Context) *Claims {
+	return &Claims{
+		apiKey:    c.String(apiKeyFlag),
+		apiSecret: c.String(apiSecretFlag),
+	}
 }
 
 func (s *Claims) Set(apiKey string, claims jwt.Claims) (string, error) {
 
-	if s.cs.Empty() {
+	if s.apiKey == "" && s.apiSecret == "" {
 		return "", nil
 	}
 
-	cl := s.cs.Get(apiKey)
-	if cl == nil {
-		return "", errors.Errorf("failed to find secret by API key %v", apiKey)
+	if s.apiKey != apiKey {
+		return "", errors.New("wrong api key")
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(cl.Secret))
+	tokenString, err := token.SignedString([]byte(s.apiSecret))
 
 	if err != nil {
 		return "", errors.Wrapf(err, "auth token generation failed")
@@ -39,20 +63,18 @@ func (s *Claims) Set(apiKey string, claims jwt.Claims) (string, error) {
 	return tokenString, nil
 }
 
-func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client, error) {
+func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, error) {
 
-	if s.cs.Empty() {
-		return jwt.MapClaims{}, nil, nil
+	if s.apiKey == "" && s.apiSecret == "" {
+		return jwt.MapClaims{}, nil
 	}
 
 	if tokenString == "" {
-		return nil, nil, errors.Errorf("failed to get token")
+		return nil, errors.Errorf("failed to get token")
 	}
 
-	cl := s.cs.Get(apiKey)
-
-	if cl == nil {
-		return nil, nil, errors.Errorf("failed to find secret by API key %v", apiKey)
+	if s.apiKey != apiKey {
+		return nil, errors.New("wrong api key")
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -61,14 +83,14 @@ func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, *Client,
 			return nil, errors.Errorf("Unexpected signing method=%v", token.Header["alg"])
 		}
 		// hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
-		return []byte(cl.Secret), nil
+		return []byte(s.apiSecret), nil
 	})
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to parse token")
+		return nil, errors.Wrapf(err, "failed to parse token")
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
-		return nil, nil, errors.Wrapf(err, "failed to validate token")
+		return nil, errors.Wrapf(err, "failed to validate token")
 	}
-	return claims, cl, nil
+	return claims, nil
 }

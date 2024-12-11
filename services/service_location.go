@@ -1,46 +1,89 @@
 package services
 
 import (
+	"context"
+	"github.com/pkg/errors"
+	"github.com/webtor-io/lazymap"
+	corev1 "k8s.io/api/core/v1"
 	"math/rand"
 	"net"
 	"regexp"
 	"sort"
 	"strconv"
-	"sync"
+	"time"
 
-	"github.com/pkg/errors"
 	"github.com/urfave/cli"
-
-	corev1 "k8s.io/api/core/v1"
-)
-
-type DISTRIBUTION int
-
-const (
-	Hash DISTRIBUTION = iota
-	NodeHash
 )
 
 var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
-	loc    *Location
-	cfg    *ServiceConfig
-	ep     *EndpointsPool
-	inited bool
-	err    error
-	mux    sync.Mutex
-	nn     string
-	params *InitParams
+	lazymap.LazyMap[*Location]
+	ep *K8SEndpoints
+	c  *cli.Context
+	nn string
 }
 
-func NewServiceLocation(c *cli.Context, cfg *ServiceConfig, params *InitParams, ep *EndpointsPool) *ServiceLocation {
+func NewServiceLocationPool(c *cli.Context, ep *K8SEndpoints) *ServiceLocation {
 	return &ServiceLocation{
-		cfg:    cfg,
-		ep:     ep,
-		nn:     c.String(myNodeNameFlag),
-		params: params,
+		c:  c,
+		ep: ep,
+		nn: c.String(myNodeNameFlag),
+		LazyMap: lazymap.New[*Location](&lazymap.Config{
+			Expire:      60 * time.Second,
+			StoreErrors: false,
+		}),
 	}
+}
+
+func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source, purge bool) (*Location, error) {
+	key := cfg.Name + src.InfoHash
+	if purge {
+		s.LazyMap.Drop(key)
+	}
+	return s.LazyMap.Get(key, func() (*Location, error) {
+		return s.get(ctx, cfg, src, purge)
+	})
+}
+
+func (s *ServiceLocation) get(ctx context.Context, cfg *ServiceConfig, src *Source, purge bool) (*Location, error) {
+	endpoints, err := s.ep.Get(ctx, cfg.Name, purge)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get endpoints")
+	}
+	subset := endpoints.Subsets[0]
+	as := subset.Addresses
+	if len(as) == 0 {
+		return &Location{
+			Unavailable: true,
+		}, nil
+	}
+	var a *corev1.EndpointAddress
+	if !sha1R.Match([]byte(src.InfoHash)) {
+		a = &as[rand.Intn(len(as))]
+	} else if cfg.Distribution == Hash {
+		a, err = s.distributeByHash(src, as)
+	} else if cfg.Distribution == NodeHash {
+		a, err = s.distributeByNodeHash(src, as)
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to distribute")
+	}
+	if a != nil && s.nn != "" && *a.NodeName != s.nn && cfg.PreferLocalNode {
+		var las []corev1.EndpointAddress
+		for _, a := range as {
+			if *a.NodeName == s.nn {
+				las = append(las, a)
+			}
+		}
+		if len(las) > 0 {
+			a, err = s.distributeByHash(nil, las)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to distribute locally")
+			}
+		}
+	}
+	return s.addressToLocation(a, &subset), nil
 }
 
 func (s *ServiceLocation) getPort(sub *corev1.EndpointSubset, name string) int {
@@ -62,21 +105,20 @@ func (s *ServiceLocation) addressToLocation(a *corev1.EndpointAddress, sub *core
 		IP: net.ParseIP(a.IP),
 		Ports: Ports{
 			HTTP:  s.getPort(sub, "http"),
-			GRPC:  s.getPort(sub, "grpc"),
 			Probe: s.getPort(sub, "httpprobe"),
 		},
 		Unavailable: false,
 	}
 }
 
-func (s *ServiceLocation) distributeByHash(as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
+func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
 	sort.Slice(as, func(i, j int) bool {
 		return as[i].IP > as[j].IP
 	})
-	hex := s.params.InfoHash[0:5]
+	hex := src.InfoHash[0:5]
 	num64, err := strconv.ParseInt(hex, 16, 64)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", s.params.InfoHash)
+		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", src.InfoHash)
 	}
 	num := int(num64 * 1000)
 	total := 1048575 * 1000
@@ -89,7 +131,7 @@ func (s *ServiceLocation) distributeByHash(as []corev1.EndpointAddress) (*corev1
 	return nil, nil
 }
 
-func (s *ServiceLocation) distributeByNodeHash(as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
+func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
 	sort.Slice(as, func(i, j int) bool {
 		return as[i].IP > as[j].IP
 	})
@@ -102,10 +144,10 @@ func (s *ServiceLocation) distributeByNodeHash(as []corev1.EndpointAddress) (*co
 		nodes = append(nodes, n)
 	}
 	sort.Strings(nodes)
-	hex := s.params.InfoHash[0:5]
+	hex := src.InfoHash[0:5]
 	num64, err := strconv.ParseInt(hex, 16, 64)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", s.params.InfoHash)
+		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", src.InfoHash)
 	}
 	num := int(num64 * 1000)
 	total := 1048575 * 1000
@@ -125,58 +167,4 @@ func (s *ServiceLocation) distributeByNodeHash(as []corev1.EndpointAddress) (*co
 		}
 	}
 	return nil, nil
-}
-
-func (s *ServiceLocation) get() (*Location, error) {
-	endpoints, err := s.ep.Get(s.cfg.Name)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get endpoints")
-	}
-	subset := endpoints.Subsets[0]
-	as := subset.Addresses
-	if len(as) == 0 {
-		return &Location{
-			Unavailable: true,
-		}, nil
-	}
-	var a *corev1.EndpointAddress
-	if !sha1R.Match([]byte(s.params.InfoHash)) {
-		a = &as[rand.Intn(len(as))]
-	} else if s.cfg.Distribution == Hash {
-		a, err = s.distributeByHash(as)
-	} else if s.cfg.Distribution == NodeHash {
-		a, err = s.distributeByNodeHash(as)
-	}
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to distribute")
-	}
-	if a != nil && s.nn != "" && *a.NodeName != s.nn && s.cfg.PreferLocalNode {
-		var las []corev1.EndpointAddress
-		for _, a := range as {
-			if *a.NodeName == s.nn {
-				las = append(las, a)
-			}
-		}
-		if len(las) > 0 {
-			a, err = s.distributeByHash(las)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to distribute locally")
-			}
-		}
-	}
-	return s.addressToLocation(a, &subset), nil
-}
-
-func (s *ServiceLocation) Get(purge bool) (*Location, error) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	if purge {
-		s.inited = false
-	}
-	if s.inited {
-		return s.loc, s.err
-	}
-	s.loc, s.err = s.get()
-	s.inited = true
-	return s.loc, s.err
 }

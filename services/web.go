@@ -1,7 +1,6 @@
 package services
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -29,15 +28,13 @@ type Web struct {
 	port           int
 	ln             net.Listener
 	r              *Resolver
-	pr             *HTTPProxyPool
+	pr             *HTTPProxy
 	parser         *URLParser
-	grpc           *HTTPGRPCProxyPool
-	subdomains     *SubdomainsPool
-	bucketPool     *BucketPool
+	bucket         *Bucket
 	clickHouse     *ClickHouse
 	baseURL        string
 	claims         *Claims
-	cfg            *ConnectionsConfig
+	cfg            *ServicesConfig
 	ah             *AccessHistory
 	bandwidthLimit bool
 }
@@ -46,25 +43,6 @@ const (
 	webHostFlag           = "host"
 	webPortFlag           = "port"
 	useBandwidthLimitFlag = "use-bandwidth-limit"
-)
-
-var (
-	allowList = []string{
-		"/s-1-v1-a1.ts",
-		"/s-2-v1-a1.ts",
-		"/s-3-v1-a1.ts",
-		"/s-4-v1-a1.ts",
-		"/s-5-v1-a1.ts",
-		"/s-6-v1-a1.ts",
-		"/s-7-v1-a1.ts",
-		"/s-8-v1-a1.ts",
-		"/s-9-v1-a1.ts",
-		"/s-10-v1-a1.ts",
-		".png",
-		".gif",
-		".jpg",
-		".jpeg",
-	}
 )
 
 var (
@@ -79,7 +57,7 @@ var (
 	promHTTPProxyRequestSize = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_request_size_bytes",
 		Help: "HTTP Proxy request size bytes",
-	}, []string{"client", "domain", "role", "source", "name", "infohash", "file", "status"})
+	}, []string{"domain", "role", "source", "name", "infohash", "file", "status"})
 	promHTTPProxyRequestCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_http_proxy_request_current",
 		Help: "HTTP Proxy request current",
@@ -98,18 +76,15 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, baseURL string, parser *URLParser, r *Resolver, pr *HTTPProxyPool, grpc *HTTPGRPCProxyPool, claims *Claims, subs *SubdomainsPool, bp *BucketPool, ch *ClickHouse, cfg *ConnectionsConfig, ah *AccessHistory) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig, ah *AccessHistory) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
 		parser:         parser,
 		r:              r,
 		pr:             pr,
-		baseURL:        baseURL,
-		grpc:           grpc,
 		claims:         claims,
-		subdomains:     subs,
-		bucketPool:     bp,
+		bucket:         bp,
 		clickHouse:     ch,
 		cfg:            cfg,
 		ah:             ah,
@@ -137,15 +112,6 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 	)
 }
 
-func isAllowed(r *http.Request) bool {
-	for _, v := range allowList {
-		if strings.HasSuffix(r.URL.Path, v) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
@@ -154,11 +120,11 @@ func (s *Web) getIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry, originalPath string, newPath string) {
+func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry) {
 	wi := NewResponseWrtierInterceptor(w)
 	w = wi
 	apiKey := r.URL.Query().Get("api-key")
-	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "" || isAllowed(r)) {
+	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "") {
 		token, err := s.claims.Set(apiKey, StandardClaims{})
 		if err != nil {
 			logger.WithError(err).Errorf("failed to set claims")
@@ -173,7 +139,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 		logger.Infof("got allowed request %v", r.URL.Path)
 	}
-	claims, cl, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
+	claims, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
 		logger.WithError(err).Warnf("failed to get claims")
 		w.WriteHeader(http.StatusForbidden)
@@ -197,14 +163,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}
 
 	ads := false
-	invoke := true
-	if r.URL.Query().Get("invoke") == "false" {
-		invoke = false
-	}
-	clientName := "default"
-	if cl != nil {
-		clientName = cl.Name
-	}
+
 	role := "nobody"
 	if r, ok := claims["role"].(string); ok {
 		role = r
@@ -228,7 +187,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			err := s.clickHouse.Add(&StatRecord{
 				ApiKey:        apiKey,
 				BytesWritten:  uint64(wi.bytesWritten),
-				Client:        clientName,
 				Domain:        domain,
 				Duration:      uint64(time.Since(wi.start).Milliseconds()),
 				Edge:          src.GetEdgeName(),
@@ -255,7 +213,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Dec()
 		promHTTPProxyRequestTotal.WithLabelValues(string(source), src.GetEdgeName(), src.InfoHash, strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		promHTTPProxyRequestSize.WithLabelValues(
-			clientName,
 			domain,
 			role,
 			string(source),
@@ -266,7 +223,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		).Add(float64(wi.bytesWritten))
 		rate, _ := claims["rate"].(string)
 		l := logger.WithFields(logrus.Fields{
-			"client":     clientName,
 			"domain":     domain,
 			"role":       role,
 			"source":     string(source),
@@ -298,7 +254,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Full-Path":   "/" + src.InfoHash + "/" + url.PathEscape(strings.TrimPrefix(src.Path, "/")),
 		"X-Token":       src.Token,
 		"X-Api-Key":     apiKey,
-		"X-Client":      clientName,
 		"X-Session-ID":  sessionID,
 	}
 
@@ -316,7 +271,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}
 
 	if s.bandwidthLimit && source == External {
-		b, err := s.bucketPool.Get(claims)
+		b, err := s.bucket.Get(claims)
 		if err != nil {
 			logger.WithError(err).Errorf("failed to get bucket")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -331,7 +286,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		r.Header.Set(k, v)
 	}
 
-	pr, err := s.pr.Get(r.Context(), src, logger, invoke, cl)
+	pr, err := s.pr.Get(r.Context(), src, logger)
 
 	if err != nil {
 		logger.WithError(err).Errorf("failed to get proxy")
@@ -372,48 +327,7 @@ func (s *Web) Serve() error {
 		_, _ = fmt.Fprintf(w, "Current ip:\t%v\n", ip.String())
 		_, _ = fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
 	})
-	mux.HandleFunc("/subdomains.json", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.URL.Query().Get("api-key")
-		_, _, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
-		if err != nil {
-			logrus.WithError(err).Errorf("failed to get claims")
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		pool := r.URL.Query().Get("pool")
-		pools := strings.Split(pool, ",")
-		if len(pools) == 0 {
-			pools = []string{"worker"}
-		}
-		if len(pools) == 1 && pools[0] == "any" {
-			pools = []string{}
-		}
-		sc, subs, err := s.subdomains.Get(
-			r.URL.Query().Get("infohash"),
-			r.URL.Query().Get("skip-active-job-search") == "true",
-			r.URL.Query().Get("use-cpu") == "true",
-			r.URL.Query().Get("use-bandwidth") == "true",
-			pools,
-		)
-		if err != nil {
-			logrus.WithError(err).Error("failed to get subdomains")
-			w.WriteHeader(500)
-			return
-		}
-		jsonData, err := json.Marshal(subs)
-		if err != nil {
-			logrus.WithError(err).Error("failed to marshal subdomains")
-			w.WriteHeader(500)
-			return
-		}
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("debug") == "true" {
-			_, _ = w.Write([]byte(fmt.Sprintf("%+v", sc)))
-		} else {
-			_, _ = w.Write(jsonData)
-		}
-	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" ||
 			strings.HasPrefix(r.URL.Path, "/favicon") ||
@@ -441,22 +355,7 @@ func (s *Web) Serve() error {
 			"Path":     src.Path,
 		})
 
-		// if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		// if f, ok := w.(http.Flusher); ok {
-		// 	f.Flush()
-		// }
-		// w.Header().Set("Access-Control-Allow-Credentials", "true")
-		// }
-
-		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Download-Id, User-Id, Token, X-Grpc-Web, Api-Key, Range")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT")
-			w.Header().Set("Access-Control-Max-Age", "600")
-			return
-		}
-
-		originalPath := r.URL.Path
 
 		newPath := ""
 
@@ -467,35 +366,12 @@ func (s *Web) Serve() error {
 		}
 		r.URL.Path = newPath
 
-		ws, err := s.grpc.Get(src, logger)
-
-		if err != nil {
-			logger.WithError(err).Error("failed to get GRPC proxy")
-			w.WriteHeader(500)
-			return
-		}
-
-		if ws != nil {
-			if ws.IsGrpcWebRequest(r) {
-				logger.Info("handling GRPC Web Request")
-				ws.HandleGrpcWebRequest(w, r)
-				return
-			}
-			if ws.IsGrpcWebSocketRequest(r) {
-				logger.Info("handling GRPC WebSocket Request")
-				ws.HandleGrpcWebsocketRequest(w, r)
-				return
-			}
-		}
-
-		s.proxyHTTP(w, r, src, logger, originalPath, newPath)
+		s.proxyHTTP(w, r, src, logger)
 
 	})
 	logrus.Infof("serving Web at %v", addr)
 	srv := &http.Server{
-		Handler: mux,
-		// ReadTimeout:    5 * time.Minute,
-		// WriteTimeout:   5 * time.Minute,
+		Handler:        mux,
 		MaxHeaderBytes: 50 << 20,
 	}
 	return srv.Serve(ln)

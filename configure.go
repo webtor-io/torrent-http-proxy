@@ -9,105 +9,74 @@ import (
 
 func configure(app *cli.App) {
 	app.Flags = []cli.Flag{}
-	app.Flags = cs.RegisterRedisClientFlags(app.Flags)
 	app.Flags = cs.RegisterProbeFlags(app.Flags)
 	app.Flags = cs.RegisterPromFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
 	app.Flags = s.RegisterWebFlags(app.Flags)
-	app.Flags = s.RegisterGRPCFlags(app.Flags)
-	app.Flags = s.RegisterJobFlags(app.Flags)
-	app.Flags = s.RegisterConnectionConfigFlags(app.Flags)
-	app.Flags = s.RegisterNodesStatFlags(app.Flags)
-	app.Flags = s.RegisterPromClientFlags(app.Flags)
-	app.Flags = s.RegisterSubdomainsFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
 	app.Flags = s.RegisterCommonFlags(app.Flags)
 	app.Flags = s.RegisterEndpointsFlags(app.Flags)
-	app.Flags = s.RegisterGRPCProxyFlags(app.Flags)
 	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
+	app.Flags = s.RegisterAPIFlags(app.Flags)
+	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
 
 	app.Action = run
 }
 
 func run(c *cli.Context) error {
-
-	// Setting Clients
-	clients, err := s.NewClients()
-
-	if err != nil {
-		log.WithError(err).Error("got clients error")
-		return err
-	}
-
-	// Setting Base URL
-	baseURL := s.GetBaseURL()
+	var servers []cs.Servable
 
 	// Setting Config
-	config := s.NewConnectionsConfig(c)
+	config, err := s.LoadServicesConfigFromYAML(c)
+
+	if err != nil {
+		return err
+	}
 
 	// Setting URL Parser
 	urlParser := s.NewURLParser(config)
 
-	// Setting Bucket Pool
-	bucketPool := s.NewBucketPool()
+	// Setting Bucket
+	bucket := s.NewBucket()
 
 	// Setting Kubernetes client
 	k8sClient := s.NewK8SClient()
 
-	// Setting Prometheus client
-	promClient := s.NewPromClient(c)
+	// Setting K8SEndpoints
+	endpointsPool := s.NewEndpoints(c, k8sClient)
 
-	// Setting Redis client
-	redisClient := cs.NewRedisClient(c)
-	defer redisClient.Close()
-
-	// Setting Locker
-	locker := s.NewLocker(redisClient)
-
-	// Setting JobLocationPool
-	jobLocPool := s.NewJobLocationPool(c, k8sClient, locker)
-
-	// Setting EndpointsPool
-	endpointsPool := s.NewEndpointsPool(c, k8sClient)
-
-	// Setting ServiceLocationPool
+	// Setting ServiceLocation
 	svcLocPool := s.NewServiceLocationPool(c, endpointsPool)
 
 	// Setting Resolver
-	resolver := s.NewResolver(baseURL, config, svcLocPool, jobLocPool)
+	resolver := s.NewResolver(config, svcLocPool)
 
 	// Setting Probe
 	probe := cs.NewProbe(c)
-	defer probe.Close()
+	if probe != nil {
+		servers = append(servers, probe)
+		defer probe.Close()
+	}
 
 	// Setting Prom
 	prom := cs.NewProm(c)
-	defer prom.Close()
+	if prom != nil {
+		servers = append(servers, prom)
+	}
 
 	// Setting Pprof
 	pprof := cs.NewPprof(c)
-	defer prom.Close()
-
-	// Setting HTTP Proxy Pool
-	httpProxyPool := s.NewHTTPProxyPool(c, resolver)
-
-	// Setting Claims
-	claims := s.NewClaims(clients)
-
-	if err != nil {
-		log.WithError(err).Error("got claim error")
-		return err
+	if pprof != nil {
+		servers = append(servers, pprof)
+		defer prom.Close()
 	}
 
-	// Setting GRPC Proxy Pool
-	grpcProxyPool := s.NewHTTPGRPCProxyPool(c, baseURL, claims, resolver)
+	// Setting HTTP Proxy Pool
+	httpProxy := s.NewHTTPProxy(c, resolver)
 
-	// Setting NodesStat Pool
-	nodesStatPool := s.NewNodesStatPool(c, promClient, k8sClient)
-
-	// Setting Subdomains Pool
-	subdomainsPool := s.NewSubdomainsPool(c, k8sClient, nodesStatPool)
+	// Setting Claims
+	claims := s.NewClaims(c)
 
 	var clickHouse *s.ClickHouse
 
@@ -127,19 +96,13 @@ func run(c *cli.Context) error {
 	accessHistory := s.NewAccessHistory()
 
 	// Setting WebService
-	web := s.NewWeb(c, baseURL, urlParser, resolver, httpProxyPool, grpcProxyPool, claims, subdomainsPool,
-		bucketPool, clickHouse, config, accessHistory)
+	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
+		bucket, clickHouse, config, accessHistory)
+	servers = append(servers, web)
 	defer web.Close()
 
-	// Setting GRPC Proxy
-	grpcProxy := s.NewGRPCProxy(c, baseURL, claims, resolver, nil, urlParser, log.WithFields(log.Fields{}))
-
-	// Setting GRPC Server
-	grpcServer := s.NewGRPCServer(c, grpcProxy)
-	defer grpcServer.Close()
-
 	// Setting ServeService
-	serve := cs.NewServe(probe, web, grpcServer, prom, pprof)
+	serve := cs.NewServe(servers...)
 
 	// And SERVE!
 	err = serve.Serve()

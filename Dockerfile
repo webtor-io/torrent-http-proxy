@@ -29,7 +29,7 @@ COPY --from=build /app/server .
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # tell we are exposing our services
-EXPOSE 8080 8081 8082 8083 50051
+EXPOSE 8080 8081 8082 8083
 
 # run it!
 CMD ["./server"]

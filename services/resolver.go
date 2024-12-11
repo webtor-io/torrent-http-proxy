@@ -11,7 +11,6 @@ import (
 )
 
 type Ports struct {
-	GRPC  int
 	HTTP  int
 	Probe int
 }
@@ -20,79 +19,25 @@ type Location struct {
 	Ports
 	IP          net.IP
 	Unavailable bool
-	Expire      chan bool
 }
 
 type Resolver struct {
-	cfg        *ConnectionsConfig
-	svcLocPool *ServiceLocationPool
-	jobLocPool *JobLocationPool
-	baseURL    string
+	cfg    *ServicesConfig
+	svcLoc *ServiceLocation
 }
 
-type InitParams struct {
-	InfoHash       string
-	OriginPath     string
-	SourceURL      string
-	Path           string
-	Extra          string
-	RunIfNotExists bool
-}
-
-type Init struct {
-	InitParams       *InitParams
-	ConnectionConfig *ConnectionConfig
-}
-
-func NewResolver(baseURL string, cfg *ConnectionsConfig, svcLocPool *ServiceLocationPool, jobLocPool *JobLocationPool) *Resolver {
+func NewResolver(cfg *ServicesConfig, svcLoc *ServiceLocation) *Resolver {
 	return &Resolver{
-		cfg:        cfg,
-		svcLocPool: svcLocPool,
-		jobLocPool: jobLocPool,
-		baseURL:    baseURL,
+		cfg:    cfg,
+		svcLoc: svcLoc,
 	}
 }
 
-func (s *Resolver) getInit(src *Source) *Init {
-	var init *Init
-	if src.Mod != nil {
-		init = &Init{
-			InitParams: &InitParams{
-				InfoHash:       src.InfoHash,
-				OriginPath:     src.OriginPath,
-				Path:           src.Path,
-				Extra:          src.Mod.Extra,
-				SourceURL:      s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
-				RunIfNotExists: !s.cfg.GetMod(src.Mod.Type).CheckIgnorePaths(src.Mod.Path),
-			},
-			ConnectionConfig: s.cfg.GetMod(src.Mod.Type),
-		}
-	} else {
-		init = &Init{
-			InitParams: &InitParams{
-				InfoHash:       src.InfoHash,
-				RunIfNotExists: !s.cfg.GetMod(src.Type).CheckIgnorePaths(src.Path),
-			},
-			ConnectionConfig: s.cfg.GetMod(src.Type),
-		}
-		// logrus.WithField("init", init).WithField("src", src).Info("Got job init params")
-	}
-	return init
-}
-
-func (s *Resolver) process(ctx context.Context, i *Init, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
-	if i.ConnectionConfig.ConnectionType == ConnectionTypeService {
-		return s.svcLocPool.Get(&i.ConnectionConfig.ServiceConfig, i.InitParams, purge)
-	} else {
-		return s.jobLocPool.Get(ctx, &i.ConnectionConfig.JobConfig, i.InitParams, logger, purge, invoke, cl)
-	}
-}
-
-func (s *Resolver) Resolve(ctx context.Context, src *Source, logger *logrus.Entry, purge bool, invoke bool, cl *Client) (*Location, error) {
+func (s *Resolver) Resolve(ctx context.Context, src *Source, logger *logrus.Entry, purge bool) (*Location, error) {
 	start := time.Now()
 	logger = logger.WithField("purge", purge)
-	init := s.getInit(src)
-	l, err := s.process(ctx, init, logger, purge, invoke, cl)
+
+	l, err := s.svcLoc.Get(ctx, s.cfg.GetMod(src.GetEdgeType()), src, purge)
 	logger = logger.WithField("duration", time.Since(start).Milliseconds())
 	if err != nil {
 		logger.WithError(err).Error("failed to resolve location")

@@ -3,10 +3,6 @@ package services
 import "github.com/urfave/cli"
 
 const (
-	k8SLabelPrefix = "webtor.io/"
-)
-
-const (
 	myNodeNameFlag = "my-node-name"
 )
 

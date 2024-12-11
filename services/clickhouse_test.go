@@ -32,7 +32,7 @@ func TestClickHouse(t *testing.T) {
 		mock.ExpectBegin()
 		stmt := mock.ExpectPrepare("INSERT INTO")
 		for i := 0; i < 1000; i++ {
-			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
 				r.Role, 0,
@@ -42,7 +42,7 @@ func TestClickHouse(t *testing.T) {
 		mock.ExpectBegin()
 		stmt = mock.ExpectPrepare("INSERT INTO")
 		for i := 0; i < 1000; i++ {
-			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
 				r.Role, 0,
@@ -52,7 +52,7 @@ func TestClickHouse(t *testing.T) {
 		mock.ExpectBegin()
 		stmt = mock.ExpectPrepare("INSERT INTO")
 		for i := 0; i < 100; i++ {
-			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, r.TTFB,
+			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
 				r.Role, 0,

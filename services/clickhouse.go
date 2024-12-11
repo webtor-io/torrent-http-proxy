@@ -55,7 +55,6 @@ type ClickHouse struct {
 type StatRecord struct {
 	Timestamp     time.Time
 	ApiKey        string
-	Client        string
 	BytesWritten  uint64
 	TTFB          uint64
 	Duration      uint64
@@ -99,7 +98,6 @@ func (s *ClickHouse) makeTable(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS %v (
 			timestamp      DateTime,
 			api_key        String,
-			client         String,
 			bytes_written  UInt64,
 			ttfb           UInt32,
 			duration       UInt32,
@@ -164,9 +162,9 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 	if s.replicated {
 		table += "_all"
 	}
-	stmt, err := tx.Prepare(fmt.Sprintf(`INSERT INTO %v (timestamp, api_key, client, bytes_written, ttfb,
+	stmt, err := tx.Prepare(fmt.Sprintf(`INSERT INTO %v (timestamp, api_key, bytes_written, ttfb,
 		duration, path, infohash, original_path, session_id, domain, status, grouped_status, edge,
-		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table))
+		source, role, ads, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table))
 	if err != nil {
 		return errors.Wrapf(err, "failed to prepare")
 	}
@@ -179,7 +177,7 @@ func (s *ClickHouse) store(sr []*StatRecord) error {
 			adsUInt = 1
 		}
 		_, err = stmt.Exec(
-			r.Timestamp, r.ApiKey, r.Client, r.BytesWritten, uint32(r.TTFB),
+			r.Timestamp, r.ApiKey, r.BytesWritten, uint32(r.TTFB),
 			uint32(r.Duration), r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 			r.Domain, uint16(r.Status), uint16(r.GroupedStatus), r.Edge, r.Source,
 			r.Role, adsUInt, s.nodeName,

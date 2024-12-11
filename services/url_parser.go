@@ -117,10 +117,10 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 }
 
 type URLParser struct {
-	configs *ConnectionsConfig
+	configs *ServicesConfig
 }
 
-func NewURLParser(c *ConnectionsConfig) *URLParser {
+func NewURLParser(c *ServicesConfig) *URLParser {
 	return &URLParser{
 		configs: c,
 	}
