@@ -40,9 +40,11 @@ type Web struct {
 }
 
 const (
-	webHostFlag           = "host"
-	webPortFlag           = "port"
-	useBandwidthLimitFlag = "use-bandwidth-limit"
+	webHostFlag              = "host"
+	webPortFlag              = "port"
+	torrentHTTPProxyHostFlag = "torrent-http-proxy-host"
+	torrentHTTPProxyPortFlag = "torrent-http-proxy-port"
+	useBandwidthLimitFlag    = "use-bandwidth-limit"
 )
 
 var (
@@ -80,6 +82,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
+		baseURL:        fmt.Sprintf("http://%s:%d", c.String(torrentHTTPProxyHostFlag), c.Int(torrentHTTPProxyPortFlag)),
 		parser:         parser,
 		r:              r,
 		pr:             pr,
@@ -103,6 +106,17 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 			Name:  webPortFlag,
 			Usage: "http listening port",
 			Value: 8080,
+		},
+		cli.StringFlag{
+			Name:   torrentHTTPProxyHostFlag,
+			Usage:  "torrent http proxy host",
+			EnvVar: "TORRENT_HTTP_PROXY_SERVICE_HOST",
+		},
+		cli.IntFlag{
+			Name:   torrentHTTPProxyPortFlag,
+			Usage:  "torrent http proxy port",
+			Value:  8080,
+			EnvVar: "TORRENT_HTTP_PROXY_SERVICE_PORT",
 		},
 		cli.BoolFlag{
 			Name:   useBandwidthLimitFlag,
