@@ -45,24 +45,6 @@ func NewClaims(c *cli.Context) *Claims {
 	}
 }
 
-func (s *Claims) Set(apiKey string, claims jwt.Claims) (string, error) {
-
-	if s.apiKey == "" && s.apiSecret == "" {
-		return "", nil
-	}
-
-	if s.apiKey != apiKey {
-		return "", errors.New("wrong api key")
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(s.apiSecret))
-
-	if err != nil {
-		return "", errors.Wrapf(err, "auth token generation failed")
-	}
-	return tokenString, nil
-}
-
 func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, error) {
 
 	if s.apiKey == "" && s.apiSecret == "" {

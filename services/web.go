@@ -124,21 +124,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	wi := NewResponseWrtierInterceptor(w)
 	w = wi
 	apiKey := r.URL.Query().Get("api-key")
-	if r.URL.Query().Get("token") == "" && (r.Header.Get("X-FORWARDED-FOR") == "") {
-		token, err := s.claims.Set(apiKey, StandardClaims{})
-		if err != nil {
-			logger.WithError(err).Errorf("failed to set claims")
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		logger.Info(token)
-		if token != "" {
-			q, _ := url.ParseQuery(r.URL.RawQuery)
-			q.Add("token", token)
-			r.URL.RawQuery = q.Encode()
-		}
-		logger.Infof("got allowed request %v", r.URL.Path)
-	}
 	claims, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
 		logger.WithError(err).Warnf("failed to get claims")
