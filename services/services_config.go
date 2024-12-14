@@ -72,5 +72,10 @@ func LoadServicesConfigFromYAML(c *cli.Context) (*ServicesConfig, error) {
 	if err := yaml.Unmarshal(data, s); err != nil {
 		return nil, err
 	}
+	for _, cfg := range *s {
+		if cfg.Distribution == "" {
+			cfg.Distribution = Hash
+		}
+	}
 	return s, nil
 }
