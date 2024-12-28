@@ -35,7 +35,6 @@ type Web struct {
 	baseURL        string
 	claims         *Claims
 	cfg            *ServicesConfig
-	ah             *AccessHistory
 	bandwidthLimit bool
 }
 
@@ -78,7 +77,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig, ah *AccessHistory) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
@@ -90,7 +89,6 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		bucket:         bp,
 		clickHouse:     ch,
 		cfg:            cfg,
-		ah:             ah,
 		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
 	}
 }
@@ -148,17 +146,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	source := Internal
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
 		source = External
-		remoteAddress, raOK := claims["remoteAddress"].(string)
-		ua, uaOK := claims["agent"].(string)
-		if raOK && uaOK && (s.getIP(r) != remoteAddress || r.Header.Get("User-Agent") != ua) {
-			ok, left := s.ah.Store(remoteAddress, ua, s.getIP(r), r.Header.Get("User-Agent"))
-			logger.Warningf("IP or UA changed got ua=%v ip=%v x-forwarded-for=%v, expected ua=%v ip=%v, changes left=%v, access=%v",
-				r.Header.Get("User-Agent"), s.getIP(r), r.Header.Get("X-FORWARDED-FOR"), ua, remoteAddress, left, ok)
-			if !ok {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	ads := false
