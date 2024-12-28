@@ -19,7 +19,7 @@ type Bucket struct {
 func NewBucket() *Bucket {
 	return &Bucket{
 		LazyMap: lazymap.New[*ratelimit.Bucket](&lazymap.Config{
-			Expire:      30 * 60 * time.Second,
+			Expire:      60 * time.Second,
 			StoreErrors: false,
 		}),
 	}
