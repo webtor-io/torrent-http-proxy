@@ -102,7 +102,7 @@ func modifyResponse(r *http.Response) error {
 	return nil
 }
 
-func (s *HTTPProxy) dialWithRetry(ctx context.Context, src *Source, network string, tries int, delay int, logger *logrus.Entry) (conn net.Conn, err error) {
+func (s *HTTPProxy) dialWithRetry(ctx context.Context, loc *Location, src *Source, network string, tries int, delay int, logger *logrus.Entry) (conn net.Conn, err error) {
 	now := time.Now()
 	promHTTPProxyDialCurrent.WithLabelValues(src.GetEdgeName()).Inc()
 	defer func() {
@@ -110,33 +110,31 @@ func (s *HTTPProxy) dialWithRetry(ctx context.Context, src *Source, network stri
 		promHTTPProxyDialCurrent.WithLabelValues(src.GetEdgeName()).Dec()
 		promHTTPProxyDialDuration.WithLabelValues(src.GetEdgeName()).Observe(time.Since(now).Seconds())
 	}()
-	purge := false
 	for i := 0; i < tries; i++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		conn, err = s.dial(ctx, src, network, purge, logger)
+		conn, err = s.dial(ctx, loc, network, logger)
 		if err != nil {
-			purge = true
 			time.Sleep(time.Duration(delay) * time.Second)
+			loc, err = s.r.Resolve(ctx, src, logger, true)
+			if err != nil {
+				logger.WithError(err).Error("failed to get location")
+				return nil, err
+			}
 		} else {
 			break
 		}
 	}
-	if err != nil {
+	if conn == nil {
 		logger.WithError(err).Error("failed to dial")
 		promHTTPProxyDialErrors.WithLabelValues(src.GetEdgeName()).Inc()
 	}
 	return
 }
 
-func (s *HTTPProxy) dial(ctx context.Context, src *Source, network string, purge bool, logger *logrus.Entry) (net.Conn, error) {
+func (s *HTTPProxy) dial(ctx context.Context, loc *Location, network string, logger *logrus.Entry) (net.Conn, error) {
 	logger.Info("dialing proxy backend")
-	loc, err := s.r.Resolve(ctx, src, logger, purge)
-	if err != nil {
-		logger.WithError(err).Error("failed to get location")
-		return nil, err
-	}
 	addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
 	conn, err := (&net.Dialer{
 		Timeout:   1 * time.Minute,
@@ -167,23 +165,18 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	}, nil
 }
 
-func (s *HTTPProxy) get(ctx context.Context, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	loc, err := s.r.Resolve(ctx, src, logger, false)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get location")
-	}
+func (s *HTTPProxy) get(loc *Location, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
 		Scheme: "http",
 	}
-
 	var t http.RoundTripper
 	if loc.Unavailable {
 		t = &stubTransport{http.DefaultTransport}
 	} else {
 		t = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return s.dialWithRetry(ctx, src, network, s.tries, s.delay, logger)
+				return s.dialWithRetry(ctx, loc, src, network, s.tries, s.delay, logger)
 			},
 			MaxIdleConns:        500,
 			MaxIdleConnsPerHost: 500,
@@ -199,8 +192,11 @@ func (s *HTTPProxy) get(ctx context.Context, src *Source, logger *logrus.Entry) 
 }
 
 func (s *HTTPProxy) Get(ctx context.Context, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	key := src.GetEdgeType() + src.InfoHash
-	return s.LazyMap.Get(key, func() (*httputil.ReverseProxy, error) {
-		return s.get(ctx, src, logger)
+	loc, err := s.r.Resolve(ctx, src, logger, false)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get location")
+	}
+	return s.LazyMap.Get(loc.IP.String(), func() (*httputil.ReverseProxy, error) {
+		return s.get(loc, src, logger)
 	})
 }
