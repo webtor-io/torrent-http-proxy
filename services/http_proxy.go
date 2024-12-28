@@ -199,7 +199,8 @@ func (s *HTTPProxy) get(ctx context.Context, src *Source, logger *logrus.Entry) 
 }
 
 func (s *HTTPProxy) Get(ctx context.Context, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	return s.LazyMap.Get(src.GetKey(), func() (*httputil.ReverseProxy, error) {
+	key := src.GetEdgeType() + src.InfoHash
+	return s.LazyMap.Get(key, func() (*httputil.ReverseProxy, error) {
 		return s.get(ctx, src, logger)
 	})
 }
