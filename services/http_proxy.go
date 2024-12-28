@@ -196,7 +196,7 @@ func (s *HTTPProxy) Get(ctx context.Context, src *Source, logger *logrus.Entry) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get location")
 	}
-	return s.LazyMap.Get(loc.IP.String(), func() (*httputil.ReverseProxy, error) {
+	return s.LazyMap.Get(fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP), func() (*httputil.ReverseProxy, error) {
 		return s.get(loc, src, logger)
 	})
 }
