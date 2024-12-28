@@ -92,9 +92,12 @@ func run(c *cli.Context) error {
 		}
 	}
 
+	// Setting AccessHistory
+	accessHistory := s.NewAccessHistory()
+
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
-		bucket, clickHouse, config)
+		bucket, clickHouse, config, accessHistory)
 	servers = append(servers, web)
 	defer web.Close()
 

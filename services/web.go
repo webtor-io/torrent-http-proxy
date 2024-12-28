@@ -35,6 +35,7 @@ type Web struct {
 	baseURL        string
 	claims         *Claims
 	cfg            *ServicesConfig
+	ah             *AccessHistory
 	bandwidthLimit bool
 }
 
@@ -77,7 +78,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig, ah *AccessHistory) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
@@ -89,6 +90,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		bucket:         bp,
 		clickHouse:     ch,
 		cfg:            cfg,
+		ah:             ah,
 		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
 	}
 }
