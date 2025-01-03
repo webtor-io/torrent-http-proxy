@@ -17,7 +17,6 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
 	app.Flags = s.RegisterCommonFlags(app.Flags)
 	app.Flags = s.RegisterEndpointsFlags(app.Flags)
-	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
 	app.Flags = s.RegisterAPIFlags(app.Flags)
 	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
 
@@ -73,7 +72,7 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting HTTP Proxy Pool
-	httpProxy := s.NewHTTPProxy(c, resolver)
+	httpProxy := s.NewHTTPProxy(resolver)
 
 	// Setting Claims
 	claims := s.NewClaims(c)

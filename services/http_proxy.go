@@ -4,81 +4,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/urfave/cli"
 	"github.com/webtor-io/lazymap"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/sirupsen/logrus"
 )
 
-const (
-	httpProxyRedialTriesFlag = "http-proxy-redial-tries"
-	httpProxyRedialDelayFlag = "http-proxy-redial-delay"
-)
-
-func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
-	return append(f,
-		cli.IntFlag{
-			Name:   httpProxyRedialTriesFlag,
-			Usage:  "HTTP proxy redial tries",
-			Value:  2,
-			EnvVar: "HTTP_PROXY_REDIAL_TRIES",
-		},
-		cli.IntFlag{
-			Name:   httpProxyRedialDelayFlag,
-			Usage:  "HTTP proxy redial delay (sec)",
-			Value:  1,
-			EnvVar: "HTTP_PROXY_REDIAL_DELAY",
-		},
-	)
-}
-
-var (
-	promHTTPProxyDialDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "webtor_http_proxy_dial_duration_seconds",
-		Help: "HTTP Proxy dial duration in seconds",
-	}, []string{"name"})
-	promHTTPProxyDialCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "webtor_http_proxy_dial_current",
-		Help: "HTTP Proxy dial current",
-	}, []string{"name"})
-	promHTTPProxyDialTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "webtor_http_proxy_dial_total",
-		Help: "HTTP Proxy dial total",
-	}, []string{"name"})
-	promHTTPProxyDialErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "webtor_http_proxy_dial_errors",
-		Help: "HTTP Proxy dial errors",
-	}, []string{"name"})
-)
-
-func init() {
-	prometheus.MustRegister(promHTTPProxyDialDuration)
-	prometheus.MustRegister(promHTTPProxyDialCurrent)
-	prometheus.MustRegister(promHTTPProxyDialTotal)
-	prometheus.MustRegister(promHTTPProxyDialErrors)
-}
-
 type HTTPProxy struct {
 	lazymap.LazyMap[*httputil.ReverseProxy]
-	r     *Resolver
-	tries int
-	delay int
+	r *Resolver
 }
 
-func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
+func NewHTTPProxy(r *Resolver) *HTTPProxy {
 	return &HTTPProxy{
-		r:     r,
-		tries: c.Int(httpProxyRedialTriesFlag),
-		delay: c.Int(httpProxyRedialDelayFlag),
+		r: r,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire:      600 * time.Second,
 			StoreErrors: false,
@@ -102,51 +46,6 @@ func modifyResponse(r *http.Response) error {
 	return nil
 }
 
-func (s *HTTPProxy) dialWithRetry(ctx context.Context, loc *Location, src *Source, network string, tries int, delay int, logger *logrus.Entry) (conn net.Conn, err error) {
-	now := time.Now()
-	promHTTPProxyDialCurrent.WithLabelValues(src.GetEdgeName()).Inc()
-	defer func() {
-		promHTTPProxyDialTotal.WithLabelValues(src.GetEdgeName()).Inc()
-		promHTTPProxyDialCurrent.WithLabelValues(src.GetEdgeName()).Dec()
-		promHTTPProxyDialDuration.WithLabelValues(src.GetEdgeName()).Observe(time.Since(now).Seconds())
-	}()
-	for i := 0; i < tries; i++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		conn, err = s.dial(ctx, loc, network, logger)
-		if err != nil {
-			time.Sleep(time.Duration(delay) * time.Second)
-			loc, err = s.r.Resolve(ctx, src, logger, true)
-			if err != nil {
-				logger.WithError(err).Error("failed to get location")
-				return nil, err
-			}
-		} else {
-			break
-		}
-	}
-	if conn == nil {
-		logger.WithError(err).Error("failed to dial")
-		promHTTPProxyDialErrors.WithLabelValues(src.GetEdgeName()).Inc()
-	}
-	return
-}
-
-func (s *HTTPProxy) dial(ctx context.Context, loc *Location, network string, logger *logrus.Entry) (net.Conn, error) {
-	logger.Info("dialing proxy backend")
-	addr := fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP)
-	conn, err := (&net.Dialer{
-		Timeout:   1 * time.Minute,
-		KeepAlive: 1 * time.Minute,
-	}).DialContext(ctx, network, addr)
-	if err != nil {
-		logger.WithError(err).Warnf("failed to dial")
-		return nil, err
-	}
-	return conn, nil
-}
-
 type stubTransport struct {
 	http.RoundTripper
 }
@@ -165,7 +64,7 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	}, nil
 }
 
-func (s *HTTPProxy) get(loc *Location, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
+func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
 		Scheme: "http",
@@ -175,9 +74,6 @@ func (s *HTTPProxy) get(loc *Location, src *Source, logger *logrus.Entry) (*http
 		t = &stubTransport{http.DefaultTransport}
 	} else {
 		t = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return s.dialWithRetry(ctx, loc, src, network, s.tries, s.delay, logger)
-			},
 			MaxIdleConns:        500,
 			MaxIdleConnsPerHost: 500,
 			MaxConnsPerHost:     500,
@@ -197,6 +93,6 @@ func (s *HTTPProxy) Get(ctx context.Context, src *Source, logger *logrus.Entry) 
 		return nil, errors.Wrap(err, "failed to get location")
 	}
 	return s.LazyMap.Get(fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP), func() (*httputil.ReverseProxy, error) {
-		return s.get(loc, src, logger)
+		return s.get(loc)
 	})
 }
