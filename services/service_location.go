@@ -30,24 +30,21 @@ func NewServiceLocationPool(c *cli.Context, ep *K8SEndpoints) *ServiceLocation {
 		ep: ep,
 		nn: c.String(myNodeNameFlag),
 		LazyMap: lazymap.New[*Location](&lazymap.Config{
-			Expire:      60 * time.Second,
-			StoreErrors: false,
+			Expire:      15 * time.Second,
+			ErrorExpire: 5 * time.Second,
 		}),
 	}
 }
 
-func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source, purge bool) (*Location, error) {
+func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source) (*Location, error) {
 	key := cfg.Name + src.InfoHash
-	if purge {
-		s.LazyMap.Drop(key)
-	}
 	return s.LazyMap.Get(key, func() (*Location, error) {
-		return s.get(ctx, cfg, src, purge)
+		return s.get(ctx, cfg, src)
 	})
 }
 
-func (s *ServiceLocation) get(ctx context.Context, cfg *ServiceConfig, src *Source, purge bool) (*Location, error) {
-	endpoints, err := s.ep.Get(ctx, cfg.Name, purge)
+func (s *ServiceLocation) get(ctx context.Context, cfg *ServiceConfig, src *Source) (*Location, error) {
+	endpoints, err := s.ep.Get(ctx, cfg.Name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get endpoints")
 	}

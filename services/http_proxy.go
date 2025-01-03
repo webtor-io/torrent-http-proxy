@@ -25,7 +25,7 @@ func NewHTTPProxy(r *Resolver) *HTTPProxy {
 		r: r,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire:      600 * time.Second,
-			StoreErrors: false,
+			ErrorExpire: 5 * time.Second,
 		}),
 	}
 }
@@ -88,7 +88,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 }
 
 func (s *HTTPProxy) Get(ctx context.Context, src *Source, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	loc, err := s.r.Resolve(ctx, src, logger, false)
+	loc, err := s.r.Resolve(ctx, src, logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get location")
 	}

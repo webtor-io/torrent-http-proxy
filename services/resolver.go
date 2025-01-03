@@ -33,11 +33,10 @@ func NewResolver(cfg *ServicesConfig, svcLoc *ServiceLocation) *Resolver {
 	}
 }
 
-func (s *Resolver) Resolve(ctx context.Context, src *Source, logger *logrus.Entry, purge bool) (*Location, error) {
+func (s *Resolver) Resolve(ctx context.Context, src *Source, logger *logrus.Entry) (*Location, error) {
 	start := time.Now()
-	logger = logger.WithField("purge", purge)
 
-	l, err := s.svcLoc.Get(ctx, s.cfg.GetMod(src.GetEdgeType()), src, purge)
+	l, err := s.svcLoc.Get(ctx, s.cfg.GetMod(src.GetEdgeType()), src)
 	logger = logger.WithField("duration", time.Since(start).Milliseconds())
 	if err != nil {
 		logger.WithError(err).Error("failed to resolve location")

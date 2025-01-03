@@ -37,16 +37,13 @@ func NewEndpoints(c *cli.Context, cl *K8SClient) *K8SEndpoints {
 		cl:        cl,
 		namespace: c.String(endpointsNamespaceFlag),
 		LazyMap: lazymap.New[*corev1.Endpoints](&lazymap.Config{
-			Expire:      30 * time.Second,
-			StoreErrors: false,
+			Expire:      15 * time.Second,
+			ErrorExpire: 5 * time.Second,
 		}),
 	}
 }
 
-func (s *K8SEndpoints) Get(ctx context.Context, name string, purge bool) (*corev1.Endpoints, error) {
-	if purge {
-		s.LazyMap.Drop(name)
-	}
+func (s *K8SEndpoints) Get(ctx context.Context, name string) (*corev1.Endpoints, error) {
 	return s.LazyMap.Get(name, func() (*corev1.Endpoints, error) {
 		cl, err := s.cl.Get()
 		if err != nil {
