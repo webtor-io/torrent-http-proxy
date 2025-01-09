@@ -21,7 +21,7 @@ type K8SClient struct {
 }
 
 func NewK8SClient() *K8SClient {
-	return &K8SClient{inited: false}
+	return &K8SClient{}
 }
 
 func (s *K8SClient) get() (*kubernetes.Clientset, error) {

@@ -18,6 +18,13 @@ const (
 	NodeHash Distribution = "NodeHash"
 )
 
+type EndpointsProvider string
+
+const (
+	Kubernetes  EndpointsProvider = "Kubernetes"
+	Environment EndpointsProvider = "Environment"
+)
+
 func RegisterServicesConfigFlags(flags []cli.Flag) []cli.Flag {
 	return append(flags, &cli.StringFlag{
 		Name:     configFlag,
@@ -28,10 +35,11 @@ func RegisterServicesConfigFlags(flags []cli.Flag) []cli.Flag {
 }
 
 type ServiceConfig struct {
-	Name            string            `yaml:"name"`
-	Distribution    Distribution      `yaml:"distribution"`
-	PreferLocalNode bool              `yaml:"preferLocalNode"`
-	Headers         map[string]string `yaml:"headers"`
+	Name              string            `yaml:"name"`
+	Distribution      Distribution      `yaml:"distribution"`
+	EndpointsProvider EndpointsProvider `yaml:"endpointsProvider"`
+	PreferLocalNode   bool              `yaml:"preferLocalNode"`
+	Headers           map[string]string `yaml:"headers"`
 }
 
 type ServicesConfig map[string]*ServiceConfig
@@ -75,6 +83,9 @@ func LoadServicesConfigFromYAML(c *cli.Context) (*ServicesConfig, error) {
 	for _, cfg := range *s {
 		if cfg.Distribution == "" {
 			cfg.Distribution = Hash
+		}
+		if cfg.EndpointsProvider == "" {
+			cfg.EndpointsProvider = Kubernetes
 		}
 	}
 	return s, nil
