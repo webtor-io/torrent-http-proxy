@@ -171,6 +171,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		sessionID = sid
 	}
 
+	sourceURL := s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query
+
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Inc()
 	defer func() {
 		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {
@@ -225,6 +227,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"rate":       rate,
 			"session_id": sessionID,
 			"referer":    r.Referer(),
+			"source_url": sourceURL,
 		})
 		if wi.GroupedStatusCode() == 500 {
 			l.Error("failed to serve request")
@@ -236,7 +239,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}()
 
 	headers := map[string]string{
-		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
+		"X-Source-Url":  sourceURL,
 		"X-Proxy-Url":   s.baseURL,
 		"X-Info-Hash":   src.InfoHash,
 		"X-Path":        src.Path,
