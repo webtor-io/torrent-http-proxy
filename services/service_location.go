@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/webtor-io/lazymap"
 	corev1 "k8s.io/api/core/v1"
@@ -21,16 +22,18 @@ var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
 	lazymap.LazyMap[*Location]
-	ep *K8SEndpoints
-	c  *cli.Context
-	nn string
+	ep    *K8SEndpoints
+	nodes *NodesStat
+	c     *cli.Context
+	nn    string
 }
 
-func NewServiceLocationPool(c *cli.Context, ep *K8SEndpoints) *ServiceLocation {
+func NewServiceLocationPool(c *cli.Context, nodes *NodesStat, ep *K8SEndpoints) *ServiceLocation {
 	return &ServiceLocation{
-		c:  c,
-		ep: ep,
-		nn: c.String(myNodeNameFlag),
+		c:     c,
+		ep:    ep,
+		nodes: nodes,
+		nn:    c.String(myNodeNameFlag),
 		LazyMap: lazymap.New[*Location](&lazymap.Config{
 			Expire:      15 * time.Second,
 			ErrorExpire: 5 * time.Second,
@@ -38,11 +41,11 @@ func NewServiceLocationPool(c *cli.Context, ep *K8SEndpoints) *ServiceLocation {
 	}
 }
 
-func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source) (*Location, error) {
+func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	key := cfg.Name + src.InfoHash
 	return s.LazyMap.Get(key, func() (*Location, error) {
 		if cfg.EndpointsProvider == Kubernetes {
-			return s.getKubernetes(ctx, cfg, src)
+			return s.getKubernetes(ctx, cfg, src, claims)
 		} else if cfg.EndpointsProvider == Environment {
 			return s.getEnvironment(cfg)
 		} else {
@@ -51,7 +54,7 @@ func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Sour
 	})
 }
 
-func (s *ServiceLocation) getKubernetes(ctx context.Context, cfg *ServiceConfig, src *Source) (*Location, error) {
+func (s *ServiceLocation) getKubernetes(ctx context.Context, cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	endpoints, err := s.ep.Get(ctx, cfg.Name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get endpoints")
@@ -69,7 +72,7 @@ func (s *ServiceLocation) getKubernetes(ctx context.Context, cfg *ServiceConfig,
 	} else if cfg.Distribution == Hash {
 		a, err = s.distributeByHash(src, as)
 	} else if cfg.Distribution == NodeHash {
-		a, err = s.distributeByNodeHash(src, as)
+		a, err = s.distributeByNodeHash(ctx, src, as, claims)
 	}
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to distribute")
@@ -118,7 +121,7 @@ func (s *ServiceLocation) addressToLocation(a *corev1.EndpointAddress, sub *core
 
 func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
 	sort.Slice(as, func(i, j int) bool {
-		return as[i].IP > as[j].IP
+		return as[i].IP < as[j].IP
 	})
 	hex := src.InfoHash[0:5]
 	num64, err := strconv.ParseInt(hex, 16, 64)
@@ -136,9 +139,9 @@ func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddr
 	return nil, nil
 }
 
-func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
+func (s *ServiceLocation) distributeByNodeHash(ctx context.Context, src *Source, as []corev1.EndpointAddress, claims jwt.MapClaims) (*corev1.EndpointAddress, error) {
 	sort.Slice(as, func(i, j int) bool {
-		return as[i].IP > as[j].IP
+		return as[i].IP < as[j].IP
 	})
 	nodesM := map[string]bool{}
 	var nodes []string
@@ -149,6 +152,10 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 		nodes = append(nodes, n)
 	}
 	sort.Strings(nodes)
+	nodes, err := s.filterNodesByRole(ctx, nodes, claims)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to filter nodes by role")
+	}
 	hex := src.InfoHash[0:5]
 	num64, err := strconv.ParseInt(hex, 16, 64)
 	if err != nil {
@@ -172,6 +179,32 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 		}
 	}
 	return nil, nil
+}
+
+func (s *ServiceLocation) filterNodesByRole(ctx context.Context, nodes []string, claims jwt.MapClaims) ([]string, error) {
+	if claims == nil {
+		return nodes, nil
+	}
+	role, ok := claims["role"].(string)
+	if !ok {
+		return nodes, nil
+	}
+	if role == "" {
+		return nodes, nil
+	}
+	ns, err := s.nodes.Get(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get nodes")
+	}
+	var res []string
+	for _, n := range nodes {
+		for _, nss := range ns {
+			if n == nss.Name && nss.IsAllowed(role) {
+				res = append(res, n)
+			}
+		}
+	}
+	return res, nil
 }
 
 func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) {

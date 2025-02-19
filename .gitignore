@@ -20,3 +20,4 @@ torrent-http-proxy
 config.yaml
 config-env.yaml
 .env
+.idea

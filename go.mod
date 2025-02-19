@@ -1,6 +1,6 @@
 module github.com/webtor-io/torrent-http-proxy
 
-go 1.23.0
+go 1.23.4
 
 require (
 	code.cloudfoundry.org/bytefmt v0.25.0

@@ -229,9 +229,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		if wi.GroupedStatusCode() == 500 {
 			l.Error("failed to serve request")
 		} else if wi.GroupedStatusCode() == 200 {
-			l.Info("Request served successfully")
+			l.Info("request served successfully")
 		} else {
-			l.Warn("Bad request")
+			l.Warn("bad request")
 		}
 	}()
 
@@ -276,7 +276,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		r.Header.Set(k, v)
 	}
 
-	pr, err := s.pr.Get(r.Context(), src, logger)
+	pr, err := s.pr.Get(r.Context(), src, claims, logger)
 
 	if err != nil {
 		logger.WithError(err).Errorf("failed to get proxy")
