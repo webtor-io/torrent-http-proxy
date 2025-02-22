@@ -65,7 +65,7 @@ func NewNodesStat(c *cli.Context, kcl *K8SClient) *NodesStat {
 	return &NodesStat{
 		LazyMap: lazymap.New[[]NodeStat](&lazymap.Config{
 			Concurrency: 1,
-			Expire:      30 * time.Second,
+			Expire:      60 * time.Second,
 			ErrorExpire: 15 * time.Second,
 			Capacity:    1,
 		}),
