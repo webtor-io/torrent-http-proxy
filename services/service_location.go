@@ -35,8 +35,7 @@ func NewServiceLocationPool(c *cli.Context, nodes *NodesStat, ep *K8SEndpoints) 
 		nodes: nodes,
 		nn:    c.String(myNodeNameFlag),
 		LazyMap: lazymap.New[*Location](&lazymap.Config{
-			Expire:      15 * time.Second,
-			ErrorExpire: 5 * time.Second,
+			Expire: 15 * time.Second,
 		}),
 	}
 }
@@ -44,8 +43,10 @@ func NewServiceLocationPool(c *cli.Context, nodes *NodesStat, ep *K8SEndpoints) 
 func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	key := cfg.Name + src.InfoHash
 	return s.LazyMap.Get(key, func() (*Location, error) {
+		ctx2, cancel := context.WithTimeout(ctx, time.Second*15)
+		defer cancel()
 		if cfg.EndpointsProvider == Kubernetes {
-			return s.getKubernetes(ctx, cfg, src, claims)
+			return s.getKubernetes(ctx2, cfg, src, claims)
 		} else if cfg.EndpointsProvider == Environment {
 			return s.getEnvironment(cfg)
 		} else {

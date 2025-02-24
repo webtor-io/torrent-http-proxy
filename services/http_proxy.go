@@ -25,8 +25,7 @@ func NewHTTPProxy(r *Resolver) *HTTPProxy {
 	return &HTTPProxy{
 		r: r,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
-			Expire:      600 * time.Second,
-			ErrorExpire: 5 * time.Second,
+			Expire: 600 * time.Second,
 		}),
 	}
 }
