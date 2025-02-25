@@ -5,6 +5,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/webtor-io/lazymap"
+	"github.com/webtor-io/torrent-http-proxy/services/k8s"
 	corev1 "k8s.io/api/core/v1"
 	"math/rand"
 	"net"
@@ -22,13 +23,13 @@ var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
 	lazymap.LazyMap[*Location]
-	ep    *K8SEndpoints
-	nodes *NodesStat
+	ep    *k8s.Endpoints
+	nodes *k8s.NodesStat
 	c     *cli.Context
 	nn    string
 }
 
-func NewServiceLocationPool(c *cli.Context, nodes *NodesStat, ep *K8SEndpoints) *ServiceLocation {
+func NewServiceLocationPool(c *cli.Context, nodes *k8s.NodesStat, ep *k8s.Endpoints) *ServiceLocation {
 	return &ServiceLocation{
 		c:     c,
 		ep:    ep,

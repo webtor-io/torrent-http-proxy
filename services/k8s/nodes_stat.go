@@ -1,8 +1,9 @@
-package services
+package k8s
 
 import (
 	"context"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"sort"
 	"strings"
 	"time"
@@ -57,11 +58,11 @@ func (s *NodeStat) IsAllowed(role string) bool {
 
 type NodesStat struct {
 	lazymap.LazyMap[[]NodeStat]
-	kcl         *K8SClient
+	kcl         *Client
 	labelPrefix string
 }
 
-func NewNodesStat(c *cli.Context, kcl *K8SClient) *NodesStat {
+func NewNodesStat(c *cli.Context, kcl *Client) *NodesStat {
 	return &NodesStat{
 		LazyMap: lazymap.New[[]NodeStat](&lazymap.Config{
 			Concurrency: 1,
@@ -75,6 +76,7 @@ func NewNodesStat(c *cli.Context, kcl *K8SClient) *NodesStat {
 
 func (s *NodesStat) Get(ctx context.Context) ([]NodeStat, error) {
 	return s.LazyMap.Get("", func() ([]NodeStat, error) {
+		log.Info("getting k8s nodes")
 		ctx2, cancel := context.WithTimeout(ctx, time.Second*10)
 		defer cancel()
 		cl, err := s.kcl.Get()

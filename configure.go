@@ -5,6 +5,7 @@ import (
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
 	s "github.com/webtor-io/torrent-http-proxy/services"
+	"github.com/webtor-io/torrent-http-proxy/services/k8s"
 )
 
 func configure(app *cli.App) {
@@ -16,10 +17,10 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterClickHouseFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
 	app.Flags = s.RegisterCommonFlags(app.Flags)
-	app.Flags = s.RegisterEndpointsFlags(app.Flags)
+	app.Flags = k8s.RegisterEndpointsFlags(app.Flags)
+	app.Flags = k8s.RegisterNodesStatFlags(app.Flags)
 	app.Flags = s.RegisterAPIFlags(app.Flags)
 	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
-	app.Flags = s.RegisterNodesStatFlags(app.Flags)
 
 	app.Action = run
 }
@@ -41,13 +42,13 @@ func run(c *cli.Context) error {
 	bucket := s.NewBucket()
 
 	// Setting Kubernetes client
-	k8sClient := s.NewK8SClient()
+	k8sClient := k8s.NewClient()
 
 	// Setting K8SEndpoints
-	endpointsPool := s.NewEndpoints(c, k8sClient)
+	endpointsPool := k8s.NewEndpoints(c, k8sClient)
 
 	// Setting K8SNodeStats
-	nodeStatsPool := s.NewNodesStat(c, k8sClient)
+	nodeStatsPool := k8s.NewNodesStat(c, k8sClient)
 
 	// Setting ServiceLocation
 	svcLocPool := s.NewServiceLocationPool(c, nodeStatsPool, endpointsPool)

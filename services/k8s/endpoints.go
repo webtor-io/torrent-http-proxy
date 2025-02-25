@@ -1,8 +1,9 @@
-package services
+package k8s
 
 import (
 	"context"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"time"
 
@@ -26,14 +27,14 @@ func RegisterEndpointsFlags(f []cli.Flag) []cli.Flag {
 	)
 }
 
-type K8SEndpoints struct {
+type Endpoints struct {
 	lazymap.LazyMap[*corev1.Endpoints]
-	cl        *K8SClient
+	cl        *Client
 	namespace string
 }
 
-func NewEndpoints(c *cli.Context, cl *K8SClient) *K8SEndpoints {
-	return &K8SEndpoints{
+func NewEndpoints(c *cli.Context, cl *Client) *Endpoints {
+	return &Endpoints{
 		cl:        cl,
 		namespace: c.String(endpointsNamespaceFlag),
 		LazyMap: lazymap.New[*corev1.Endpoints](&lazymap.Config{
@@ -43,8 +44,9 @@ func NewEndpoints(c *cli.Context, cl *K8SClient) *K8SEndpoints {
 	}
 }
 
-func (s *K8SEndpoints) Get(ctx context.Context, name string) (*corev1.Endpoints, error) {
+func (s *Endpoints) Get(ctx context.Context, name string) (*corev1.Endpoints, error) {
 	return s.LazyMap.Get(name, func() (*corev1.Endpoints, error) {
+		log.Infof("getting k8s endpoints for %s", name)
 		ctx2, cancel := context.WithTimeout(ctx, time.Second*10)
 		defer cancel()
 		cl, err := s.cl.Get()
