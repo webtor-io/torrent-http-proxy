@@ -41,6 +41,8 @@ func (s *K8SClient) get() (*kubernetes.Clientset, error) {
 			return nil, errors.Wrap(err, "failed to make config")
 		}
 	}
+	config.Burst = 100
+	config.QPS = -1
 	return kubernetes.NewForConfig(config)
 }
 
