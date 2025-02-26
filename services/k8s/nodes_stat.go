@@ -72,16 +72,16 @@ func NewNodesStat(c *cli.Context, kcl *Client) *NodesStat {
 	}
 }
 
-func (s *NodesStat) Get(ctx context.Context) ([]NodeStat, error) {
+func (s *NodesStat) Get() ([]NodeStat, error) {
 	return s.LazyMap.Get("", func() ([]NodeStat, error) {
 		log.Info("getting k8s nodes")
-		ctx2, cancel := context.WithTimeout(ctx, time.Second*10)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 		cl, err := s.kcl.Get()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get k8s client")
 		}
-		nodes, err := cl.CoreV1().Nodes().List(ctx2, metav1.ListOptions{})
+		nodes, err := cl.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get k8s nodes")
 		}

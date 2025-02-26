@@ -43,16 +43,16 @@ func NewEndpoints(c *cli.Context, cl *Client) *Endpoints {
 	}
 }
 
-func (s *Endpoints) Get(ctx context.Context, name string) (*corev1.Endpoints, error) {
+func (s *Endpoints) Get(name string) (*corev1.Endpoints, error) {
 	return s.LazyMap.Get(name, func() (*corev1.Endpoints, error) {
 		log.Infof("getting k8s endpoints for %s", name)
-		ctx2, cancel := context.WithTimeout(ctx, time.Second*10)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 		cl, err := s.cl.Get()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get k8s client")
 		}
-		endpoints, err := cl.CoreV1().Endpoints(s.namespace).Get(ctx2, name, metav1.GetOptions{})
+		endpoints, err := cl.CoreV1().Endpoints(s.namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get k8s endpoints for %s", name)
 		}

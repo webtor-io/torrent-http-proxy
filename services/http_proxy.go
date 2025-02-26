@@ -2,7 +2,6 @@ package services
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/webtor-io/lazymap"
@@ -87,8 +86,8 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	return p, nil
 }
 
-func (s *HTTPProxy) Get(ctx context.Context, src *Source, claims jwt.MapClaims, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
-	loc, err := s.r.Resolve(ctx, src, claims, logger)
+func (s *HTTPProxy) Get(src *Source, claims jwt.MapClaims, logger *logrus.Entry) (*httputil.ReverseProxy, error) {
+	loc, err := s.r.Resolve(src, claims, logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get location")
 	}

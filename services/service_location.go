@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/webtor-io/lazymap"
@@ -41,13 +40,11 @@ func NewServiceLocationPool(c *cli.Context, nodes *k8s.NodesStat, ep *k8s.Endpoi
 	}
 }
 
-func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
+func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	key := cfg.Name + src.InfoHash
 	return s.LazyMap.Get(key, func() (*Location, error) {
-		ctx2, cancel := context.WithTimeout(ctx, time.Second*15)
-		defer cancel()
 		if cfg.EndpointsProvider == Kubernetes {
-			return s.getKubernetes(ctx2, cfg, src, claims)
+			return s.getKubernetes(cfg, src, claims)
 		} else if cfg.EndpointsProvider == Environment {
 			return s.getEnvironment(cfg)
 		} else {
@@ -56,8 +53,8 @@ func (s *ServiceLocation) Get(ctx context.Context, cfg *ServiceConfig, src *Sour
 	})
 }
 
-func (s *ServiceLocation) getKubernetes(ctx context.Context, cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
-	endpoints, err := s.ep.Get(ctx, cfg.Name)
+func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
+	endpoints, err := s.ep.Get(cfg.Name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get endpoints")
 	}
@@ -74,7 +71,7 @@ func (s *ServiceLocation) getKubernetes(ctx context.Context, cfg *ServiceConfig,
 	} else if cfg.Distribution == Hash {
 		a, err = s.distributeByHash(src, as)
 	} else if cfg.Distribution == NodeHash {
-		a, err = s.distributeByNodeHash(ctx, src, as, claims)
+		a, err = s.distributeByNodeHash(src, as, claims)
 	}
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to distribute")
@@ -141,7 +138,7 @@ func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddr
 	return nil, nil
 }
 
-func (s *ServiceLocation) distributeByNodeHash(ctx context.Context, src *Source, as []corev1.EndpointAddress, claims jwt.MapClaims) (*corev1.EndpointAddress, error) {
+func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.EndpointAddress, claims jwt.MapClaims) (*corev1.EndpointAddress, error) {
 	sort.Slice(as, func(i, j int) bool {
 		return as[i].IP < as[j].IP
 	})
@@ -154,7 +151,7 @@ func (s *ServiceLocation) distributeByNodeHash(ctx context.Context, src *Source,
 		nodes = append(nodes, n)
 	}
 	sort.Strings(nodes)
-	nodes, err := s.filterNodesByRole(ctx, nodes, claims)
+	nodes, err := s.filterNodesByRole(nodes, claims)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to filter nodes by role")
 	}
@@ -183,7 +180,7 @@ func (s *ServiceLocation) distributeByNodeHash(ctx context.Context, src *Source,
 	return nil, nil
 }
 
-func (s *ServiceLocation) filterNodesByRole(ctx context.Context, nodes []string, claims jwt.MapClaims) ([]string, error) {
+func (s *ServiceLocation) filterNodesByRole(nodes []string, claims jwt.MapClaims) ([]string, error) {
 	if claims == nil {
 		return nodes, nil
 	}
@@ -194,7 +191,7 @@ func (s *ServiceLocation) filterNodesByRole(ctx context.Context, nodes []string,
 	if role == "" {
 		return nodes, nil
 	}
-	ns, err := s.nodes.Get(ctx)
+	ns, err := s.nodes.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get nodes")
 	}
