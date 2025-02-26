@@ -65,9 +65,7 @@ type NodesStat struct {
 func NewNodesStat(c *cli.Context, kcl *Client) *NodesStat {
 	return &NodesStat{
 		LazyMap: lazymap.New[[]NodeStat](&lazymap.Config{
-			Concurrency: 1,
-			Expire:      60 * time.Second,
-			Capacity:    1,
+			Expire: 60 * time.Second,
 		}),
 		kcl:         kcl,
 		labelPrefix: c.String(nodeLabelPrefixFlag),
@@ -85,7 +83,7 @@ func (s *NodesStat) Get(ctx context.Context) ([]NodeStat, error) {
 		}
 		nodes, err := cl.CoreV1().Nodes().List(ctx2, metav1.ListOptions{})
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to get nodes")
+			return nil, errors.Wrap(err, "failed to get k8s nodes")
 		}
 		var res []NodeStat
 		for _, n := range nodes.Items {
