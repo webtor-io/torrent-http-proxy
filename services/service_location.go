@@ -118,21 +118,30 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 }
 
 func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
-	l, err := s.getKubernetes(cfg, src, claims)
-	if err != nil {
-		return nil, err
-	}
-	if l.Unavailable {
+	i := 0
+	for {
+		if i > 2 {
+			log.Warnf("failed to get location for %v after %v tries", cfg.Name, i)
+			return &Location{
+				Unavailable: true,
+			}, nil
+		}
+		l, err := s.getKubernetes(cfg, src, claims)
+		if err != nil {
+			return nil, err
+		}
+		if l.Unavailable {
+			return l, nil
+		}
+		_, err = s.probeChecker.Get(l)
+		if err != nil {
+			log.WithError(err).Warnf("probe check failed for %v location %+v, add it to ignore", cfg.Name, l)
+			s.ignore.Ignore(l.IP.String())
+			i++
+			continue
+		}
 		return l, nil
 	}
-	_, err = s.probeChecker.Get(l)
-	if err != nil {
-		log.WithError(err).Warnf("probe check failed for %v location %+v, add it to ignore", cfg.Name, l)
-		s.ignore.Ignore(l.IP.String())
-		//s.ep.Drop(cfg.Name)
-		//s.nodes.Drop("")
-	}
-	return s.getKubernetes(cfg, src, claims)
 }
 
 func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
