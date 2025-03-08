@@ -127,7 +127,7 @@ func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *S
 	}
 	_, err = s.probeChecker.Get(l)
 	if err != nil {
-		log.WithError(err).Warnf("probe check failed for location %+v, add it to ignore", l)
+		log.WithError(err).Warnf("probe check failed for %v location %+v, add it to ignore", cfg.Name, l)
 		s.ignore.Ignore(l.IP.String())
 		//s.ep.Drop(cfg.Name)
 		//s.nodes.Drop("")
