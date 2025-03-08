@@ -98,7 +98,7 @@ func (s *ServiceLocation) checkProbe(l *Location) error {
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(resp.Body)
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+	if resp.StatusCode >= 500 {
 		return nil
 	}
 	return errors.Errorf("unexpected status code: %d", resp.StatusCode)
