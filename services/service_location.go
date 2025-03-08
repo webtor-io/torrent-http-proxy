@@ -27,12 +27,43 @@ var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
 	lazymap.LazyMap[*Location]
-	ep     *k8s.Endpoints
-	nodes  *k8s.NodesStat
-	c      *cli.Context
-	cl     *http.Client
-	nn     string
-	ignore *EndpointIgnoreList
+	ep           *k8s.Endpoints
+	nodes        *k8s.NodesStat
+	c            *cli.Context
+	nn           string
+	ignore       *EndpointIgnoreList
+	probeChecker *ProbeChecker
+}
+
+type ProbeChecker struct {
+	lazymap.LazyMap[bool]
+	cl *http.Client
+}
+
+func (s *ProbeChecker) Get(l *Location) (bool, error) {
+	return s.LazyMap.Get(l.IP.String(), func() (bool, error) {
+		probePort := l.Ports.Probe
+		if probePort == 0 {
+			probePort = l.Ports.HTTP
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%v:%v", l.IP, probePort), nil)
+		if err != nil {
+			return false, err
+		}
+		resp, err := s.cl.Do(req)
+		if err != nil {
+			return false, err
+		}
+		defer func(Body io.ReadCloser) {
+			_ = Body.Close()
+		}(resp.Body)
+		if resp.StatusCode >= 500 {
+			return false, errors.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+		return true, nil
+	})
 }
 
 type EndpointIgnoreList struct {
@@ -55,7 +86,6 @@ func NewServiceLocationPool(c *cli.Context, cl *http.Client, nodes *k8s.NodesSta
 	return &ServiceLocation{
 		c:     c,
 		ep:    ep,
-		cl:    cl,
 		nodes: nodes,
 		nn:    c.String(myNodeNameFlag),
 		LazyMap: lazymap.New[*Location](&lazymap.Config{
@@ -64,6 +94,13 @@ func NewServiceLocationPool(c *cli.Context, cl *http.Client, nodes *k8s.NodesSta
 		ignore: &EndpointIgnoreList{lazymap.New[bool](&lazymap.Config{
 			Expire: 30 * time.Second,
 		})},
+		probeChecker: &ProbeChecker{
+			LazyMap: lazymap.New[bool](&lazymap.Config{
+				Expire:      30 * time.Second,
+				StoreErrors: true,
+			}),
+			cl: cl,
+		},
 	}
 }
 
@@ -80,30 +117,6 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 	})
 }
 
-func (s *ServiceLocation) checkProbe(l *Location) error {
-	probePort := l.Ports.Probe
-	if probePort == 0 {
-		probePort = l.Ports.HTTP
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%v:%v", l.IP, probePort), nil)
-	if err != nil {
-		return err
-	}
-	resp, err := s.cl.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
-	if resp.StatusCode < 500 {
-		return nil
-	}
-	return errors.Errorf("unexpected status code: %d", resp.StatusCode)
-}
-
 func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	l, err := s.getKubernetes(cfg, src, claims)
 	if err != nil {
@@ -112,7 +125,7 @@ func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *S
 	if l.Unavailable {
 		return l, nil
 	}
-	err = s.checkProbe(l)
+	_, err = s.probeChecker.Get(l)
 	if err != nil {
 		log.WithError(err).Warnf("probe check failed for location %+v, add it to ignore", l)
 		s.ignore.Ignore(l.IP.String())
