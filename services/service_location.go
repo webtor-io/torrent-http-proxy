@@ -1,13 +1,18 @@
 package services
 
 import (
+	"context"
+	"fmt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/webtor-io/lazymap"
 	"github.com/webtor-io/torrent-http-proxy/services/k8s"
+	"io"
 	corev1 "k8s.io/api/core/v1"
 	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -22,21 +27,43 @@ var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
 	lazymap.LazyMap[*Location]
-	ep    *k8s.Endpoints
-	nodes *k8s.NodesStat
-	c     *cli.Context
-	nn    string
+	ep     *k8s.Endpoints
+	nodes  *k8s.NodesStat
+	c      *cli.Context
+	cl     *http.Client
+	nn     string
+	ignore *EndpointIgnoreList
 }
 
-func NewServiceLocationPool(c *cli.Context, nodes *k8s.NodesStat, ep *k8s.Endpoints) *ServiceLocation {
+type EndpointIgnoreList struct {
+	lazymap.LazyMap[bool]
+}
+
+func (s *EndpointIgnoreList) Ignore(ip string) bool {
+	res, _ := s.Get(ip, func() (bool, error) {
+		return true, nil
+	})
+	return res
+}
+
+func (s *EndpointIgnoreList) IsIgnored(ip string) bool {
+	_, ok := s.Status(ip)
+	return ok
+}
+
+func NewServiceLocationPool(c *cli.Context, cl *http.Client, nodes *k8s.NodesStat, ep *k8s.Endpoints) *ServiceLocation {
 	return &ServiceLocation{
 		c:     c,
 		ep:    ep,
+		cl:    cl,
 		nodes: nodes,
 		nn:    c.String(myNodeNameFlag),
 		LazyMap: lazymap.New[*Location](&lazymap.Config{
 			Expire: 15 * time.Second,
 		}),
+		ignore: &EndpointIgnoreList{lazymap.New[bool](&lazymap.Config{
+			Expire: 30 * time.Second,
+		})},
 	}
 }
 
@@ -44,13 +71,55 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 	key := cfg.Name + src.InfoHash
 	return s.LazyMap.Get(key, func() (*Location, error) {
 		if cfg.EndpointsProvider == Kubernetes {
-			return s.getKubernetes(cfg, src, claims)
+			return s.getKubernetesWithProbeCheck(cfg, src, claims)
 		} else if cfg.EndpointsProvider == Environment {
 			return s.getEnvironment(cfg)
 		} else {
 			return nil, errors.Errorf("unknown endpoints provider: %s", cfg.EndpointsProvider)
 		}
 	})
+}
+
+func (s *ServiceLocation) checkProbe(l *Location) error {
+	probePort := l.Ports.Probe
+	if probePort == 0 {
+		probePort = l.Ports.HTTP
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%v:%v", l.IP, probePort), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.cl.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return errors.Errorf("unexpected status code: %d", resp.StatusCode)
+}
+
+func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
+	l, err := s.getKubernetes(cfg, src, claims)
+	if err != nil {
+		return nil, err
+	}
+	if l.Unavailable {
+		return l, nil
+	}
+	err = s.checkProbe(l)
+	if err != nil {
+		log.WithError(err).Warnf("probe check failed for location %+v, add it to ignore", l)
+		s.ignore.Ignore(l.IP.String())
+		s.ep.Drop(cfg.Name)
+		s.nodes.Drop("")
+	}
+	return s.getKubernetes(cfg, src, claims)
 }
 
 func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
@@ -60,6 +129,7 @@ func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims 
 	}
 	subset := endpoints.Subsets[0]
 	as := subset.Addresses
+	as = s.filterAddressesByIgnore(as)
 	if len(as) == 0 {
 		return &Location{
 			Unavailable: true,
@@ -224,4 +294,15 @@ func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) 
 		},
 		IP: ip,
 	}, nil
+}
+
+func (s *ServiceLocation) filterAddressesByIgnore(as []corev1.EndpointAddress) []corev1.EndpointAddress {
+	var res []corev1.EndpointAddress
+	for _, a := range as {
+		if s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
+			continue
+		}
+		res = append(res, a)
+	}
+	return res
 }

@@ -6,6 +6,7 @@ import (
 	cs "github.com/webtor-io/common-services"
 	s "github.com/webtor-io/torrent-http-proxy/services"
 	"github.com/webtor-io/torrent-http-proxy/services/k8s"
+	"net/http"
 )
 
 func configure(app *cli.App) {
@@ -50,8 +51,11 @@ func run(c *cli.Context) error {
 	// Setting K8SNodeStats
 	nodeStatsPool := k8s.NewNodesStat(c, k8sClient)
 
+	// Setting HTTP Client
+	cl := http.DefaultClient
+
 	// Setting ServiceLocation
-	svcLocPool := s.NewServiceLocationPool(c, nodeStatsPool, endpointsPool)
+	svcLocPool := s.NewServiceLocationPool(c, cl, nodeStatsPool, endpointsPool)
 
 	// Setting Resolver
 	resolver := s.NewResolver(config, svcLocPool)
