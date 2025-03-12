@@ -51,11 +51,11 @@ var (
 	promHTTPProxyRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "webtor_http_proxy_request_duration_seconds",
 		Help: "HTTP Proxy request duration in seconds",
-	}, []string{"source", "name", "status"})
+	}, []string{"source", "role", "name", "status"})
 	promHTTPProxyRequestTTFB = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "webtor_http_proxy_request_ttfb_seconds",
 		Help: "HTTP Proxy request ttfb in seconds",
-	}, []string{"source", "name", "status"})
+	}, []string{"source", "role", "name", "status"})
 	promHTTPProxyRequestSize = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_request_size_bytes",
 		Help: "HTTP Proxy request size bytes",
@@ -63,11 +63,11 @@ var (
 	promHTTPProxyRequestCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "webtor_http_proxy_request_current",
 		Help: "HTTP Proxy request current",
-	}, []string{"source", "name"})
+	}, []string{"source", "role", "name"})
 	promHTTPProxyRequestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_request_total",
 		Help: "HTTP Proxy dial total",
-	}, []string{"source", "name", "infohash", "status"})
+	}, []string{"source", "role", "name", "infohash", "status"})
 )
 
 func init() {
@@ -196,12 +196,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				logger.WithError(err).Warn("failed to store data to ClickHouse")
 			}
 		}
-		promHTTPProxyRequestDuration.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
+		promHTTPProxyRequestDuration.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
 		if wi.bytesWritten > 0 {
-			promHTTPProxyRequestTTFB.WithLabelValues(string(source), src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
+			promHTTPProxyRequestTTFB.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
 		}
-		promHTTPProxyRequestCurrent.WithLabelValues(string(source), src.GetEdgeName()).Dec()
-		promHTTPProxyRequestTotal.WithLabelValues(string(source), src.GetEdgeName(), src.InfoHash, strconv.Itoa(wi.GroupedStatusCode())).Inc()
+		promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Dec()
+		promHTTPProxyRequestTotal.WithLabelValues(string(source), role, src.GetEdgeName(), src.InfoHash, strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		promHTTPProxyRequestSize.WithLabelValues(
 			domain,
 			role,
