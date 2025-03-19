@@ -21,3 +21,4 @@ config.yaml
 config-env.yaml
 .env
 .idea
+.vscode
