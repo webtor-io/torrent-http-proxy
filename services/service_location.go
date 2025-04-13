@@ -106,6 +106,10 @@ func NewServiceLocationPool(c *cli.Context, cl *http.Client, nodes *k8s.NodesSta
 
 func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
 	key := cfg.Name + src.InfoHash
+	role, ok := claims["role"].(string)
+	if ok {
+		key += role
+	}
 	return s.LazyMap.Get(key, func() (*Location, error) {
 		if cfg.EndpointsProvider == Kubernetes {
 			return s.getKubernetesWithProbeCheck(cfg, src, claims)
