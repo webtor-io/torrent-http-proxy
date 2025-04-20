@@ -24,7 +24,7 @@ func NewHTTPProxy(r *Resolver) *HTTPProxy {
 	return &HTTPProxy{
 		r: r,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
-			Expire: 600 * time.Second,
+			Expire: 60 * time.Second,
 		}),
 	}
 }
@@ -72,12 +72,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	if loc.Unavailable {
 		t = &stubTransport{http.DefaultTransport}
 	} else {
-		t = &http.Transport{
-			MaxIdleConns:        500,
-			MaxIdleConnsPerHost: 500,
-			MaxConnsPerHost:     500,
-			IdleConnTimeout:     90 * time.Second,
-		}
+		t = http.DefaultTransport
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
