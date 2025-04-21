@@ -258,6 +258,9 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 	}
 	num := int(num64 * 1000)
 	total := 1048575 * 1000
+	if len(nodes) == 0 {
+		return nil, errors.Wrapf(err, "failed to distribute, no nodes found")
+	}
 	nodeInterval := total / len(nodes)
 	for i := 0; i < len(nodes); i++ {
 		var nas []corev1.EndpointAddress
