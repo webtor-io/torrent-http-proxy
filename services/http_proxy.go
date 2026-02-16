@@ -68,16 +68,22 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
 		Scheme: "http",
 	}
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		WriteBufferSize:     256 << 10,
+		ReadBufferSize:      256 << 10,
+	}
 	var t http.RoundTripper
 	if loc.Unavailable {
-		t = &stubTransport{http.DefaultTransport}
+		t = &stubTransport{transport}
 	} else {
-		t = http.DefaultTransport
+		t = transport
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
-	// p.FlushInterval = -1
+	p.FlushInterval = -1
 	return p, nil
 }
 
