@@ -30,7 +30,7 @@ type Web struct {
 	r              *Resolver
 	pr             *HTTPProxy
 	parser         *URLParser
-	bucket         *Bucket
+	bucket         *HybridBucketPool
 	clickHouse     *ClickHouse
 	baseURL        string
 	claims         *Claims
@@ -77,7 +77,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, ah *AccessHistory) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),

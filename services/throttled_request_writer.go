@@ -5,16 +5,15 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/juju/ratelimit"
 	"github.com/pkg/errors"
 )
 
 type ThrottledResponseWriter struct {
 	http.ResponseWriter
-	b *ratelimit.Bucket
+	b Throttler
 }
 
-func NewThrottledRequestWrtier(w http.ResponseWriter, b *ratelimit.Bucket) *ThrottledResponseWriter {
+func NewThrottledRequestWrtier(w http.ResponseWriter, b Throttler) *ThrottledResponseWriter {
 	return &ThrottledResponseWriter{
 		ResponseWriter: w,
 		b:              b,

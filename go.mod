@@ -20,6 +20,7 @@ require (
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
+	github.com/redis/go-redis/v9 v9.14.0
 	github.com/webtor-io/lazymap v0.0.0-20250308124910-3a61e0f78108
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -71,7 +72,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/procfs v0.17.0 // indirect
-	github.com/redis/go-redis/v9 v9.14.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect

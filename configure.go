@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
@@ -15,6 +16,7 @@ func configure(app *cli.App) {
 	app.Flags = cs.RegisterProbeFlags(app.Flags)
 	app.Flags = cs.RegisterPromFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
+	app.Flags = cs.RegisterRedisClientFlags(app.Flags)
 	app.Flags = s.RegisterWebFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseDBFlags(app.Flags)
@@ -40,8 +42,19 @@ func run(c *cli.Context) error {
 	// Setting URL Parser
 	urlParser := s.NewURLParser(config)
 
-	// Setting Bucket
-	bucket := s.NewBucket()
+	// Setting Redis client (optional — nil if host is empty or default "localhost")
+	var redisClient *cs.RedisClient
+	if host := c.String("redis-host"); host != "" && host != "localhost" {
+		redisClient = cs.NewRedisClient(c)
+		defer redisClient.Close()
+	}
+
+	// Setting Bucket (hybrid: local + optional Redis)
+	var rc redis.UniversalClient
+	if redisClient != nil {
+		rc = redisClient.Get()
+	}
+	bucket := s.NewHybridBucketPool(rc)
 
 	// Setting Kubernetes client
 	k8sClient := k8s.NewClient()
