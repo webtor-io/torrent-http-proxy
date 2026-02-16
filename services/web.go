@@ -34,7 +34,6 @@ type Web struct {
 	clickHouse     *ClickHouse
 	baseURL        string
 	claims         *Claims
-	cfg            *ServicesConfig
 	ah             *AccessHistory
 	bandwidthLimit bool
 }
@@ -78,7 +77,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, cfg *ServicesConfig, ah *AccessHistory) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *Bucket, ch *ClickHouse, ah *AccessHistory) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
@@ -89,7 +88,6 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		claims:         claims,
 		bucket:         bp,
 		clickHouse:     ch,
-		cfg:            cfg,
 		ah:             ah,
 		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
 	}
@@ -250,14 +248,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	rate, ok := claims["rate"].(string)
 	if ok {
 		headers["X-Download-Rate"] = rate
-	}
-
-	cfg := s.cfg.GetMod(src.GetEdgeType())
-
-	if cfg.Headers != nil {
-		for k, v := range cfg.Headers {
-			headers[k] = v
-		}
 	}
 
 	if s.bandwidthLimit && source == External {

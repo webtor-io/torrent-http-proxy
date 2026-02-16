@@ -1,12 +1,13 @@
 package main
 
 import (
+	"net/http"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
 	s "github.com/webtor-io/torrent-http-proxy/services"
 	"github.com/webtor-io/torrent-http-proxy/services/k8s"
-	"net/http"
 )
 
 func configure(app *cli.App) {
@@ -105,7 +106,7 @@ func run(c *cli.Context) error {
 
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
-		bucket, clickHouse, config, accessHistory)
+		bucket, clickHouse, accessHistory)
 	servers = append(servers, web)
 	defer web.Close()
 
