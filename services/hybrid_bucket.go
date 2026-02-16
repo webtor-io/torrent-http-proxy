@@ -65,10 +65,11 @@ return tostring(granted)
 // HybridBucket implements Throttler with a two-tier token bucket:
 // a fast local tier and a global Redis tier that acts as the source of truth.
 type HybridBucket struct {
-	mu       sync.Mutex
-	local    float64 // current local token balance (bytes)
-	rate     float64 // bytes per second
-	capacity float64 // max burst (bytes)
+	mu         sync.Mutex
+	local      float64   // current local token balance (bytes)
+	rate       float64   // bytes per second
+	capacity   float64   // max burst (bytes)
+	lastRefill time.Time // for local accrual when Redis is unavailable
 
 	rc       redis.UniversalClient
 	redisKey string
@@ -78,61 +79,80 @@ type HybridBucket struct {
 
 func NewHybridBucket(rate float64, capacity float64, rc redis.UniversalClient, sessionID string) *HybridBucket {
 	return &HybridBucket{
-		local:    capacity, // start full
-		rate:     rate,
-		capacity: capacity,
-		rc:       rc,
-		redisKey: "bw:limit:" + sessionID,
-		redisOK:  rc != nil,
+		local:      0, // start empty — first write goes to Redis for coordination
+		rate:       rate,
+		capacity:   capacity,
+		lastRefill: time.Now(),
+		rc:         rc,
+		redisKey:   "bw:limit:" + sessionID,
+		redisOK:    rc != nil,
 	}
 }
 
 // Wait blocks until count tokens are available, satisfying the Throttler interface.
+// Design: at most one Redis call per Write(); sleep for any deficit. No retry loop.
 func (hb *HybridBucket) Wait(count int64) {
 	if count <= 0 {
 		return
 	}
 	need := float64(count)
 
-	for need > 0 {
-		hb.mu.Lock()
-		if hb.local >= need {
-			hb.local -= need
+	hb.mu.Lock()
+	canRedis := hb.redisOK && hb.rc != nil
+
+	// When Redis is unavailable, accrue tokens locally by elapsed time
+	// (graceful degradation — same behavior as the old ratelimit.Bucket).
+	if !canRedis {
+		now := time.Now()
+		elapsed := now.Sub(hb.lastRefill).Seconds()
+		if elapsed > 0 {
+			hb.local += elapsed * hb.rate
+			if hb.local > hb.capacity {
+				hb.local = hb.capacity
+			}
+			hb.lastRefill = now
+		}
+	}
+
+	// Fast path: serve entirely from local tokens.
+	if hb.local >= need {
+		hb.local -= need
+		hb.mu.Unlock()
+		return
+	}
+
+	// Consume whatever local tokens are available.
+	need -= hb.local
+	hb.local = 0
+	hb.mu.Unlock()
+
+	// Slow path: try Redis once, then sleep for the deficit.
+	if canRedis {
+		// Request a batch: at least what we need, up to 1 second for prefetch.
+		batch := need
+		if hb.rate > batch {
+			batch = hb.rate
+		}
+		granted := hb.refillFromRedis(batch)
+		if granted >= need {
+			// Fully satisfied; store surplus for future writes.
+			hb.mu.Lock()
+			hb.local += granted - need
 			hb.mu.Unlock()
 			return
 		}
-		// consume whatever is left locally
-		need -= hb.local
-		hb.local = 0
-
-		// how many tokens to request from Redis: ~1 second worth, but at least what we need
-		batch := hb.rate
-		if batch < need {
-			batch = need
+		// Partial grant — reduce deficit, sleep for the rest.
+		if granted > 0 {
+			need -= granted
 		}
+	}
 
-		canRedis := hb.redisOK && hb.rc != nil
-		hb.mu.Unlock()
-
-		if canRedis {
-			granted := hb.refillFromRedis(batch)
-			if granted > 0 {
-				hb.mu.Lock()
-				hb.local += granted
-				hb.mu.Unlock()
-				continue // re-check loop
-			}
-		}
-
-		// If Redis is unavailable or granted 0: sleep proportionally, then
-		// grant tokens locally at the configured rate (graceful degradation).
+	// Sleep for the time it takes to accrue the remaining tokens at our rate.
+	if need > 0 && hb.rate > 0 {
 		sleepDur := time.Duration(need / hb.rate * float64(time.Second))
-		if sleepDur < time.Millisecond {
-			sleepDur = time.Millisecond
+		if sleepDur > 0 {
+			time.Sleep(sleepDur)
 		}
-		time.Sleep(sleepDur)
-		// After sleeping, we consider `need` tokens consumed by elapsed time.
-		return
 	}
 }
 
