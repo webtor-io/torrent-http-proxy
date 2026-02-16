@@ -20,6 +20,7 @@ require (
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
+	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/redis/go-redis/v9 v9.14.0
 	github.com/webtor-io/lazymap v0.0.0-20250308124910-3a61e0f78108
 	gopkg.in/yaml.v3 v3.0.1
@@ -82,6 +83,7 @@ require (
 	github.com/vmihailenco/tagparser v0.1.2 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
