@@ -22,3 +22,6 @@ config-env.yaml
 .env
 .idea
 .vscode
+server
+chart/
+torrent-http-proxy.yaml.gotmpl
