@@ -3,13 +3,14 @@ package services
 import (
 	"bytes"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/webtor-io/lazymap"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"time"
+
+	"github.com/dgrijalva/jwt-go"
+	"github.com/webtor-io/lazymap"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -83,7 +84,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
-	p.FlushInterval = -1
+	//p.FlushInterval = -1
 	return p, nil
 }
 
