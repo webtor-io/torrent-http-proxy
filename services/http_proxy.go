@@ -64,6 +64,43 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	}, nil
 }
 
+// redirectFollowingTransport wraps an http.RoundTripper and follows 302/307
+// redirects transparently, preserving the Range header across hops.
+// This allows httputil.ReverseProxy to proxy the final response (e.g. from S3)
+// instead of passing the redirect back to the client.
+type redirectFollowingTransport struct {
+	http.RoundTripper
+}
+
+func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.RoundTripper.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < 10; i++ {
+		if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusTemporaryRedirect {
+			break
+		}
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			break
+		}
+		_ = resp.Body.Close()
+		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, loc, nil)
+		if err != nil {
+			return nil, err
+		}
+		if rng := req.Header.Get("Range"); rng != "" {
+			newReq.Header.Set("Range", rng)
+		}
+		resp, err = http.DefaultTransport.RoundTrip(newReq)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
 func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
@@ -79,7 +116,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	if loc.Unavailable {
 		t = &stubTransport{transport}
 	} else {
-		t = transport
+		t = &redirectFollowingTransport{transport}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
