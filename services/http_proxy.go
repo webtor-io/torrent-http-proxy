@@ -107,8 +107,9 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		Scheme: "http",
 	}
 	transport := &http.Transport{
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     30 * time.Second,
 		WriteBufferSize:     256 << 10,
 		ReadBufferSize:      256 << 10,
 	}
