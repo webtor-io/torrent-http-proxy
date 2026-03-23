@@ -18,12 +18,20 @@ import (
 
 type HTTPProxy struct {
 	lazymap.LazyMap[*httputil.ReverseProxy]
-	r *Resolver
+	r         *Resolver
+	transport *http.Transport
 }
 
 func NewHTTPProxy(r *Resolver) *HTTPProxy {
 	return &HTTPProxy{
 		r: r,
+		transport: &http.Transport{
+			MaxIdleConns:        200,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     30 * time.Second,
+			WriteBufferSize:     256 << 10,
+			ReadBufferSize:      256 << 10,
+		},
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
@@ -106,18 +114,11 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
 		Scheme: "http",
 	}
-	transport := &http.Transport{
-		MaxIdleConns:        200,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     30 * time.Second,
-		WriteBufferSize:     256 << 10,
-		ReadBufferSize:      256 << 10,
-	}
 	var t http.RoundTripper
 	if loc.Unavailable {
-		t = &stubTransport{transport}
+		t = &stubTransport{s.transport}
 	} else {
-		t = &redirectFollowingTransport{transport}
+		t = &redirectFollowingTransport{s.transport}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
