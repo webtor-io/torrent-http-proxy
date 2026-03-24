@@ -29,8 +29,8 @@ func NewHTTPProxy(r *Resolver) *HTTPProxy {
 			MaxIdleConns:        200,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
-			WriteBufferSize:     256 << 10,
-			ReadBufferSize:      256 << 10,
+			WriteBufferSize:     64 << 10,
+			ReadBufferSize:      64 << 10,
 		},
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
