@@ -24,24 +24,35 @@ const (
 
 type HTTPProxy struct {
 	lazymap.LazyMap[*httputil.ReverseProxy]
-	r         *Resolver
-	transport *http.Transport
+	r                 *Resolver
+	transport         *http.Transport
+	externalTransport *http.Transport
 }
 
 func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
-	return &HTTPProxy{
+	readBuf := c.Int(proxyReadBufferSizeFlag)
+	writeBuf := c.Int(proxyWriteBufferSizeFlag)
+	p := &HTTPProxy{
 		r: r,
 		transport: &http.Transport{
 			MaxIdleConns:        200,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
-			WriteBufferSize:     c.Int(proxyWriteBufferSizeFlag),
-			ReadBufferSize:      c.Int(proxyReadBufferSizeFlag),
+			WriteBufferSize:     writeBuf,
+			ReadBufferSize:      readBuf,
 		},
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
 	}
+	p.externalTransport = &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		WriteBufferSize:     writeBuf,
+		ReadBufferSize:      readBuf,
+	}
+	return p
 }
 
 func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
@@ -101,6 +112,7 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 // instead of passing the redirect back to the client.
 type redirectFollowingTransport struct {
 	http.RoundTripper
+	external http.RoundTripper
 }
 
 func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -124,7 +136,7 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 		if rng := req.Header.Get("Range"); rng != "" {
 			newReq.Header.Set("Range", rng)
 		}
-		resp, err = http.DefaultTransport.RoundTrip(newReq)
+		resp, err = t.external.RoundTrip(newReq)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +153,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	if loc.Unavailable {
 		t = &stubTransport{s.transport}
 	} else {
-		t = &redirectFollowingTransport{s.transport}
+		t = &redirectFollowingTransport{s.transport, s.externalTransport}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
