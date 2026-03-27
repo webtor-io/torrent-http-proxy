@@ -10,10 +10,16 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/urfave/cli"
 	"github.com/webtor-io/lazymap"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	proxyReadBufferSizeFlag  = "proxy-read-buffer-size"
+	proxyWriteBufferSizeFlag = "proxy-write-buffer-size"
 )
 
 type HTTPProxy struct {
@@ -22,20 +28,37 @@ type HTTPProxy struct {
 	transport *http.Transport
 }
 
-func NewHTTPProxy(r *Resolver) *HTTPProxy {
+func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
 	return &HTTPProxy{
 		r: r,
 		transport: &http.Transport{
 			MaxIdleConns:        200,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
-			WriteBufferSize:     64 << 10,
-			ReadBufferSize:      64 << 10,
+			WriteBufferSize:     c.Int(proxyWriteBufferSizeFlag),
+			ReadBufferSize:      c.Int(proxyReadBufferSizeFlag),
 		},
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
 	}
+}
+
+func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.IntFlag{
+			Name:   proxyReadBufferSizeFlag,
+			Usage:  "proxy transport read buffer size in bytes",
+			Value:  512 << 10,
+			EnvVar: "PROXY_READ_BUFFER_SIZE",
+		},
+		cli.IntFlag{
+			Name:   proxyWriteBufferSizeFlag,
+			Usage:  "proxy transport write buffer size in bytes",
+			Value:  512 << 10,
+			EnvVar: "PROXY_WRITE_BUFFER_SIZE",
+		},
+	)
 }
 
 var corsHeaders = []string{
@@ -123,7 +146,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
-	//p.FlushInterval = -1
+	p.FlushInterval = -1
 	return p, nil
 }
 

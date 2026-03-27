@@ -25,6 +25,7 @@ func configure(app *cli.App) {
 	app.Flags = k8s.RegisterNodesStatFlags(app.Flags)
 	app.Flags = s.RegisterAPIFlags(app.Flags)
 	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
+	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
 
 	app.Action = run
 }
@@ -95,7 +96,7 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting HTTP Proxy Pool
-	httpProxy := s.NewHTTPProxy(resolver)
+	httpProxy := s.NewHTTPProxy(c, resolver)
 
 	// Setting Claims
 	claims := s.NewClaims(c)
