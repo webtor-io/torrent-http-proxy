@@ -308,6 +308,8 @@ func (s *Web) Serve() error {
 		_, _ = fmt.Fprintf(w, "Remote addr:\t%v\n", r.RemoteAddr)
 	})
 
+	mux.HandleFunc("/speedtest", s.handleSpeedtest)
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" ||
 			strings.HasPrefix(r.URL.Path, "/favicon") ||
