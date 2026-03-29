@@ -20,6 +20,8 @@ import (
 const (
 	proxyReadBufferSizeFlag  = "proxy-read-buffer-size"
 	proxyWriteBufferSizeFlag = "proxy-write-buffer-size"
+	prefetchBufSizeFlag      = "prefetch-buf-size"
+	prefetchPoolSizeFlag     = "prefetch-pool-size"
 )
 
 type HTTPProxy struct {
@@ -27,6 +29,7 @@ type HTTPProxy struct {
 	r                 *Resolver
 	transport         *http.Transport
 	externalTransport *http.Transport
+	prefetchPool      *PrefetchPool
 }
 
 func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
@@ -41,6 +44,7 @@ func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
 			WriteBufferSize:     writeBuf,
 			ReadBufferSize:      readBuf,
 		},
+		prefetchPool: NewPrefetchPool(c.Int(prefetchPoolSizeFlag), c.Int(prefetchBufSizeFlag)),
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
@@ -68,6 +72,18 @@ func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "proxy transport write buffer size in bytes",
 			Value:  512 << 10,
 			EnvVar: "PROXY_WRITE_BUFFER_SIZE",
+		},
+		cli.IntFlag{
+			Name:   prefetchBufSizeFlag,
+			Usage:  "prefetch buffer size per connection in bytes",
+			Value:  5 << 20,
+			EnvVar: "PREFETCH_BUF_SIZE",
+		},
+		cli.IntFlag{
+			Name:   prefetchPoolSizeFlag,
+			Usage:  "total memory for prefetch buffer pool in bytes",
+			Value:  2 << 30,
+			EnvVar: "PREFETCH_POOL_SIZE",
 		},
 	)
 }
@@ -146,9 +162,10 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 
 // prefetchTransport wraps an http.RoundTripper and replaces the response body
 // with a PrefetchReader that eagerly buffers data from the source in background.
+// Buffers are borrowed from a shared pool; if none available, passes through.
 type prefetchTransport struct {
 	http.RoundTripper
-	prefetchSize int
+	pool *PrefetchPool
 }
 
 func (t *prefetchTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -157,7 +174,9 @@ func (t *prefetchTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		return nil, err
 	}
 	if resp.Body != nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
-		resp.Body = NewPrefetchReader(resp.Body, t.prefetchSize)
+		if buf := t.pool.Get(); buf != nil {
+			resp.Body = NewPrefetchReader(resp.Body, buf, t.pool)
+		}
 	}
 	return resp, nil
 }
@@ -173,8 +192,8 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	} else {
 		t = &redirectFollowingTransport{s.transport, s.externalTransport}
 	}
-	if loc.PrefetchSize > 0 {
-		t = &prefetchTransport{RoundTripper: t, prefetchSize: loc.PrefetchSize}
+	if loc.PrefetchSize > 0 && s.prefetchPool != nil {
+		t = &prefetchTransport{RoundTripper: t, pool: s.prefetchPool}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t

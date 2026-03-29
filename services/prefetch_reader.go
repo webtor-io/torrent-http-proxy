@@ -5,10 +5,50 @@ import (
 	"sync"
 )
 
+// PrefetchPool manages a fixed set of reusable byte buffers for prefetch readers.
+// When all buffers are in use, new requests pass through without prefetching.
+type PrefetchPool struct {
+	buffers chan []byte
+	bufSize int
+}
+
+func NewPrefetchPool(poolSize, bufSize int) *PrefetchPool {
+	if poolSize <= 0 || bufSize <= 0 {
+		return nil
+	}
+	count := poolSize / bufSize
+	if count == 0 {
+		return nil
+	}
+	p := &PrefetchPool{
+		buffers: make(chan []byte, count),
+		bufSize: bufSize,
+	}
+	for i := 0; i < count; i++ {
+		p.buffers <- make([]byte, bufSize)
+	}
+	return p
+}
+
+func (p *PrefetchPool) Get() []byte {
+	select {
+	case buf := <-p.buffers:
+		return buf
+	default:
+		return nil
+	}
+}
+
+func (p *PrefetchPool) Put(buf []byte) {
+	select {
+	case p.buffers <- buf[:p.bufSize]:
+	default:
+	}
+}
+
 // PrefetchReader wraps an io.ReadCloser with a background goroutine that
-// eagerly reads ahead into a fixed-size ring buffer. This smooths out
-// bursty source delivery (e.g. torrent peers, S3) by always having data
-// ready for the consumer.
+// eagerly reads ahead into a ring buffer borrowed from a PrefetchPool.
+// The buffer is returned to the pool on Close().
 type PrefetchReader struct {
 	src    io.ReadCloser
 	buf    []byte
@@ -20,13 +60,15 @@ type PrefetchReader struct {
 	done   bool
 	err    error
 	closed bool
+	pool   *PrefetchPool
 }
 
-func NewPrefetchReader(src io.ReadCloser, bufSize int) *PrefetchReader {
+func NewPrefetchReader(src io.ReadCloser, buf []byte, pool *PrefetchPool) *PrefetchReader {
 	p := &PrefetchReader{
 		src:  src,
-		buf:  make([]byte, bufSize),
-		size: bufSize,
+		buf:  buf,
+		size: len(buf),
+		pool: pool,
 	}
 	p.cond = sync.NewCond(&p.mu)
 	go p.fill()
@@ -114,5 +156,8 @@ func (p *PrefetchReader) Close() error {
 	p.closed = true
 	p.cond.Broadcast()
 	p.mu.Unlock()
+	if p.pool != nil {
+		p.pool.Put(p.buf)
+	}
 	return p.src.Close()
 }
