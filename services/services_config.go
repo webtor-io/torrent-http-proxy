@@ -40,6 +40,7 @@ type ServiceConfig struct {
 	EndpointsProvider EndpointsProvider `yaml:"endpointsProvider"`
 	PreferLocalNode   bool              `yaml:"preferLocalNode"`
 	Headers           map[string]string `yaml:"headers"`
+	PrefetchSize      int               `yaml:"prefetchSize"`
 }
 
 type ServicesConfig map[string]*ServiceConfig

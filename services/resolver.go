@@ -19,8 +19,9 @@ type Ports struct {
 
 type Location struct {
 	Ports
-	IP          net.IP
-	Unavailable bool
+	IP           net.IP
+	Unavailable  bool
+	PrefetchSize int
 }
 
 type Resolver struct {
@@ -51,6 +52,9 @@ func (s *Resolver) Resolve(src *Source, claims jwt.MapClaims, logger *logrus.Ent
 	if err != nil {
 		logger.WithError(err).Error("failed to resolve location")
 		return nil, errors.Wrap(err, "failed to resolve location")
+	}
+	if cfg != nil {
+		l.PrefetchSize = cfg.PrefetchSize
 	}
 	logger.WithField("location", l.IP).Info("location resolved")
 	return l, nil

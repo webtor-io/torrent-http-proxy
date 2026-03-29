@@ -144,6 +144,24 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 	return resp, nil
 }
 
+// prefetchTransport wraps an http.RoundTripper and replaces the response body
+// with a PrefetchReader that eagerly buffers data from the source in background.
+type prefetchTransport struct {
+	http.RoundTripper
+	prefetchSize int
+}
+
+func (t *prefetchTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.RoundTripper.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Body != nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
+		resp.Body = NewPrefetchReader(resp.Body, t.prefetchSize)
+	}
+	return resp, nil
+}
+
 func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
@@ -154,6 +172,9 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		t = &stubTransport{s.transport}
 	} else {
 		t = &redirectFollowingTransport{s.transport, s.externalTransport}
+	}
+	if loc.PrefetchSize > 0 {
+		t = &prefetchTransport{RoundTripper: t, prefetchSize: loc.PrefetchSize}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
