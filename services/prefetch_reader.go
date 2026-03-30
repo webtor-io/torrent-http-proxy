@@ -3,43 +3,93 @@ package services
 import (
 	"io"
 	"sync"
+	"sync/atomic"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-// PrefetchPool manages a fixed set of reusable byte buffers for prefetch readers.
-// When all buffers are in use, new requests pass through without prefetching.
+var (
+	promPrefetchCapacity = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_prefetch_pool_capacity",
+		Help: "Maximum number of prefetch buffers allowed",
+	})
+	promPrefetchAllocated = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_prefetch_pool_allocated",
+		Help: "Number of prefetch buffers allocated so far",
+	})
+	promPrefetchInUse = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_prefetch_pool_in_use",
+		Help: "Number of prefetch buffers currently in use",
+	})
+	promPrefetchMisses = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_prefetch_pool_misses_total",
+		Help: "Number of times a prefetch buffer was requested but pool capacity was reached",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(promPrefetchCapacity)
+	prometheus.MustRegister(promPrefetchAllocated)
+	prometheus.MustRegister(promPrefetchInUse)
+	prometheus.MustRegister(promPrefetchMisses)
+}
+
+// PrefetchPool manages a lazy-growing set of reusable byte buffers.
+// Buffers are allocated on demand up to maxCount. When all are in use,
+// new requests pass through without prefetching.
 type PrefetchPool struct {
-	buffers chan []byte
-	bufSize int
+	buffers   chan []byte
+	bufSize   int
+	maxCount  int
+	allocated atomic.Int64
+	inUse     atomic.Int64
 }
 
 func NewPrefetchPool(poolSize, bufSize int) *PrefetchPool {
 	if poolSize <= 0 || bufSize <= 0 {
 		return nil
 	}
-	count := poolSize / bufSize
-	if count == 0 {
+	maxCount := poolSize / bufSize
+	if maxCount == 0 {
 		return nil
 	}
 	p := &PrefetchPool{
-		buffers: make(chan []byte, count),
-		bufSize: bufSize,
+		buffers:  make(chan []byte, maxCount),
+		bufSize:  bufSize,
+		maxCount: maxCount,
 	}
-	for i := 0; i < count; i++ {
-		p.buffers <- make([]byte, bufSize)
-	}
+	promPrefetchCapacity.Set(float64(maxCount))
 	return p
 }
 
 func (p *PrefetchPool) Get() []byte {
+	// Try to reuse an existing buffer first.
 	select {
 	case buf := <-p.buffers:
+		inUse := p.inUse.Add(1)
+		promPrefetchInUse.Set(float64(inUse))
 		return buf
 	default:
-		return nil
 	}
+	// No free buffer — try to allocate a new one if under limit.
+	cur := p.allocated.Load()
+	for cur < int64(p.maxCount) {
+		if p.allocated.CompareAndSwap(cur, cur+1) {
+			promPrefetchAllocated.Set(float64(cur + 1))
+			inUse := p.inUse.Add(1)
+			promPrefetchInUse.Set(float64(inUse))
+			return make([]byte, p.bufSize)
+		}
+		cur = p.allocated.Load()
+	}
+	// Pool exhausted.
+	promPrefetchMisses.Inc()
+	return nil
 }
 
 func (p *PrefetchPool) Put(buf []byte) {
+	inUse := p.inUse.Add(-1)
+	promPrefetchInUse.Set(float64(inUse))
 	select {
 	case p.buffers <- buf[:p.bufSize]:
 	default:
