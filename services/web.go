@@ -277,6 +277,19 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
+	if s.pr.maxRetries > 0 {
+		r = WithRetryContext(r, &RetryContext{
+			Src:               src,
+			Claims:            claims,
+			Logger:            logger,
+			SvcLoc:            s.pr.r.svcLoc,
+			Cfg:               s.pr.r.cfg,
+			Transport:         s.pr.transport,
+			ExternalTransport: s.pr.externalTransport,
+			MaxRetries:        s.pr.maxRetries,
+			RetryDelay:        s.pr.retryDelay,
+		})
+	}
 	pr.ServeHTTP(w, r)
 }
 

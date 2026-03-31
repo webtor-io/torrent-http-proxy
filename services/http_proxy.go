@@ -22,6 +22,8 @@ const (
 	proxyWriteBufferSizeFlag = "proxy-write-buffer-size"
 	prefetchBufSizeFlag      = "prefetch-buf-size"
 	prefetchPoolSizeFlag     = "prefetch-pool-size"
+	retryMaxAttemptsFlag     = "retry-max-attempts"
+	retryDelayFlag           = "retry-delay"
 )
 
 type HTTPProxy struct {
@@ -30,9 +32,11 @@ type HTTPProxy struct {
 	transport         *http.Transport
 	externalTransport *http.Transport
 	prefetchPool      *PrefetchPool
+	maxRetries        int
+	retryDelay        time.Duration
 }
 
-func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
+func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration) *HTTPProxy {
 	readBuf := c.Int(proxyReadBufferSizeFlag)
 	writeBuf := c.Int(proxyWriteBufferSizeFlag)
 	p := &HTTPProxy{
@@ -45,6 +49,8 @@ func NewHTTPProxy(c *cli.Context, r *Resolver) *HTTPProxy {
 			ReadBufferSize:      readBuf,
 		},
 		prefetchPool: NewPrefetchPool(c.Int(prefetchPoolSizeFlag), c.Int(prefetchBufSizeFlag)),
+		maxRetries:   c.Int(retryMaxAttemptsFlag),
+		retryDelay:   retryDelay,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
@@ -84,6 +90,18 @@ func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "total memory for prefetch buffer pool in bytes",
 			Value:  2 << 30,
 			EnvVar: "PREFETCH_POOL_SIZE",
+		},
+		cli.IntFlag{
+			Name:   retryMaxAttemptsFlag,
+			Usage:  "max retry attempts on upstream failure",
+			Value:  3,
+			EnvVar: "RETRY_MAX_ATTEMPTS",
+		},
+		cli.IntFlag{
+			Name:   retryDelayFlag,
+			Usage:  "delay between retry attempts in milliseconds",
+			Value:  1000,
+			EnvVar: "RETRY_DELAY_MS",
 		},
 	)
 }
@@ -191,6 +209,9 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		t = &stubTransport{s.transport}
 	} else {
 		t = &redirectFollowingTransport{s.transport, s.externalTransport}
+		if s.maxRetries > 0 {
+			t = &retryTransport{RoundTripper: t}
+		}
 	}
 	if loc.PrefetchSize > 0 && s.prefetchPool != nil {
 		t = &prefetchTransport{RoundTripper: t, pool: s.prefetchPool}

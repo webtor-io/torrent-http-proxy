@@ -325,6 +325,52 @@ func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) 
 	}, nil
 }
 
+// GetFallback resolves a fallback location for retry.
+// For Kubernetes: finds another pod on the same node as excludeIP, excluding it.
+// For Environment: returns the same static location (retry to same host).
+func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP net.IP) (*Location, error) {
+	if cfg.EndpointsProvider == Environment {
+		return s.getEnvironment(cfg)
+	}
+
+	endpoints, err := s.ep.Get(cfg.Name)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get endpoints")
+	}
+	subset := endpoints.Subsets[0]
+
+	// Find the node of the excluded pod.
+	var nodeName string
+	for _, a := range subset.Addresses {
+		if a.IP == excludeIP.String() && a.NodeName != nil {
+			nodeName = *a.NodeName
+			break
+		}
+	}
+	if nodeName == "" {
+		return nil, errors.Errorf("could not find node for IP %s", excludeIP)
+	}
+
+	// Collect other healthy pods on the same node.
+	var candidates []corev1.EndpointAddress
+	for _, a := range subset.Addresses {
+		if a.NodeName != nil && *a.NodeName == nodeName &&
+			a.IP != excludeIP.String() &&
+			!s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
+			candidates = append(candidates, a)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, errors.Errorf("no alternative pods on node %s", nodeName)
+	}
+
+	a, err := s.distributeByHash(src, candidates)
+	if err != nil || a == nil {
+		a = &candidates[0]
+	}
+	return s.addressToLocation(a, &subset), nil
+}
+
 func (s *ServiceLocation) filterAddressesByIgnore(as []corev1.EndpointAddress) []corev1.EndpointAddress {
 	var res []corev1.EndpointAddress
 	for _, a := range as {

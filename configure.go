@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
@@ -96,7 +97,8 @@ func run(c *cli.Context) error {
 	}
 
 	// Setting HTTP Proxy Pool
-	httpProxy := s.NewHTTPProxy(c, resolver)
+	retryDelay := time.Duration(c.Int("retry-delay")) * time.Millisecond
+	httpProxy := s.NewHTTPProxy(c, resolver, retryDelay)
 
 	// Setting Claims
 	claims := s.NewClaims(c)
