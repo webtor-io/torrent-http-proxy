@@ -142,7 +142,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		reconnectFn: reconnectFn,
 		maxRetries:  rc.MaxRetries,
 		retryDelay:  rc.RetryDelay,
-		logger:      rc.Logger,
+		logger: logrus.WithFields(logrus.Fields{
+			"component": "retry",
+			"infohash":  rc.Src.InfoHash,
+			"path":      rc.Src.Path,
+		}),
 	}
 	return resp, nil
 }
@@ -205,7 +209,7 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 	newBody, reconnErr := r.reconnectFn(r.bytesRead)
 	r.retries++
 	if reconnErr != nil {
-		r.logger.WithError(reconnErr).Warn("retry reconnection failed")
+		r.logger.WithError(reconnErr).WithField("originalError", err.Error()).Warn("retry reconnection failed")
 		promRetryAttempts.WithLabelValues("failure").Inc()
 		return 0, err // return original error
 	}
