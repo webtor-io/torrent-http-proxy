@@ -348,20 +348,27 @@ func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP
 		}
 	}
 	if nodeName == "" {
-		return nil, errors.Errorf("could not find node for IP %s", excludeIP)
+		return nil, errors.Errorf("could not find node for IP %s (endpoints: %d addresses)", excludeIP, len(subset.Addresses))
 	}
 
 	// Collect other healthy pods on the same node.
 	var candidates []corev1.EndpointAddress
+	var ignoredCount int
 	for _, a := range subset.Addresses {
-		if a.NodeName != nil && *a.NodeName == nodeName &&
-			a.IP != excludeIP.String() &&
-			!s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
-			candidates = append(candidates, a)
+		if a.NodeName == nil || *a.NodeName != nodeName {
+			continue
 		}
+		if a.IP == excludeIP.String() {
+			continue
+		}
+		if s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
+			ignoredCount++
+			continue
+		}
+		candidates = append(candidates, a)
 	}
 	if len(candidates) == 0 {
-		return nil, errors.Errorf("no alternative pods on node %s", nodeName)
+		return nil, errors.Errorf("no alternative pods on node %s (ignored=%d, excludeIP=%s)", nodeName, ignoredCount, excludeIP)
 	}
 
 	a, err := s.distributeByHash(src, candidates)
