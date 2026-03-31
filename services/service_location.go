@@ -326,9 +326,9 @@ func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) 
 }
 
 // GetFallback resolves a fallback location for retry.
-// For Kubernetes: re-runs the same resolution logic as getKubernetes but with
-// excludeIP added to the ignore list. Ensures the result is on the same node
-// as the original selection would produce (prevents cross-node fallback).
+// For Kubernetes: adds excludeIP to ignore list and re-runs the same resolution
+// logic as getKubernetes. NodeHash distribution guarantees the same infohash
+// lands on the same node, so no extra node validation is needed.
 // For Environment: returns the same static location (retry to same host).
 func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP net.IP, claims jwt.MapClaims) (*Location, error) {
 	if cfg.EndpointsProvider == Environment {
@@ -347,44 +347,7 @@ func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP
 		return nil, errors.Errorf("no available pods after excluding %s", excludeIP)
 	}
 
-	// Determine which node the original (non-excluded) resolution would pick.
-	// Run resolution without the exclude to find the "correct" node.
-	origLoc, err := s.getOriginalNode(cfg, src, claims, excludeIP)
-	if err == nil && origLoc != "" && loc.IP != nil {
-		// Verify fallback landed on the same node.
-		endpoints, epErr := s.ep.Get(cfg.Name)
-		if epErr == nil {
-			for _, a := range endpoints.Subsets[0].Addresses {
-				if a.IP == loc.IP.String() && a.NodeName != nil && *a.NodeName != origLoc {
-					return nil, errors.Errorf("fallback resolved to node %s, expected %s", *a.NodeName, origLoc)
-				}
-			}
-		}
-	}
-
 	return loc, nil
-}
-
-// getOriginalNode determines which node the failed IP belongs to.
-// Checks endpoints first, falls back to the local node name.
-func (s *ServiceLocation) getOriginalNode(cfg *ServiceConfig, src *Source, claims jwt.MapClaims, ip net.IP) (string, error) {
-	endpoints, err := s.ep.Get(cfg.Name)
-	if err != nil {
-		return "", err
-	}
-	// Check current endpoints for the IP.
-	for _, a := range endpoints.Subsets[0].Addresses {
-		if a.IP == ip.String() && a.NodeName != nil {
-			return *a.NodeName, nil
-		}
-	}
-	// IP no longer in endpoints (pod restarted with new IP).
-	// Fall back to local node — with internalTrafficPolicy: Local
-	// the original request was always routed to a pod on our node.
-	if s.nn != "" {
-		return s.nn, nil
-	}
-	return "", errors.Errorf("could not determine node for IP %s", ip)
 }
 
 func (s *ServiceLocation) filterAddressesByIgnore(as []corev1.EndpointAddress) []corev1.EndpointAddress {
