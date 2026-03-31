@@ -101,7 +101,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		// Resolve fallback target (same-node pod for K8s, same host for env).
-		loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, net.ParseIP(failedIP))
+		loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, net.ParseIP(failedIP), rc.Claims)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to resolve fallback")
 		}

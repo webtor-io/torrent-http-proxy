@@ -326,56 +326,65 @@ func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) 
 }
 
 // GetFallback resolves a fallback location for retry.
-// For Kubernetes: finds another pod on the same node as excludeIP, excluding it.
+// For Kubernetes: re-runs the same resolution logic as getKubernetes but with
+// excludeIP added to the ignore list. Ensures the result is on the same node
+// as the original selection would produce (prevents cross-node fallback).
 // For Environment: returns the same static location (retry to same host).
-func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP net.IP) (*Location, error) {
+func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP net.IP, claims jwt.MapClaims) (*Location, error) {
 	if cfg.EndpointsProvider == Environment {
 		return s.getEnvironment(cfg)
 	}
 
+	// Temporarily ignore the failed IP.
+	s.ignore.Ignore(excludeIP.String())
+
+	// Run the same resolution logic (without cache).
+	loc, err := s.getKubernetes(cfg, src, claims)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to resolve fallback")
+	}
+	if loc.Unavailable {
+		return nil, errors.Errorf("no available pods after excluding %s", excludeIP)
+	}
+
+	// Determine which node the original (non-excluded) resolution would pick.
+	// Run resolution without the exclude to find the "correct" node.
+	origLoc, err := s.getOriginalNode(cfg, src, claims, excludeIP)
+	if err == nil && origLoc != "" && loc.IP != nil {
+		// Verify fallback landed on the same node.
+		endpoints, epErr := s.ep.Get(cfg.Name)
+		if epErr == nil {
+			for _, a := range endpoints.Subsets[0].Addresses {
+				if a.IP == loc.IP.String() && a.NodeName != nil && *a.NodeName != origLoc {
+					return nil, errors.Errorf("fallback resolved to node %s, expected %s", *a.NodeName, origLoc)
+				}
+			}
+		}
+	}
+
+	return loc, nil
+}
+
+// getOriginalNode determines which node the failed IP belongs to.
+// Checks endpoints first, falls back to the local node name.
+func (s *ServiceLocation) getOriginalNode(cfg *ServiceConfig, src *Source, claims jwt.MapClaims, ip net.IP) (string, error) {
 	endpoints, err := s.ep.Get(cfg.Name)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get endpoints")
+		return "", err
 	}
-	subset := endpoints.Subsets[0]
-
-	// Find the node of the excluded pod.
-	var nodeName string
-	for _, a := range subset.Addresses {
-		if a.IP == excludeIP.String() && a.NodeName != nil {
-			nodeName = *a.NodeName
-			break
+	// Check current endpoints for the IP.
+	for _, a := range endpoints.Subsets[0].Addresses {
+		if a.IP == ip.String() && a.NodeName != nil {
+			return *a.NodeName, nil
 		}
 	}
-	if nodeName == "" {
-		return nil, errors.Errorf("could not find node for IP %s (endpoints: %d addresses)", excludeIP, len(subset.Addresses))
+	// IP no longer in endpoints (pod restarted with new IP).
+	// Fall back to local node — with internalTrafficPolicy: Local
+	// the original request was always routed to a pod on our node.
+	if s.nn != "" {
+		return s.nn, nil
 	}
-
-	// Collect other healthy pods on the same node.
-	var candidates []corev1.EndpointAddress
-	var ignoredCount int
-	for _, a := range subset.Addresses {
-		if a.NodeName == nil || *a.NodeName != nodeName {
-			continue
-		}
-		if a.IP == excludeIP.String() {
-			continue
-		}
-		if s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
-			ignoredCount++
-			continue
-		}
-		candidates = append(candidates, a)
-	}
-	if len(candidates) == 0 {
-		return nil, errors.Errorf("no alternative pods on node %s (ignored=%d, excludeIP=%s)", nodeName, ignoredCount, excludeIP)
-	}
-
-	a, err := s.distributeByHash(src, candidates)
-	if err != nil || a == nil {
-		a = &candidates[0]
-	}
-	return s.addressToLocation(a, &subset), nil
+	return "", errors.Errorf("could not determine node for IP %s", ip)
 }
 
 func (s *ServiceLocation) filterAddressesByIgnore(as []corev1.EndpointAddress) []corev1.EndpointAddress {
