@@ -20,8 +20,6 @@ import (
 const (
 	proxyReadBufferSizeFlag  = "proxy-read-buffer-size"
 	proxyWriteBufferSizeFlag = "proxy-write-buffer-size"
-	prefetchBufSizeFlag      = "prefetch-buf-size"
-	prefetchPoolSizeFlag     = "prefetch-pool-size"
 	retryMaxAttemptsFlag     = "retry-max-attempts"
 	retryDelayFlag           = "retry-delay"
 )
@@ -31,7 +29,6 @@ type HTTPProxy struct {
 	r                 *Resolver
 	transport         *http.Transport
 	externalTransport *http.Transport
-	prefetchPool      *PrefetchPool
 	maxRetries        int
 	retryDelay        time.Duration
 }
@@ -48,8 +45,7 @@ func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration) *HTTPPr
 			WriteBufferSize:     writeBuf,
 			ReadBufferSize:      readBuf,
 		},
-		prefetchPool: NewPrefetchPool(c.Int(prefetchPoolSizeFlag), c.Int(prefetchBufSizeFlag)),
-		maxRetries:   c.Int(retryMaxAttemptsFlag),
+		maxRetries: c.Int(retryMaxAttemptsFlag),
 		retryDelay:   retryDelay,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
@@ -78,18 +74,6 @@ func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "proxy transport write buffer size in bytes",
 			Value:  512 << 10,
 			EnvVar: "PROXY_WRITE_BUFFER_SIZE",
-		},
-		cli.IntFlag{
-			Name:   prefetchBufSizeFlag,
-			Usage:  "prefetch buffer size per connection in bytes",
-			Value:  5 << 20,
-			EnvVar: "PREFETCH_BUF_SIZE",
-		},
-		cli.IntFlag{
-			Name:   prefetchPoolSizeFlag,
-			Usage:  "total memory for prefetch buffer pool in bytes (0 = disabled)",
-			Value:  0,
-			EnvVar: "PREFETCH_POOL_SIZE",
 		},
 		cli.IntFlag{
 			Name:   retryMaxAttemptsFlag,
@@ -178,27 +162,6 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 	return resp, nil
 }
 
-// prefetchTransport wraps an http.RoundTripper and replaces the response body
-// with a PrefetchReader that eagerly buffers data from the source in background.
-// Buffers are borrowed from a shared pool; if none available, passes through.
-type prefetchTransport struct {
-	http.RoundTripper
-	pool *PrefetchPool
-}
-
-func (t *prefetchTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.RoundTripper.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Body != nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
-		if buf := t.pool.Get(); buf != nil {
-			resp.Body = NewPrefetchReader(resp.Body, buf, t.pool)
-		}
-	}
-	return resp, nil
-}
-
 func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	u := &url.URL{
 		Host:   fmt.Sprintf("%s:%d", loc.IP.String(), loc.HTTP),
@@ -212,9 +175,6 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 		if s.maxRetries > 0 {
 			t = &retryTransport{RoundTripper: t}
 		}
-	}
-	if loc.PrefetchSize > 0 && s.prefetchPool != nil {
-		t = &prefetchTransport{RoundTripper: t, pool: s.prefetchPool}
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
