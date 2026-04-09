@@ -87,8 +87,8 @@ func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
 		},
 		cli.IntFlag{
 			Name:   prefetchPoolSizeFlag,
-			Usage:  "total memory for prefetch buffer pool in bytes",
-			Value:  2 << 30,
+			Usage:  "total memory for prefetch buffer pool in bytes (0 = disabled)",
+			Value:  0,
 			EnvVar: "PREFETCH_POOL_SIZE",
 		},
 		cli.IntFlag{
