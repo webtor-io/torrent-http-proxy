@@ -17,13 +17,13 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 		cli.IntFlag{
 			Name:   MaxConcPerTorrentFlag,
 			Usage:  "max concurrent requests per session per torrent (0 = unlimited)",
-			Value:  3,
+			Value:  10,
 			EnvVar: "MAX_CONC_PER_TORRENT",
 		},
 		cli.IntFlag{
 			Name:   MaxConcTotalFlag,
 			Usage:  "max concurrent requests per session total (0 = unlimited)",
-			Value:  15,
+			Value:  30,
 			EnvVar: "MAX_CONC_TOTAL",
 		},
 	)
