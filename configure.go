@@ -27,6 +27,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterAPIFlags(app.Flags)
 	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
 	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
+	app.Flags = s.RegisterSessionLimiterFlags(app.Flags)
 
 	app.Action = run
 }
@@ -120,9 +121,12 @@ func run(c *cli.Context) error {
 	// Setting AccessHistory
 	accessHistory := s.NewAccessHistory()
 
+	// Setting SessionLimiter
+	sessionLimiter := s.NewSessionLimiter(c)
+
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
-		bucket, clickHouse, accessHistory)
+		bucket, clickHouse, accessHistory, sessionLimiter)
 	servers = append(servers, web)
 	defer web.Close()
 

@@ -36,6 +36,7 @@ type Web struct {
 	claims         *Claims
 	ah             *AccessHistory
 	bandwidthLimit bool
+	sl             *SessionLimiter
 }
 
 const (
@@ -77,7 +78,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter) *Web {
 	return &Web{
 		host:           c.String(webHostFlag),
 		port:           c.Int(webPortFlag),
@@ -90,6 +91,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		clickHouse:     ch,
 		ah:             ah,
 		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
+		sl:             sl,
 	}
 }
 
@@ -167,6 +169,19 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	sessionID := ""
 	if sid, ok := claims["sessionID"].(string); ok {
 		sessionID = sid
+	}
+
+	if s.sl != nil && s.sl.Enabled() && source == External {
+		release := s.sl.Acquire(sessionID, src.InfoHash)
+		if release == nil {
+			logger.WithFields(logrus.Fields{
+				"session_id": sessionID,
+				"infohash":   src.InfoHash,
+			}).Warn("concurrent request limit exceeded")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		defer release()
 	}
 
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Inc()
