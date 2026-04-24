@@ -24,19 +24,20 @@ const (
 )
 
 type Web struct {
-	host           string
-	port           int
-	ln             net.Listener
-	r              *Resolver
-	pr             *HTTPProxy
-	parser         *URLParser
-	bucket         *HybridBucketPool
-	clickHouse     *ClickHouse
-	baseURL        string
-	claims         *Claims
-	ah             *AccessHistory
-	bandwidthLimit bool
-	sl             *SessionLimiter
+	host             string
+	port             int
+	ln               net.Listener
+	r                *Resolver
+	pr               *HTTPProxy
+	parser           *URLParser
+	bucket           *HybridBucketPool
+	clickHouse       *ClickHouse
+	baseURL          string
+	claims           *Claims
+	ah               *AccessHistory
+	bandwidthLimit   bool
+	sl               *SessionLimiter
+	enforceSessionIP bool
 }
 
 const (
@@ -45,6 +46,7 @@ const (
 	torrentHTTPProxyHostFlag = "torrent-http-proxy-host"
 	torrentHTTPProxyPortFlag = "torrent-http-proxy-port"
 	useBandwidthLimitFlag    = "use-bandwidth-limit"
+	enforceSessionIPFlag     = "enforce-session-ip"
 )
 
 var (
@@ -90,8 +92,9 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		bucket:         bp,
 		clickHouse:     ch,
 		ah:             ah,
-		bandwidthLimit: c.Bool(useBandwidthLimitFlag),
-		sl:             sl,
+		bandwidthLimit:   c.Bool(useBandwidthLimitFlag),
+		sl:               sl,
+		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 	}
 }
 
@@ -125,7 +128,38 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "use bandwidth limit",
 			EnvVar: "USE_BANDWIDTH_LIMIT",
 		},
+		cli.BoolTFlag{
+			Name:   enforceSessionIPFlag,
+			Usage:  "reject requests whose client IP doesn't match the remoteAddress claim in the JWT (normalized to /24 for v4, /64 for v6). Disable to unblock mobile users if false positives appear.",
+			EnvVar: "ENFORCE_SESSION_IP",
+		},
 	)
+}
+
+// sameSubnet reports whether two IP strings share the same subnet prefix
+// (/24 for IPv4, /64 for IPv6). Returns true when either side is unparseable
+// so we fail open rather than 429 a legitimate user on a malformed claim.
+func sameSubnet(a, b string) bool {
+	ipA := parseClientIP(a)
+	ipB := parseClientIP(b)
+	if ipA == nil || ipB == nil {
+		return true
+	}
+	if v4a, v4b := ipA.To4(), ipB.To4(); v4a != nil && v4b != nil {
+		return v4a.Mask(net.CIDRMask(24, 32)).Equal(v4b.Mask(net.CIDRMask(24, 32)))
+	}
+	if ipA.To4() != nil || ipB.To4() != nil {
+		return false // one is v4, other is v6
+	}
+	return ipA.Mask(net.CIDRMask(64, 128)).Equal(ipB.Mask(net.CIDRMask(64, 128)))
+}
+
+func parseClientIP(s string) net.IP {
+	s = strings.TrimSpace(s)
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	}
+	return net.ParseIP(s)
 }
 
 func (s *Web) getIP(r *http.Request) string {
@@ -169,6 +203,23 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	sessionID := ""
 	if sid, ok := claims["sessionID"].(string); ok {
 		sessionID = sid
+	}
+
+	if s.enforceSessionIP && source == External && sessionID != "" {
+		if bound, ok := claims["remoteAddress"].(string); ok && bound != "" {
+			reqIP := s.getIP(r)
+			if !sameSubnet(bound, reqIP) {
+				logger.WithFields(logrus.Fields{
+					"session_id": sessionID,
+					"session_ip": bound,
+					"request_ip": reqIP,
+					"infohash":   src.InfoHash,
+					"path":       src.Path,
+				}).Warn("session IP mismatch")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+		}
 	}
 
 	if s.sl != nil && s.sl.Enabled() && source == External {
