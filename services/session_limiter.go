@@ -8,17 +8,17 @@ import (
 )
 
 const (
-	MaxConcPerTorrentFlag = "max-conc-per-torrent"
-	MaxConcTotalFlag      = "max-conc-total"
+	MaxConcPerPathFlag = "max-conc-per-path"
+	MaxConcTotalFlag   = "max-conc-total"
 )
 
 func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 	return append(f,
 		cli.IntFlag{
-			Name:   MaxConcPerTorrentFlag,
-			Usage:  "max concurrent requests per session per torrent (0 = unlimited)",
+			Name:   MaxConcPerPathFlag,
+			Usage:  "max concurrent requests per session per (torrent, path) (0 = unlimited)",
 			Value:  10,
-			EnvVar: "MAX_CONC_PER_TORRENT",
+			EnvVar: "MAX_CONC_PER_PATH",
 		},
 		cli.IntFlag{
 			Name:   MaxConcTotalFlag,
@@ -30,31 +30,34 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 }
 
 // SessionLimiter limits concurrent requests per session and per
-// (session, infohash) pair. Zero values mean unlimited.
+// (session, infohash, path) triple. Zero values mean unlimited.
+// Scoping by path (not just infohash) lets HLS playback spread its
+// segment requests across many counters while a download accelerator
+// hammering a single file with parallel range requests hits one.
 type SessionLimiter struct {
-	maxPerTorrent int
-	maxTotal      int
+	maxPerPath int
+	maxTotal   int
 
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 }
 
 type sessionState struct {
-	total    atomic.Int32
-	mu       sync.Mutex
-	torrents map[string]*atomic.Int32
+	total atomic.Int32
+	mu    sync.Mutex
+	paths map[string]*atomic.Int32
 }
 
 func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 	return &SessionLimiter{
-		maxPerTorrent: c.Int(MaxConcPerTorrentFlag),
-		maxTotal:      c.Int(MaxConcTotalFlag),
-		sessions:      make(map[string]*sessionState),
+		maxPerPath: c.Int(MaxConcPerPathFlag),
+		maxTotal:   c.Int(MaxConcTotalFlag),
+		sessions:   make(map[string]*sessionState),
 	}
 }
 
 func (l *SessionLimiter) Enabled() bool {
-	return l.maxPerTorrent > 0 || l.maxTotal > 0
+	return l.maxPerPath > 0 || l.maxTotal > 0
 }
 
 func (l *SessionLimiter) getSession(sessionID string) *sessionState {
@@ -62,25 +65,25 @@ func (l *SessionLimiter) getSession(sessionID string) *sessionState {
 	defer l.mu.Unlock()
 	s, ok := l.sessions[sessionID]
 	if !ok {
-		s = &sessionState{torrents: make(map[string]*atomic.Int32)}
+		s = &sessionState{paths: make(map[string]*atomic.Int32)}
 		l.sessions[sessionID] = s
 	}
 	return s
 }
 
-func (s *sessionState) getTorrentCounter(hash string) *atomic.Int32 {
+func (s *sessionState) getPathCounter(key string) *atomic.Int32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.torrents[hash]
+	c, ok := s.paths[key]
 	if !ok {
 		c = &atomic.Int32{}
-		s.torrents[hash] = c
+		s.paths[key] = c
 	}
 	return c
 }
 
 // Acquire tries to acquire a slot. Returns a release function on success, or nil if rejected.
-func (l *SessionLimiter) Acquire(sessionID string, infoHash string) (release func()) {
+func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string) (release func()) {
 	if sessionID == "" {
 		return func() {}
 	}
@@ -92,17 +95,18 @@ func (l *SessionLimiter) Acquire(sessionID string, infoHash string) (release fun
 		return nil
 	}
 
-	// Check per-torrent limit.
-	tc := s.getTorrentCounter(infoHash)
-	if l.maxPerTorrent > 0 && int(tc.Load()) >= l.maxPerTorrent {
+	// Check per-(torrent, path) limit.
+	pathKey := infoHash + "|" + path
+	pc := s.getPathCounter(pathKey)
+	if l.maxPerPath > 0 && int(pc.Load()) >= l.maxPerPath {
 		return nil
 	}
 
 	s.total.Add(1)
-	tc.Add(1)
+	pc.Add(1)
 
 	return func() {
-		tc.Add(-1)
+		pc.Add(-1)
 		newTotal := s.total.Add(-1)
 		if newTotal <= 0 {
 			l.mu.Lock()

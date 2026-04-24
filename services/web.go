@@ -172,11 +172,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}
 
 	if s.sl != nil && s.sl.Enabled() && source == External {
-		release := s.sl.Acquire(sessionID, src.InfoHash)
+		release := s.sl.Acquire(sessionID, src.InfoHash, src.Path)
 		if release == nil {
 			logger.WithFields(logrus.Fields{
 				"session_id": sessionID,
 				"infohash":   src.InfoHash,
+				"path":       src.Path,
 			}).Warn("concurrent request limit exceeded")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
