@@ -32,7 +32,7 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 		},
 		cli.IntFlag{
 			Name:   MaxIPsPerSessionFlag,
-			Usage:  "max distinct client IPs per session within a 60s window (0 = unlimited)",
+			Usage:  "max distinct client IPs per session per (torrent, path) within a 60s window (0 = unlimited)",
 			Value:  5,
 			EnvVar: "MAX_IPS_PER_SESSION",
 		},
@@ -44,8 +44,8 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 // Scoping by path (not just infohash) lets HLS playback spread its
 // segment requests across many counters while a download accelerator
 // hammering a single file with parallel range requests hits one.
-// A rolling-window distinct-IP cap catches shared-session abuse where
-// the same token is replayed from many IPs simultaneously.
+// A rolling-window distinct-IP cap per (session, torrent, path) catches
+// shared-token abuse where the same token/file is fetched from many IPs.
 type SessionLimiter struct {
 	maxPerPath       int
 	maxTotal         int
@@ -55,11 +55,16 @@ type SessionLimiter struct {
 	sessions map[string]*sessionState
 }
 
+type pathState struct {
+	conc atomic.Int32
+	mu   sync.Mutex
+	ips  map[string]time.Time
+}
+
 type sessionState struct {
 	total atomic.Int32
 	mu    sync.Mutex
-	paths map[string]*atomic.Int32
-	ips   map[string]time.Time
+	paths map[string]*pathState
 }
 
 func NewSessionLimiter(c *cli.Context) *SessionLimiter {
@@ -80,40 +85,40 @@ func (l *SessionLimiter) getSession(sessionID string) *sessionState {
 	defer l.mu.Unlock()
 	s, ok := l.sessions[sessionID]
 	if !ok {
-		s = &sessionState{paths: make(map[string]*atomic.Int32)}
+		s = &sessionState{paths: make(map[string]*pathState)}
 		l.sessions[sessionID] = s
 	}
 	return s
 }
 
-func (s *sessionState) getPathCounter(key string) *atomic.Int32 {
+func (s *sessionState) getPath(key string) *pathState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.paths[key]
+	p, ok := s.paths[key]
 	if !ok {
-		c = &atomic.Int32{}
-		s.paths[key] = c
+		p = &pathState{}
+		s.paths[key] = p
 	}
-	return c
+	return p
 }
 
 // trackIP records the request IP, prunes expired entries, and returns
-// the current distinct-IP count for the session within the rolling window.
-func (s *sessionState) trackIP(ip string, window time.Duration) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.ips == nil {
-		s.ips = make(map[string]time.Time)
+// the current distinct-IP count for the path within the rolling window.
+func (p *pathState) trackIP(ip string, window time.Duration) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ips == nil {
+		p.ips = make(map[string]time.Time)
 	}
 	now := time.Now()
 	cutoff := now.Add(-window)
-	s.ips[ip] = now
-	for k, t := range s.ips {
+	p.ips[ip] = now
+	for k, t := range p.ips {
 		if t.Before(cutoff) {
-			delete(s.ips, k)
+			delete(p.ips, k)
 		}
 	}
-	return len(s.ips)
+	return len(p.ips)
 }
 
 // Acquire tries to acquire a slot. Returns a release function on success,
@@ -130,22 +135,22 @@ func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string,
 	}
 
 	pathKey := infoHash + "|" + path
-	pc := s.getPathCounter(pathKey)
-	if l.maxPerPath > 0 && int(pc.Load()) >= l.maxPerPath {
+	ps := s.getPath(pathKey)
+	if l.maxPerPath > 0 && int(ps.conc.Load()) >= l.maxPerPath {
 		return nil, "path"
 	}
 
 	if l.maxIPsPerSession > 0 && ip != "" {
-		if s.trackIP(ip, ipWindow) > l.maxIPsPerSession {
+		if ps.trackIP(ip, ipWindow) > l.maxIPsPerSession {
 			return nil, "ips"
 		}
 	}
 
 	s.total.Add(1)
-	pc.Add(1)
+	ps.conc.Add(1)
 
 	return func() {
-		pc.Add(-1)
+		ps.conc.Add(-1)
 		newTotal := s.total.Add(-1)
 		if newTotal <= 0 {
 			l.mu.Lock()
