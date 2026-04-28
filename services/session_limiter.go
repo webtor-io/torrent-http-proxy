@@ -1,6 +1,8 @@
 package services
 
 import (
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -102,9 +104,28 @@ func (s *sessionState) getPath(key string) *pathState {
 	return p
 }
 
-// trackIP records the request IP, prunes expired entries, and returns
-// the current distinct-IP count for the path within the rolling window.
+// subnetKey normalizes an IP to its subnet prefix (/24 for IPv4, /64 for IPv6)
+// so that IPv6 privacy extensions and minor IPv4 NAT variations don't count as
+// distinct IPs. Returns the raw string on parse failure (fail open).
+func subnetKey(raw string) string {
+	s := strings.TrimSpace(raw)
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return raw
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return net.IP(v4.Mask(net.CIDRMask(24, 32))).String()
+	}
+	return net.IP(ip.Mask(net.CIDRMask(64, 128))).String()
+}
+
+// trackIP records the request IP (normalized to subnet), prunes expired
+// entries, and returns the current distinct-subnet count within the window.
 func (p *pathState) trackIP(ip string, window time.Duration) int {
+	key := subnetKey(ip)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ips == nil {
@@ -112,7 +133,7 @@ func (p *pathState) trackIP(ip string, window time.Duration) int {
 	}
 	now := time.Now()
 	cutoff := now.Add(-window)
-	p.ips[ip] = now
+	p.ips[key] = now
 	for k, t := range p.ips {
 		if t.Before(cutoff) {
 			delete(p.ips, k)
