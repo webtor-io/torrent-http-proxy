@@ -181,6 +181,17 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
+	// If the token carries a `hash` claim, it's bound to that specific torrent
+	// and any mismatch is treated as forgery (prevents replay across content).
+	if boundHash, _ := claims["hash"].(string); boundHash != "" && boundHash != src.InfoHash {
+		logger.WithFields(logrus.Fields{
+			"infohash":   src.InfoHash,
+			"bound_hash": boundHash,
+		}).Warn("token hash mismatch")
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	source := Internal
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
 		source = External
@@ -357,6 +368,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			RetryDelay:        s.pr.retryDelay,
 		})
 	}
+	r = WithRulesContext(r, &RulesContext{
+		Claims:       claims,
+		PrimaryToken: r.URL.Query().Get("token"),
+		InfoHash:     src.InfoHash,
+	})
 	pr.ServeHTTP(w, r)
 }
 

@@ -103,7 +103,7 @@ func delCORSHeaders(header http.Header) {
 
 func modifyResponse(r *http.Response) error {
 	delCORSHeaders(r.Header)
-	return nil
+	return applyResponseRules(r)
 }
 
 type stubTransport struct {

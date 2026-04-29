@@ -49,7 +49,8 @@ HTTP Request → Web.ServeHTTP()
 | **Resolver** | `resolver.go` | Resolves service type/mod to a `ServiceConfig`, supports role-specific variants |
 | **ServiceLocationPool** | `service_location.go` | Finds service endpoints via K8s or env; supports Hash/NodeHash distribution |
 | **HTTPProxy** | `http_proxy.go` | Cached reverse proxies (60s TTL via `lazymap`) |
-| **Claims** | `claims.go` | JWT/API key validation; extracts role, rate, sessionID |
+| **Claims** | `claims.go` | JWT/API key validation; extracts role, rate, sessionID; `Rule` shape + `ExtractRules` helper for grace tokens |
+| **Rules pipeline** | `rules.go`, `manifest_rewriter.go` | `applyResponseRules` (called from `modifyResponse`) dispatches to a registry of `responseRuleHandler`s based on the `RulesContext` attached to the request. Currently: `rewriteManifestForGrace` swaps `?token=PRIMARY`→`?token=GRACE` per segment in HLS m3u8 while movie-time stays inside the grace window |
 | **Bucket** | `bucket.go` | Token-bucket rate limiting per session (via `juju/ratelimit`) |
 | **ClickHouse** | `clickhouse.go`, `clickhouse_db.go` | Batched analytics insert to ClickHouse |
 | **AccessHistory** | `access_history.go` | IP+UA based access rate limiting (5 unique per 3 hours) |
@@ -85,6 +86,26 @@ The `~` delimiter triggers service chaining — each modification maps to a diff
 ### Caching Pattern
 
 The project uses `github.com/webtor-io/lazymap` extensively for TTL-based lazy-loading caches (service locations, HTTP proxies, K8s endpoints, buckets). This is the primary caching abstraction throughout the codebase.
+
+### Rules pipeline
+
+Tokens may carry a `rules` claim — typed as `[]Rule{Kind, Scope, DurationSec, Token}` in `claims.go`. THP processes them through two generic extension points so new rule kinds plug in without touching the proxy hook:
+
+1. **`RulesContext`** (`claims.go`): per-request bundle (`Claims` + `PrimaryToken` + `InfoHash`) attached to the request in `web.go` `proxyHTTP` via `WithRulesContext`. This is the only thing rule handlers need to make decisions.
+
+2. **`applyResponseRules`** (`rules.go`): single dispatcher invoked from `modifyResponse`. Iterates over `responseRuleHandlers` — a registry of `func(r *http.Response, rc *RulesContext) error` handlers. Each handler self-gates against `rc.Claims` rules and the response (path, content-type). Adding a new response-side rule = appending to the registry.
+
+Currently registered handlers:
+
+- **`rewriteManifestForGrace`** (`manifest_rewriter.go`): for `kind=grace, scope=manifest`. On `.m3u8` responses, parses `#EXT-X-SESSION-OFFSET:<sec>` (defaults to 0 — back-compat with content-transcoder versions that don't emit the tag), walks `#EXTINF`/segment lines, and swaps `?token=PRIMARY` → `?token=GRACE` for segments whose movie-time start is below `rule.duration_sec`. No-op when no grace rule.
+
+Request-side rule check (runs before the response pipeline):
+
+- **Hash binding** (`web.go` `proxyHTTP`): if the token carries a `hash` claim, the request is rejected (403) unless `hash` equals the request's infohash. Prevents replay across content for any hash-bound token kind. Applied early — before resolver, bucket, etc.
+
+Gating of rule emission lives upstream — web-ui only issues grace rules when its `GRACE_RULES_ENABLED` flag is on. THP has no flag; absence of the rule short-circuits.
+
+See `web-ui/docs/grace_token.md` for the full grace-token design (token shape, anti-fraud, rollout).
 
 ### Observability
 
