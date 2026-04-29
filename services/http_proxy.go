@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -180,6 +181,18 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	p.Transport = t
 	p.ModifyResponse = modifyResponse
 	p.FlushInterval = -1
+	// Strip Accept-Encoding for .m3u8 paths so backend (nginx-vod, content-transcoder)
+	// returns plain text. modifyResponse rewrites segment tokens via byte-level
+	// substring match, which silently fails on a gzipped body — needle never
+	// found, gzipped body passes through unchanged. Manifests are tiny (<200 KB);
+	// edge gzip via ingress/CDN remains effective for the wire.
+	defaultDirector := p.Director
+	p.Director = func(req *http.Request) {
+		defaultDirector(req)
+		if strings.HasSuffix(req.URL.Path, ".m3u8") {
+			req.Header.Del("Accept-Encoding")
+		}
+	}
 	return p, nil
 }
 
