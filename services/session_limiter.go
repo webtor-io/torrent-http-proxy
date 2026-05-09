@@ -12,6 +12,7 @@ import (
 
 const (
 	MaxConcPerPathFlag   = "max-conc-per-path"
+	MaxFilesPerHashFlag  = "max-files-per-hash"
 	MaxConcTotalFlag     = "max-conc-total"
 	MaxIPsPerSessionFlag = "max-ips-per-session"
 )
@@ -25,6 +26,12 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "max concurrent requests per session per (torrent, path) (0 = unlimited)",
 			Value:  10,
 			EnvVar: "MAX_CONC_PER_PATH",
+		},
+		cli.IntFlag{
+			Name:   MaxFilesPerHashFlag,
+			Usage:  "max distinct files (paths) concurrently active per session per torrent (0 = unlimited)",
+			Value:  5,
+			EnvVar: "MAX_FILES_PER_HASH",
 		},
 		cli.IntFlag{
 			Name:   MaxConcTotalFlag,
@@ -46,10 +53,16 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 // Scoping by path (not just infohash) lets HLS playback spread its
 // segment requests across many counters while a download accelerator
 // hammering a single file with parallel range requests hits one.
+// The per-hash files cap counts *distinct files* (paths) currently
+// active for one (session, torrent) — orthogonal to per-path concurrency.
+// It catches collection-style abuse (12+ different files of a 50-MP4
+// series opened in parallel — what triggers tws OOMs) without penalising
+// download accelerators that pile many connections onto a single file.
 // A rolling-window distinct-IP cap per (session, torrent, path) catches
 // shared-token abuse where the same token/file is fetched from many IPs.
 type SessionLimiter struct {
 	maxPerPath       int
+	maxFilesPerHash  int
 	maxTotal         int
 	maxIPsPerSession int
 
@@ -63,15 +76,25 @@ type pathState struct {
 	ips  map[string]time.Time
 }
 
+// hashState tracks which paths of one infohash are currently active for the
+// session. activePaths maps path → in-flight request count; a path stays in
+// the map (counts toward the file cap) until the last request on it ends.
+type hashState struct {
+	mu          sync.Mutex
+	activePaths map[string]int
+}
+
 type sessionState struct {
-	total atomic.Int32
-	mu    sync.Mutex
-	paths map[string]*pathState
+	total  atomic.Int32
+	mu     sync.Mutex
+	paths  map[string]*pathState
+	hashes map[string]*hashState
 }
 
 func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 	return &SessionLimiter{
 		maxPerPath:       c.Int(MaxConcPerPathFlag),
+		maxFilesPerHash:  c.Int(MaxFilesPerHashFlag),
 		maxTotal:         c.Int(MaxConcTotalFlag),
 		maxIPsPerSession: c.Int(MaxIPsPerSessionFlag),
 		sessions:         make(map[string]*sessionState),
@@ -79,7 +102,7 @@ func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 }
 
 func (l *SessionLimiter) Enabled() bool {
-	return l.maxPerPath > 0 || l.maxTotal > 0 || l.maxIPsPerSession > 0
+	return l.maxPerPath > 0 || l.maxFilesPerHash > 0 || l.maxTotal > 0 || l.maxIPsPerSession > 0
 }
 
 func (l *SessionLimiter) getSession(sessionID string) *sessionState {
@@ -87,7 +110,10 @@ func (l *SessionLimiter) getSession(sessionID string) *sessionState {
 	defer l.mu.Unlock()
 	s, ok := l.sessions[sessionID]
 	if !ok {
-		s = &sessionState{paths: make(map[string]*pathState)}
+		s = &sessionState{
+			paths:  make(map[string]*pathState),
+			hashes: make(map[string]*hashState),
+		}
 		l.sessions[sessionID] = s
 	}
 	return s
@@ -102,6 +128,42 @@ func (s *sessionState) getPath(key string) *pathState {
 		s.paths[key] = p
 	}
 	return p
+}
+
+func (s *sessionState) getHash(infoHash string) *hashState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.hashes[infoHash]
+	if !ok {
+		h = &hashState{activePaths: make(map[string]int)}
+		s.hashes[infoHash] = h
+	}
+	return h
+}
+
+// tryAdd reserves a slot for path under the file cap. Returns true if the
+// slot was granted and a release function. The caller must invoke release
+// when the request finishes. Returns false if adding this path would
+// exceed maxFiles. A path already active is always admitted (it just bumps
+// the in-flight count for that path) — the cap counts distinct files,
+// not requests.
+func (h *hashState) tryAdd(path string, maxFiles int) (release func(), ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, exists := h.activePaths[path]; !exists {
+		if maxFiles > 0 && len(h.activePaths) >= maxFiles {
+			return nil, false
+		}
+	}
+	h.activePaths[path]++
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.activePaths[path]--
+		if h.activePaths[path] <= 0 {
+			delete(h.activePaths, path)
+		}
+	}, true
 }
 
 // subnetKey normalizes an IP to its subnet prefix (/24 for IPv4, /64 for IPv6)
@@ -143,7 +205,7 @@ func (p *pathState) trackIP(ip string, window time.Duration) int {
 }
 
 // Acquire tries to acquire a slot. Returns a release function on success,
-// or nil with a reason string ("total", "path", "ips") on rejection.
+// or nil with a reason string ("total", "files", "path", "ips") on rejection.
 func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string, ip string) (release func(), reason string) {
 	if sessionID == "" {
 		return func() {}, ""
@@ -155,14 +217,22 @@ func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string,
 		return nil, "total"
 	}
 
+	hs := s.getHash(infoHash)
+	releaseHash, ok := hs.tryAdd(path, l.maxFilesPerHash)
+	if !ok {
+		return nil, "files"
+	}
+
 	pathKey := infoHash + "|" + path
 	ps := s.getPath(pathKey)
 	if l.maxPerPath > 0 && int(ps.conc.Load()) >= l.maxPerPath {
+		releaseHash()
 		return nil, "path"
 	}
 
 	if l.maxIPsPerSession > 0 && ip != "" {
 		if ps.trackIP(ip, ipWindow) > l.maxIPsPerSession {
+			releaseHash()
 			return nil, "ips"
 		}
 	}
@@ -172,6 +242,7 @@ func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string,
 
 	return func() {
 		ps.conc.Add(-1)
+		releaseHash()
 		newTotal := s.total.Add(-1)
 		if newTotal <= 0 {
 			l.mu.Lock()
