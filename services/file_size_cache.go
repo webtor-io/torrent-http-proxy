@@ -1,12 +1,35 @@
 package services
 
 import (
+	"context"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/urfave/cli"
 )
+
+// fileKeyCtxKey carries the resolved (infoHash, path) of a request so that
+// response-side hooks (notably FileSizeCache population in modifyResponse)
+// can key per-file state without re-parsing the URL — by the time
+// modifyResponse runs, the proxy Director has rewritten r.Request.URL to
+// point at the upstream and the original client path is gone.
+type fileKeyCtxKey struct{}
+
+type FileKey struct {
+	InfoHash string
+	Path     string
+}
+
+func WithFileKey(r *http.Request, infoHash, path string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), fileKeyCtxKey{}, &FileKey{infoHash, path}))
+}
+
+func GetFileKey(r *http.Request) *FileKey {
+	v, _ := r.Context().Value(fileKeyCtxKey{}).(*FileKey)
+	return v
+}
 
 const (
 	FileSizeCacheCapacityFlag = "file-size-cache-capacity"

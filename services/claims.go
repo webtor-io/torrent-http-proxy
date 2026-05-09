@@ -57,15 +57,11 @@ type rulesCtxKey struct{}
 // RulesContext is the per-request bundle that downstream rule-driven hooks
 // (manifest rewriting, future kinds) read from the request context. It carries
 // the validated claims plus the request inputs they need to apply rules
-// without re-parsing — primary token (for swaps), infohash (for binding),
-// and the API secret (so the rewriter can re-sign a rules-stripped variant
-// of the primary token to embed in past-grace segment URLs).
+// without re-parsing — primary token (for swaps) and infohash (for binding).
 type RulesContext struct {
 	Claims       jwt.MapClaims
 	PrimaryToken string
 	InfoHash     string
-	Path         string
-	Secret       []byte
 }
 
 func WithRulesContext(r *http.Request, rc *RulesContext) *http.Request {

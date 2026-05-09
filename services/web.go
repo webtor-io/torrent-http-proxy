@@ -372,8 +372,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		Claims:       claims,
 		PrimaryToken: r.URL.Query().Get("token"),
 		InfoHash:     src.InfoHash,
-		Path:         src.Path,
 	})
+	r = WithFileKey(r, src.InfoHash, src.Path)
 	pr.ServeHTTP(w, r)
 }
 

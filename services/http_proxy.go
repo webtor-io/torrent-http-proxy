@@ -115,17 +115,17 @@ func (s *HTTPProxy) modifyResponse(r *http.Response) error {
 // SessionLimiter can classify the path as big/light on subsequent
 // requests. Best-effort and free-running — silently skips when the cache
 // isn't wired, the response lacks a usable size header, or the request
-// context doesn't carry the rules bundle.
+// context doesn't carry the file key.
 func (s *HTTPProxy) captureFileSize(r *http.Response) {
 	if s.fileSizeCache == nil || r.Request == nil {
 		return
 	}
-	rc := GetRulesContext(r.Request)
-	if rc == nil || rc.InfoHash == "" || rc.Path == "" {
+	fk := GetFileKey(r.Request)
+	if fk == nil || fk.InfoHash == "" || fk.Path == "" {
 		return
 	}
 	if size := SizeFromHeaders(r.StatusCode, r.ContentLength, r.Header.Get("Content-Range")); size > 0 {
-		s.fileSizeCache.Set(rc.InfoHash, rc.Path, size)
+		s.fileSizeCache.Set(fk.InfoHash, fk.Path, size)
 	}
 }
 
