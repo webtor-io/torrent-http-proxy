@@ -32,9 +32,10 @@ type HTTPProxy struct {
 	externalTransport *http.Transport
 	maxRetries        int
 	retryDelay        time.Duration
+	fileSizeCache     *FileSizeCache
 }
 
-func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration) *HTTPProxy {
+func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration, fsc *FileSizeCache) *HTTPProxy {
 	readBuf := c.Int(proxyReadBufferSizeFlag)
 	writeBuf := c.Int(proxyWriteBufferSizeFlag)
 	p := &HTTPProxy{
@@ -46,8 +47,9 @@ func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration) *HTTPPr
 			WriteBufferSize:     writeBuf,
 			ReadBufferSize:      readBuf,
 		},
-		maxRetries: c.Int(retryMaxAttemptsFlag),
-		retryDelay:   retryDelay,
+		maxRetries:    c.Int(retryMaxAttemptsFlag),
+		retryDelay:    retryDelay,
+		fileSizeCache: fsc,
 		LazyMap: lazymap.New[*httputil.ReverseProxy](&lazymap.Config{
 			Expire: 60 * time.Second,
 		}),
@@ -102,9 +104,29 @@ func delCORSHeaders(header http.Header) {
 	}
 }
 
-func modifyResponse(r *http.Response) error {
+func (s *HTTPProxy) modifyResponse(r *http.Response) error {
 	delCORSHeaders(r.Header)
+	s.captureFileSize(r)
 	return applyResponseRules(r)
+}
+
+// captureFileSize extracts the underlying upstream file size from response
+// headers and stores it in fileSizeCache by (infoHash, path) so that
+// SessionLimiter can classify the path as big/light on subsequent
+// requests. Best-effort and free-running — silently skips when the cache
+// isn't wired, the response lacks a usable size header, or the request
+// context doesn't carry the rules bundle.
+func (s *HTTPProxy) captureFileSize(r *http.Response) {
+	if s.fileSizeCache == nil || r.Request == nil {
+		return
+	}
+	rc := GetRulesContext(r.Request)
+	if rc == nil || rc.InfoHash == "" || rc.Path == "" {
+		return
+	}
+	if size := SizeFromHeaders(r.StatusCode, r.ContentLength, r.Header.Get("Content-Range")); size > 0 {
+		s.fileSizeCache.Set(rc.InfoHash, rc.Path, size)
+	}
 }
 
 type stubTransport struct {
@@ -179,7 +201,7 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	}
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = t
-	p.ModifyResponse = modifyResponse
+	p.ModifyResponse = s.modifyResponse
 	p.FlushInterval = -1
 	// Strip Accept-Encoding for .m3u8 paths so backend (nginx-vod, content-transcoder)
 	// returns plain text. modifyResponse rewrites segment tokens via byte-level

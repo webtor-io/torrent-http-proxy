@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	MaxConcPerPathFlag   = "max-conc-per-path"
-	MaxFilesPerHashFlag  = "max-files-per-hash"
-	MaxConcTotalFlag     = "max-conc-total"
-	MaxIPsPerSessionFlag = "max-ips-per-session"
+	MaxConcPerPathFlag     = "max-conc-per-path"
+	MaxBigFilesPerHashFlag = "max-big-files-per-hash"
+	BigFileThresholdFlag   = "big-file-threshold-bytes"
+	MaxConcTotalFlag       = "max-conc-total"
+	MaxIPsPerSessionFlag   = "max-ips-per-session"
 )
 
 const ipWindow = 60 * time.Second
@@ -28,10 +29,16 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 			EnvVar: "MAX_CONC_PER_PATH",
 		},
 		cli.IntFlag{
-			Name:   MaxFilesPerHashFlag,
-			Usage:  "max distinct files (paths) concurrently active per session per torrent (0 = unlimited)",
+			Name:   MaxBigFilesPerHashFlag,
+			Usage:  "max distinct big files (paths) concurrently active per session per torrent (0 = unlimited)",
 			Value:  5,
-			EnvVar: "MAX_FILES_PER_HASH",
+			EnvVar: "MAX_BIG_FILES_PER_HASH",
+		},
+		cli.Int64Flag{
+			Name:   BigFileThresholdFlag,
+			Usage:  "files smaller than this many bytes don't count toward the big-files cap (0 = treat all files as big)",
+			Value:  10 * 1024 * 1024,
+			EnvVar: "BIG_FILE_THRESHOLD_BYTES",
 		},
 		cli.IntFlag{
 			Name:   MaxConcTotalFlag,
@@ -48,23 +55,57 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 	)
 }
 
+// lightByExt is a fast-path whitelist of extensions known to be small
+// auxiliary files: subtitles, manifests, posters/thumbnails. They never
+// count toward the big-files cap, even on the very first (cold-cache)
+// request — otherwise the player loading several language tracks at once
+// could 429 itself before the response-side size cache warms up.
+var lightByExt = map[string]struct{}{
+	".srt": {}, ".vtt": {}, ".ass": {}, ".ssa": {},
+	".sub": {}, ".idx": {}, ".smi": {}, ".sbv": {},
+	".m3u8": {}, ".mpd": {},
+	".jpg": {}, ".jpeg": {}, ".png": {}, ".webp": {}, ".gif": {},
+	".json": {}, ".xml": {}, ".nfo": {}, ".txt": {},
+}
+
+func isLightExt(path string) bool {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		_, ok := lightByExt[strings.ToLower(path[i:])]
+		return ok
+	}
+	return false
+}
+
+// SizeLookup returns the byte size of the file behind (infoHash, path) if
+// it is known (typically populated lazily from upstream Content-Length on
+// the first response). When unknown, the limiter pessimistically assumes
+// the file is big — so unknown-extension uploads get capped until the
+// cache learns their size.
+type SizeLookup func(infoHash, path string) (sizeBytes int64, known bool)
+
 // SessionLimiter limits concurrent requests per session and per
 // (session, infohash, path) triple. Zero values mean unlimited.
 // Scoping by path (not just infohash) lets HLS playback spread its
 // segment requests across many counters while a download accelerator
 // hammering a single file with parallel range requests hits one.
-// The per-hash files cap counts *distinct files* (paths) currently
+// The per-hash big-files cap counts *distinct big files* (paths) currently
 // active for one (session, torrent) — orthogonal to per-path concurrency.
-// It catches collection-style abuse (12+ different files of a 50-MP4
-// series opened in parallel — what triggers tws OOMs) without penalising
-// download accelerators that pile many connections onto a single file.
+// "Big" is determined first by extension fast-path (subs, manifests,
+// images are always light) and then by cached upstream Content-Length
+// against bigFileThreshold. It catches collection-style abuse (12+ video
+// files of a 50-MP4 series opened in parallel — what triggers tws OOMs)
+// without penalising download accelerators piling many connections onto
+// a single file or players loading several language tracks.
 // A rolling-window distinct-IP cap per (session, torrent, path) catches
 // shared-token abuse where the same token/file is fetched from many IPs.
 type SessionLimiter struct {
-	maxPerPath       int
-	maxFilesPerHash  int
-	maxTotal         int
-	maxIPsPerSession int
+	maxPerPath        int
+	maxBigFilesPerHash int
+	bigFileThreshold  int64
+	maxTotal          int
+	maxIPsPerSession  int
+
+	sizeLookup SizeLookup
 
 	mu       sync.Mutex
 	sessions map[string]*sessionState
@@ -76,12 +117,14 @@ type pathState struct {
 	ips  map[string]time.Time
 }
 
-// hashState tracks which paths of one infohash are currently active for the
-// session. activePaths maps path → in-flight request count; a path stays in
-// the map (counts toward the file cap) until the last request on it ends.
+// hashState tracks which big files of one infohash are currently active for
+// the session. activeBigPaths maps path → in-flight request count for paths
+// currently classified as big; a path stays in the map (counts toward the
+// cap) until the last in-flight request on it ends. Light files are not
+// tracked here at all.
 type hashState struct {
-	mu          sync.Mutex
-	activePaths map[string]int
+	mu             sync.Mutex
+	activeBigPaths map[string]int
 }
 
 type sessionState struct {
@@ -93,16 +136,41 @@ type sessionState struct {
 
 func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 	return &SessionLimiter{
-		maxPerPath:       c.Int(MaxConcPerPathFlag),
-		maxFilesPerHash:  c.Int(MaxFilesPerHashFlag),
-		maxTotal:         c.Int(MaxConcTotalFlag),
-		maxIPsPerSession: c.Int(MaxIPsPerSessionFlag),
-		sessions:         make(map[string]*sessionState),
+		maxPerPath:         c.Int(MaxConcPerPathFlag),
+		maxBigFilesPerHash: c.Int(MaxBigFilesPerHashFlag),
+		bigFileThreshold:   c.Int64(BigFileThresholdFlag),
+		maxTotal:           c.Int(MaxConcTotalFlag),
+		maxIPsPerSession:   c.Int(MaxIPsPerSessionFlag),
+		sessions:           make(map[string]*sessionState),
 	}
 }
 
+// SetSizeLookup wires the upstream-size cache the limiter consults to
+// classify a path as big or light. Call once at startup; concurrent reads
+// during normal operation use the cached value.
+func (l *SessionLimiter) SetSizeLookup(f SizeLookup) {
+	l.sizeLookup = f
+}
+
 func (l *SessionLimiter) Enabled() bool {
-	return l.maxPerPath > 0 || l.maxFilesPerHash > 0 || l.maxTotal > 0 || l.maxIPsPerSession > 0
+	return l.maxPerPath > 0 || l.maxBigFilesPerHash > 0 || l.maxTotal > 0 || l.maxIPsPerSession > 0
+}
+
+// isBigFile decides whether the given path counts toward the per-hash
+// big-files cap. Extension whitelist short-circuits to false so the player
+// never gets 429ed on a fresh subtitle/manifest load. Otherwise the
+// upstream-size cache decides; an unknown size falls back to "big" so an
+// abuser with many uncached unique paths still hits the cap.
+func (l *SessionLimiter) isBigFile(infoHash, path string) bool {
+	if isLightExt(path) {
+		return false
+	}
+	if l.bigFileThreshold > 0 && l.sizeLookup != nil {
+		if size, known := l.sizeLookup(infoHash, path); known {
+			return size >= l.bigFileThreshold
+		}
+	}
+	return true
 }
 
 func (l *SessionLimiter) getSession(sessionID string) *sessionState {
@@ -135,33 +203,32 @@ func (s *sessionState) getHash(infoHash string) *hashState {
 	defer s.mu.Unlock()
 	h, ok := s.hashes[infoHash]
 	if !ok {
-		h = &hashState{activePaths: make(map[string]int)}
+		h = &hashState{activeBigPaths: make(map[string]int)}
 		s.hashes[infoHash] = h
 	}
 	return h
 }
 
-// tryAdd reserves a slot for path under the file cap. Returns true if the
-// slot was granted and a release function. The caller must invoke release
-// when the request finishes. Returns false if adding this path would
-// exceed maxFiles. A path already active is always admitted (it just bumps
-// the in-flight count for that path) — the cap counts distinct files,
-// not requests.
-func (h *hashState) tryAdd(path string, maxFiles int) (release func(), ok bool) {
+// tryAddBig reserves a big-file slot. Returns a release function on success
+// (caller must invoke when the request finishes), or false if adding this
+// path as a *new* active big file would exceed maxBig. A path already in
+// the active set always succeeds — the cap counts distinct files, not
+// requests, so additional concurrent ranges of the same file pass freely.
+func (h *hashState) tryAddBig(path string, maxBig int) (release func(), ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, exists := h.activePaths[path]; !exists {
-		if maxFiles > 0 && len(h.activePaths) >= maxFiles {
+	if _, exists := h.activeBigPaths[path]; !exists {
+		if maxBig > 0 && len(h.activeBigPaths) >= maxBig {
 			return nil, false
 		}
 	}
-	h.activePaths[path]++
+	h.activeBigPaths[path]++
 	return func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		h.activePaths[path]--
-		if h.activePaths[path] <= 0 {
-			delete(h.activePaths, path)
+		h.activeBigPaths[path]--
+		if h.activeBigPaths[path] <= 0 {
+			delete(h.activeBigPaths, path)
 		}
 	}, true
 }
@@ -205,7 +272,7 @@ func (p *pathState) trackIP(ip string, window time.Duration) int {
 }
 
 // Acquire tries to acquire a slot. Returns a release function on success,
-// or nil with a reason string ("total", "files", "path", "ips") on rejection.
+// or nil with a reason string ("total", "bigfiles", "path", "ips") on rejection.
 func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string, ip string) (release func(), reason string) {
 	if sessionID == "" {
 		return func() {}, ""
@@ -217,10 +284,16 @@ func (l *SessionLimiter) Acquire(sessionID string, infoHash string, path string,
 		return nil, "total"
 	}
 
-	hs := s.getHash(infoHash)
-	releaseHash, ok := hs.tryAdd(path, l.maxFilesPerHash)
-	if !ok {
-		return nil, "files"
+	var releaseHash func()
+	if l.isBigFile(infoHash, path) {
+		hs := s.getHash(infoHash)
+		var ok bool
+		releaseHash, ok = hs.tryAddBig(path, l.maxBigFilesPerHash)
+		if !ok {
+			return nil, "bigfiles"
+		}
+	} else {
+		releaseHash = func() {}
 	}
 
 	pathKey := infoHash + "|" + path

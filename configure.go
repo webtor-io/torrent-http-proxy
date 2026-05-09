@@ -28,6 +28,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterServicesConfigFlags(app.Flags)
 	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
 	app.Flags = s.RegisterSessionLimiterFlags(app.Flags)
+	app.Flags = s.RegisterFileSizeCacheFlags(app.Flags)
 
 	app.Action = run
 }
@@ -97,9 +98,12 @@ func run(c *cli.Context) error {
 		defer prom.Close()
 	}
 
+	// Setting File Size Cache (upstream Content-Length lookup, used by SessionLimiter)
+	fileSizeCache := s.NewFileSizeCache(c)
+
 	// Setting HTTP Proxy Pool
 	retryDelay := time.Duration(c.Int("retry-delay")) * time.Millisecond
-	httpProxy := s.NewHTTPProxy(c, resolver, retryDelay)
+	httpProxy := s.NewHTTPProxy(c, resolver, retryDelay, fileSizeCache)
 
 	// Setting Claims
 	claims := s.NewClaims(c)
@@ -123,6 +127,7 @@ func run(c *cli.Context) error {
 
 	// Setting SessionLimiter
 	sessionLimiter := s.NewSessionLimiter(c)
+	sessionLimiter.SetSizeLookup(fileSizeCache.Get)
 
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
