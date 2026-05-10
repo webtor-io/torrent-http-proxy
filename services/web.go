@@ -176,7 +176,19 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	apiKey := r.URL.Query().Get("api-key")
 	claims, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
-		logger.WithError(err).Warnf("failed to get claims")
+		// Demote the two known-noisy classes to Debug so dashboards aren't
+		// dominated by stale-embed traffic (cosmic-crab.buzz and similar
+		// hot-link sites with cached/truncated tokens). They generate ~5%
+		// of all thp log lines and are not actionable from our side. The
+		// 403 still goes back to the client; we just stop shouting about
+		// it.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "Token is expired") ||
+			strings.Contains(errMsg, "invalid number of segments") {
+			logger.WithError(err).Debug("failed to get claims (expired/malformed)")
+		} else {
+			logger.WithError(err).Warn("failed to get claims")
+		}
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
