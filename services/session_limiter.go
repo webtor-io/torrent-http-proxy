@@ -14,9 +14,20 @@ const (
 	MaxConcPerPathFlag     = "max-conc-per-path"
 	MaxBigFilesPerHashFlag = "max-big-files-per-hash"
 	BigFileThresholdFlag   = "big-file-threshold-bytes"
+	LightExtsFlag          = "light-exts"
 	MaxConcTotalFlag       = "max-conc-total"
 	MaxIPsPerSessionFlag   = "max-ips-per-session"
 )
+
+// defaultLightExts is the built-in fast-path whitelist used when --light-exts
+// isn't set. Subtitles, manifests, posters/thumbnails, plus Blu-ray BDMV
+// index sidecars (always KB-sized) so legit Blu-ray playback isn't clipped
+// by the per-hash big-files cap.
+const defaultLightExts = ".srt,.vtt,.ass,.ssa,.sub,.idx,.smi,.sbv," +
+	".m3u8,.mpd," +
+	".jpg,.jpeg,.png,.webp,.gif," +
+	".json,.xml,.nfo,.txt," +
+	".clpi,.mpls,.bdjo,.bdmv"
 
 const ipWindow = 60 * time.Second
 
@@ -40,6 +51,12 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 			Value:  10 * 1024 * 1024,
 			EnvVar: "BIG_FILE_THRESHOLD_BYTES",
 		},
+		cli.StringFlag{
+			Name:   LightExtsFlag,
+			Usage:  "comma-separated file extensions excluded from the big-files cap regardless of size (subtitles/manifests/posters/etc.). Leading dot optional, case-insensitive",
+			Value:  defaultLightExts,
+			EnvVar: "LIGHT_EXTS",
+		},
 		cli.IntFlag{
 			Name:   MaxConcTotalFlag,
 			Usage:  "max concurrent requests per session total (0 = unlimited)",
@@ -55,25 +72,22 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 	)
 }
 
-// lightByExt is a fast-path whitelist of extensions known to be small
-// auxiliary files: subtitles, manifests, posters/thumbnails. They never
-// count toward the big-files cap, even on the very first (cold-cache)
-// request — otherwise the player loading several language tracks at once
-// could 429 itself before the response-side size cache warms up.
-var lightByExt = map[string]struct{}{
-	".srt": {}, ".vtt": {}, ".ass": {}, ".ssa": {},
-	".sub": {}, ".idx": {}, ".smi": {}, ".sbv": {},
-	".m3u8": {}, ".mpd": {},
-	".jpg": {}, ".jpeg": {}, ".png": {}, ".webp": {}, ".gif": {},
-	".json": {}, ".xml": {}, ".nfo": {}, ".txt": {},
-}
-
-func isLightExt(path string) bool {
-	if i := strings.LastIndex(path, "."); i >= 0 {
-		_, ok := lightByExt[strings.ToLower(path[i:])]
-		return ok
+// parseLightExts builds the per-instance fast-path whitelist from a
+// comma-separated string. Each entry is normalized to lowercase and given
+// a leading dot if it's missing, so "srt, .VTT, m3u8" is accepted.
+func parseLightExts(raw string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, ext := range strings.Split(raw, ",") {
+		ext = strings.TrimSpace(strings.ToLower(ext))
+		if ext == "" {
+			continue
+		}
+		if !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		out[ext] = struct{}{}
 	}
-	return false
+	return out
 }
 
 // SizeLookup returns the byte size of the file behind (infoHash, path) if
@@ -99,11 +113,12 @@ type SizeLookup func(infoHash, path string) (sizeBytes int64, known bool)
 // A rolling-window distinct-IP cap per (session, torrent, path) catches
 // shared-token abuse where the same token/file is fetched from many IPs.
 type SessionLimiter struct {
-	maxPerPath        int
+	maxPerPath         int
 	maxBigFilesPerHash int
-	bigFileThreshold  int64
-	maxTotal          int
-	maxIPsPerSession  int
+	bigFileThreshold   int64
+	lightExts          map[string]struct{}
+	maxTotal           int
+	maxIPsPerSession   int
 
 	sizeLookup SizeLookup
 
@@ -139,10 +154,24 @@ func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 		maxPerPath:         c.Int(MaxConcPerPathFlag),
 		maxBigFilesPerHash: c.Int(MaxBigFilesPerHashFlag),
 		bigFileThreshold:   c.Int64(BigFileThresholdFlag),
+		lightExts:          parseLightExts(c.String(LightExtsFlag)),
 		maxTotal:           c.Int(MaxConcTotalFlag),
 		maxIPsPerSession:   c.Int(MaxIPsPerSessionFlag),
 		sessions:           make(map[string]*sessionState),
 	}
+}
+
+// isLightExt looks up the request path's extension in the configured
+// light-extensions whitelist (case-insensitive). Light files always pass
+// the per-hash big-files cap regardless of size, so the player loading
+// several language tracks at once never 429s itself before the response-
+// side size cache warms up.
+func (l *SessionLimiter) isLightExt(path string) bool {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		_, ok := l.lightExts[strings.ToLower(path[i:])]
+		return ok
+	}
+	return false
 }
 
 // SetSizeLookup wires the upstream-size cache the limiter consults to
@@ -162,7 +191,7 @@ func (l *SessionLimiter) Enabled() bool {
 // upstream-size cache decides; an unknown size falls back to "big" so an
 // abuser with many uncached unique paths still hits the cap.
 func (l *SessionLimiter) isBigFile(infoHash, path string) bool {
-	if isLightExt(path) {
+	if l.isLightExt(path) {
 		return false
 	}
 	if l.bigFileThreshold > 0 && l.sizeLookup != nil {
