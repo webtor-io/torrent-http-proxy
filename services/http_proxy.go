@@ -26,7 +26,7 @@ const (
 )
 
 type HTTPProxy struct {
-	lazymap.LazyMap[*httputil.ReverseProxy]
+	*lazymap.LazyMap[*httputil.ReverseProxy]
 	r                 *Resolver
 	transport         *http.Transport
 	externalTransport *http.Transport

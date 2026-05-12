@@ -210,7 +210,7 @@ func (hb *HybridBucket) probeRedis() {
 
 // HybridBucketPool manages per-session HybridBucket instances via lazymap.
 type HybridBucketPool struct {
-	lazymap.LazyMap[Throttler]
+	*lazymap.LazyMap[Throttler]
 	rc redis.UniversalClient
 }
 

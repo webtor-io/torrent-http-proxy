@@ -26,7 +26,7 @@ import (
 var sha1R = regexp.MustCompile("^[0-9a-f]{5,40}$")
 
 type ServiceLocation struct {
-	lazymap.LazyMap[*Location]
+	*lazymap.LazyMap[*Location]
 	ep           *k8s.Endpoints
 	nodes        *k8s.NodesStat
 	c            *cli.Context
@@ -36,7 +36,7 @@ type ServiceLocation struct {
 }
 
 type ProbeChecker struct {
-	lazymap.LazyMap[bool]
+	*lazymap.LazyMap[bool]
 	cl *http.Client
 }
 
@@ -67,7 +67,7 @@ func (s *ProbeChecker) Get(l *Location) (bool, error) {
 }
 
 type EndpointIgnoreList struct {
-	lazymap.LazyMap[bool]
+	*lazymap.LazyMap[bool]
 }
 
 func (s *EndpointIgnoreList) Ignore(ip string) bool {

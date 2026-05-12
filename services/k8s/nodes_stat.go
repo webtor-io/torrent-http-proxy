@@ -57,7 +57,7 @@ func (s *NodeStat) IsAllowed(role string) bool {
 }
 
 type NodesStat struct {
-	lazymap.LazyMap[[]NodeStat]
+	*lazymap.LazyMap[[]NodeStat]
 	kcl         *Client
 	labelPrefix string
 }

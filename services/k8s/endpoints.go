@@ -28,7 +28,7 @@ func RegisterEndpointsFlags(f []cli.Flag) []cli.Flag {
 }
 
 type Endpoints struct {
-	lazymap.LazyMap[*corev1.Endpoints]
+	*lazymap.LazyMap[*corev1.Endpoints]
 	cl        *Client
 	namespace string
 }
