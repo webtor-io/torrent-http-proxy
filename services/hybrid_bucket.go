@@ -126,33 +126,67 @@ func (hb *HybridBucket) Wait(count int64) {
 	hb.local = 0
 	hb.mu.Unlock()
 
-	// Slow path: try Redis once, then sleep for the deficit.
-	if canRedis {
-		// Request a batch: at least what we need, up to 1 second for prefetch.
+	if !canRedis {
+		// Local-only degraded mode: single sleep is the best we can do.
+		// N parallel waiters here each advance independently, so total
+		// throughput scales with concurrency — acceptable trade-off
+		// when Redis is unavailable.
+		if hb.rate > 0 {
+			sleepDur := time.Duration(need / hb.rate * float64(time.Second))
+			if sleepDur > 0 {
+				time.Sleep(sleepDur)
+			}
+		}
+		return
+	}
+
+	// Slow path: poll Redis until satisfied. A single-shot Redis call
+	// followed by a local sleep would let N parallel waiters each
+	// independently sleep need/rate and then write, yielding N×rate total
+	// throughput regardless of the configured limit. Looping back to Redis
+	// on each partial/empty grant pins total throughput to Redis's accrual
+	// rate (hb.rate) regardless of waiter count.
+	for need > 0 {
+		// Prefetch up to 1 second's worth on a single Redis call to
+		// amortize round-trips when contention is low.
 		batch := need
 		if hb.rate > batch {
 			batch = hb.rate
 		}
 		granted := hb.refillFromRedis(batch)
 		if granted >= need {
-			// Fully satisfied; store surplus for future writes.
 			hb.mu.Lock()
 			hb.local += granted - need
 			hb.mu.Unlock()
 			return
 		}
-		// Partial grant — reduce deficit, sleep for the rest.
 		if granted > 0 {
 			need -= granted
 		}
-	}
-
-	// Sleep for the time it takes to accrue the remaining tokens at our rate.
-	if need > 0 && hb.rate > 0 {
-		sleepDur := time.Duration(need / hb.rate * float64(time.Second))
-		if sleepDur > 0 {
-			time.Sleep(sleepDur)
+		// If Redis flipped to unavailable mid-loop, degrade and exit.
+		hb.mu.Lock()
+		stillRedisOK := hb.redisOK
+		hb.mu.Unlock()
+		if !stillRedisOK {
+			if hb.rate > 0 {
+				sleepDur := time.Duration(need / hb.rate * float64(time.Second))
+				if sleepDur > 0 {
+					time.Sleep(sleepDur)
+				}
+			}
+			return
 		}
+		// Sleep for the time Redis needs to refill the deficit, capped
+		// so we re-poll often and share fairly with other waiters; floored
+		// at 1ms to avoid busy-waiting on sub-ms grants.
+		sleepDur := time.Duration(need / hb.rate * float64(time.Second))
+		if sleepDur > 100*time.Millisecond {
+			sleepDur = 100 * time.Millisecond
+		}
+		if sleepDur < time.Millisecond {
+			sleepDur = time.Millisecond
+		}
+		time.Sleep(sleepDur)
 	}
 }
 
@@ -239,7 +273,8 @@ func (s *HybridBucketPool) Get(mc jwt.MapClaims) (Throttler, error) {
 	}
 	return s.LazyMap.Get(key, func() (Throttler, error) {
 		bytesPerSec := float64(r) / 8
-		capacity := float64(r) // ~8 seconds burst at bytesPerSec
-		return NewHybridBucket(bytesPerSec, capacity, s.rc, sessionID), nil
+		// capacity == rate: at most one second of idle accrual, no extra
+		// burst beyond what the configured rate allows.
+		return NewHybridBucket(bytesPerSec, bytesPerSec, s.rc, sessionID), nil
 	})
 }

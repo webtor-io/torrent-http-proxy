@@ -310,12 +310,13 @@ func TestConcurrentWaitSafety(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Primary goal: no panics or data races under concurrent access.
-	// With N goroutines each sleeping independently, throughput can scale
-	// roughly with goroutine count, so we use a generous upper bound.
+	// Verifies multi-waiter coordination: Wait must keep polling Redis until
+	// satisfied so N concurrent goroutines on one bucket are bound by the
+	// Redis-accrual rate, not by N × rate. Allow 3× for initial-burst
+	// (capacity) plus sleep/poll jitter.
 	throughput := float64(total.Load()) / duration.Seconds()
-	if throughput > rate*float64(goroutines)*3 {
-		t.Errorf("throughput %.0f far exceeds expected maximum %.0f", throughput, rate*float64(goroutines)*3)
+	if throughput > rate*3 {
+		t.Errorf("throughput %.0f exceeds expected ceiling %.0f (N goroutines must not multiply effective rate)", throughput, rate*3)
 	}
 	t.Logf("concurrent throughput: %.0f B/s with %d goroutines (rate=%.0f)",
 		throughput, goroutines, rate)
