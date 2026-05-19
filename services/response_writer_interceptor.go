@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type ResponseWriterInterceptor struct {
@@ -15,6 +16,12 @@ type ResponseWriterInterceptor struct {
 	bytesWritten int
 	start        time.Time
 	ttfb         time.Duration
+
+	// resolveSize is called once on the first Write to obtain a label-bound
+	// Counter handle. Lazy because the status label isn't final until the
+	// upstream's WriteHeader fires (which precedes the first body Write).
+	resolveSize func(statusCode int) prometheus.Counter
+	sizeCounter prometheus.Counter
 }
 
 func NewResponseWrtierInterceptor(w http.ResponseWriter) *ResponseWriterInterceptor {
@@ -36,8 +43,15 @@ func (w *ResponseWriterInterceptor) GroupedStatusCode() int {
 func (w *ResponseWriterInterceptor) Write(p []byte) (int, error) {
 	if w.bytesWritten == 0 {
 		w.ttfb = time.Since(w.start)
+		if w.resolveSize != nil {
+			w.sizeCounter = w.resolveSize(w.statusCode)
+		}
 	}
-	w.bytesWritten += len(p)
+	n := len(p)
+	w.bytesWritten += n
+	if w.sizeCounter != nil {
+		w.sizeCounter.Add(float64(n))
+	}
 	return w.ResponseWriter.Write(p)
 }
 

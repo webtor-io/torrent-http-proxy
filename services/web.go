@@ -261,6 +261,16 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		defer release()
 	}
 
+	wi.resolveSize = func(statusCode int) prometheus.Counter {
+		return promHTTPProxyRequestSize.WithLabelValues(
+			domain,
+			role,
+			string(source),
+			src.GetEdgeName(),
+			strconv.Itoa(statusCode/100*100),
+		)
+	}
+
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Inc()
 	defer func() {
 		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {
@@ -292,13 +302,6 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 		promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Dec()
 		promHTTPProxyRequestTotal.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
-		promHTTPProxyRequestSize.WithLabelValues(
-			domain,
-			role,
-			string(source),
-			src.GetEdgeName(),
-			strconv.Itoa(wi.GroupedStatusCode()),
-		).Add(float64(wi.bytesWritten))
 		rate, _ := claims["rate"].(string)
 		l := logger.WithFields(logrus.Fields{
 			"domain":     domain,
