@@ -126,6 +126,17 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "retry request failed")
 		}
+		if newResp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			// A 416 whose Content-Range total equals our resume offset means
+			// the previous connection had already delivered the whole object
+			// and just closed dirtily — that's a clean EOF, not a failure.
+			totalStr := strings.TrimPrefix(newResp.Header.Get("Content-Range"), "bytes */")
+			_ = newResp.Body.Close()
+			if total, perr := strconv.ParseInt(totalStr, 10, 64); perr == nil && total == newStart {
+				return nil, errUpstreamEOF
+			}
+			return nil, errors.Errorf("expected 206 on retry, got 416 (Content-Range %q, resume offset %d)", newResp.Header.Get("Content-Range"), newStart)
+		}
 		if newResp.StatusCode != http.StatusPartialContent {
 			_ = newResp.Body.Close()
 			return nil, errors.Errorf("expected 206 on retry, got %d", newResp.StatusCode)
@@ -140,6 +151,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp.Body = &retryingReadCloser{
 		body:        resp.Body,
 		reconnectFn: reconnectFn,
+		expected:    resp.ContentLength,
 		maxRetries:  rc.MaxRetries,
 		retryDelay:  rc.RetryDelay,
 		logger: logrus.WithFields(logrus.Fields{
@@ -151,6 +163,10 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// errUpstreamEOF signals that a reconnect attempt discovered the stream was
+// already fully delivered (retry offset == object size) — treat as clean EOF.
+var errUpstreamEOF = errors.New("upstream stream already fully delivered")
+
 // retryingReadCloser wraps an io.ReadCloser and transparently reconnects
 // on retryable errors, resuming from the byte offset where the error occurred.
 type retryingReadCloser struct {
@@ -158,6 +174,7 @@ type retryingReadCloser struct {
 	body        io.ReadCloser
 	reconnectFn func(offset int64) (io.ReadCloser, error)
 	bytesRead   int64
+	expected    int64 // Content-Length of the original response, -1 if unknown
 	maxRetries  int
 	retryDelay  time.Duration
 	retries     int
@@ -191,6 +208,13 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
+	// A dirty close after the full body was delivered is a clean EOF, not a
+	// failure — retrying from bytesRead would ask for a range past the end
+	// and could only ever fail with 416, killing an already-complete stream.
+	if r.expected >= 0 && r.bytesRead >= r.expected {
+		return 0, io.EOF
+	}
+
 	if r.retries >= r.maxRetries {
 		r.logger.WithError(err).Warnf("upstream failed, retries exhausted (%d/%d)", r.retries, r.maxRetries)
 		promRetryAttempts.WithLabelValues("exhausted").Inc()
@@ -209,6 +233,11 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 	newBody, reconnErr := r.reconnectFn(r.bytesRead)
 	r.retries++
 	if reconnErr != nil {
+		if errors.Is(reconnErr, errUpstreamEOF) {
+			r.logger.WithField("bytesRead", r.bytesRead).Info("retry found stream fully delivered, treating as EOF")
+			promRetryAttempts.WithLabelValues("eof").Inc()
+			return 0, io.EOF
+		}
 		r.logger.WithError(reconnErr).WithField("originalError", err.Error()).Warn("retry reconnection failed")
 		promRetryAttempts.WithLabelValues("failure").Inc()
 		return 0, err // return original error
