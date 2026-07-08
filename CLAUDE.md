@@ -19,7 +19,10 @@ go build -o server
 docker build -t torrent-http-proxy .
 ```
 
-There are no tests, linters, or Makefile configured in this project.
+Tests live in `services/` (`go test ./services/`); note `TestClickHouse`
+is broken on a clean checkout (pre-existing sqlmock drift) — the
+retry/parser/bucket tests are the ones to keep green. No linters or
+Makefile configured.
 
 ## Architecture
 
@@ -52,6 +55,7 @@ HTTP Request → Web.ServeHTTP()
 | **Claims** | `claims.go` | JWT/API key validation; extracts role, rate, sessionID; `Rule` shape + `ExtractRules` helper for grace tokens |
 | **Rules pipeline** | `rules.go`, `manifest_rewriter.go` | `applyResponseRules` (called from `modifyResponse`) dispatches to a registry of `responseRuleHandler`s based on the `RulesContext` attached to the request. Currently: `rewriteManifestForGrace` swaps `?token=PRIMARY`→`?token=GRACE` per segment in HLS m3u8 while movie-time stays inside the grace window |
 | **Bucket** | `bucket.go` | Token-bucket rate limiting per session (via `juju/ratelimit`) |
+| **retryTransport** | `retry_transport.go` | Wraps 200/206 bodies in `retryingReadCloser`: on dirty upstream close mid-stream, reconnects to a same-node fallback pod and resumes via Range. Resume offset derives from the RESPONSE (206 Content-Range, or 0 for 200) — never trust the request Range blindly; suffix ranges without Content-Range are left unwrapped. Fully-delivered bodies (bytesRead ≥ Content-Length) and retry-416-at-size (`Content-Range: bytes */total`) surface as clean io.EOF, not failures |
 | **ClickHouse** | `clickhouse.go`, `clickhouse_db.go` | Batched analytics insert to ClickHouse |
 | **AccessHistory** | `access_history.go` | IP+UA based access rate limiting (5 unique per 3 hours) |
 

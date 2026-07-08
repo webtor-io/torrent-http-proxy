@@ -71,10 +71,22 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	// Parse the original request's Range header to know the starting offset.
+	// Resume offset must reflect what the upstream actually served, not what
+	// the request asked for: a 200 means Range was ignored (or absent) and
+	// the stream starts at byte 0; a 206's true start lives in Content-Range
+	// (the server may clamp). Suffix ranges ("bytes=-N") have no absolute
+	// start without knowing the object size — if the 206 carries no
+	// Content-Range to anchor on, retrying could only splice wrong bytes, so
+	// leave the response unwrapped and let the client re-request.
 	origStart := int64(0)
-	if rng := req.Header.Get("Range"); rng != "" {
-		origStart, _, _ = parseRange(rng)
+	if resp.StatusCode == http.StatusPartialContent {
+		if s, ok := parseContentRangeStart(resp.Header.Get("Content-Range")); ok {
+			origStart = s
+		} else if start, _, _, ok := parseRange(req.Header.Get("Range")); ok {
+			origStart = start
+		} else {
+			return resp, nil
+		}
 	}
 
 	// Capture the failed pod's IP from the request host.
@@ -292,17 +304,41 @@ func isRetryableError(err error) bool {
 	return false
 }
 
-// parseRange parses "bytes=start-end" or "bytes=start-" into start and end values.
-func parseRange(rangeHeader string) (start int64, end int64, hasEnd bool) {
+// parseRange parses "bytes=start-end" or "bytes=start-" into start and end
+// values. ok is false for anything without an absolute start — notably the
+// suffix form "bytes=-N", whose real offset depends on the object size and
+// must never be treated as start=0.
+func parseRange(rangeHeader string) (start int64, end int64, hasEnd bool, ok bool) {
 	rangeHeader = strings.TrimPrefix(rangeHeader, "bytes=")
 	parts := strings.SplitN(rangeHeader, "-", 2)
-	if len(parts) != 2 {
-		return 0, 0, false
+	if len(parts) != 2 || parts[0] == "" {
+		return 0, 0, false, false
 	}
-	start, _ = strconv.ParseInt(parts[0], 10, 64)
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, false, false
+	}
 	if parts[1] != "" {
-		end, _ = strconv.ParseInt(parts[1], 10, 64)
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return 0, 0, false, false
+		}
 		hasEnd = true
 	}
-	return
+	return start, end, hasEnd, true
+}
+
+// parseContentRangeStart extracts the start offset from a
+// "bytes <start>-<end>/<total>" Content-Range header.
+func parseContentRangeStart(h string) (int64, bool) {
+	h = strings.TrimPrefix(h, "bytes ")
+	dash := strings.IndexByte(h, '-')
+	if dash <= 0 {
+		return 0, false
+	}
+	start, err := strconv.ParseInt(h[:dash], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return start, true
 }

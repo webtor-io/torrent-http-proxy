@@ -103,3 +103,44 @@ func TestRetryReconnectFailureReturnsOriginalError(t *testing.T) {
 		t.Fatalf("expected original error, got %v", err)
 	}
 }
+
+func TestParseRangeSuffixNotOK(t *testing.T) {
+	cases := []struct {
+		header string
+		start  int64
+		ok     bool
+	}{
+		{"bytes=100-", 100, true},
+		{"bytes=100-200", 100, true},
+		{"bytes=-28321", 0, false}, // suffix form has no absolute start
+		{"bytes=-", 0, false},
+		{"bytes=abc-", 0, false},
+		{"bytes=1-abc", 0, false},
+	}
+	for _, c := range cases {
+		start, _, _, ok := parseRange(c.header)
+		if ok != c.ok || (ok && start != c.start) {
+			t.Errorf("parseRange(%q) = start=%d ok=%v, want start=%d ok=%v", c.header, start, ok, c.start, c.ok)
+		}
+	}
+}
+
+func TestParseContentRangeStart(t *testing.T) {
+	cases := []struct {
+		header string
+		start  int64
+		ok     bool
+	}{
+		{"bytes 100-199/2000", 100, true},
+		{"bytes 0-0/1", 0, true},
+		{"bytes */2000", 0, false},
+		{"", 0, false},
+		{"bytes abc-1/2", 0, false},
+	}
+	for _, c := range cases {
+		start, ok := parseContentRangeStart(c.header)
+		if ok != c.ok || (ok && start != c.start) {
+			t.Errorf("parseContentRangeStart(%q) = %d,%v want %d,%v", c.header, start, ok, c.start, c.ok)
+		}
+	}
+}
