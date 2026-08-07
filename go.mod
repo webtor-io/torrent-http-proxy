@@ -22,7 +22,7 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/redis/go-redis/v9 v9.14.0
-	github.com/webtor-io/lazymap v0.0.0-20260113060019-9b5fa727eb37
+	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4
 	gopkg.in/yaml.v3 v3.0.1
 )
 
