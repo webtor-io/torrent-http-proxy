@@ -57,11 +57,13 @@ GLOBAL OPTIONS:
 
 ## Routing by infohash
 
-Services with `distribution: NodeHash` are resolved in two steps. The node
-is an interval partition of the hash space (first five hex digits of the
-infohash) over the service's nodes sorted by name; rest-api computes the
-same partition to point clients at that node, so the two must stay in
-lockstep. The pod within the node is picked by rendezvous hashing over
-(infohash, pod IP): when a pod restarts on a new IP only its own torrents
-move, and a retry that excludes the failed pod lands on the same runner-up
-from every proxy instance. `distribution: Hash` is the pod step alone.
+Services with `distribution: NodeHash` are resolved in two rendezvous
+steps (`services/rendezvous.go`: rank candidates by sha1(infohash,
+candidate), highest wins). First the node, over node names — rest-api
+ranks nodes with an identical copy of the function to send the client to
+the node this proxy will call home, and lists the runners-up as fallbacks;
+both repositories pin the same literal test vector. Then the pod within
+that node, over pod IPs. A node or pod that leaves moves only the hashes
+it owned; one that joins takes an even share from each. A retry that
+excludes the failed pod lands on the same runner-up from every proxy
+instance. `distribution: Hash` is the pod step alone.

@@ -89,58 +89,94 @@ func TestRendezvousIsDeterministicAndCaseInsensitive(t *testing.T) {
 	}
 }
 
-// The node an infohash lands on is the interval partition rest-api mirrors
-// (services/subdomains.go): nodes sorted by name, hash space cut into
-// len(nodes) equal intervals from the first five hex digits.
-func referenceNode(infohash string, nodes []string) string {
-	var num int
-	fmt.Sscanf(infohash[0:5], "%x", &num)
-	num *= 1000
-	total := 1048575 * 1000
-	interval := total / len(nodes)
-	for i := range nodes {
-		if num < (i+1)*interval {
-			return nodes[i]
-		}
-	}
-	return nodes[len(nodes)-1]
+// Shared with rest-api (services/subdomains_test.go): the rendezvous order
+// of nodes for twelve infohashes, over the three workers and over seven
+// nodes. Both services must reproduce it literally — the first entry is
+// the node thp routes to and rest-api sends the client to.
+var rendezvousVector = []struct {
+	hash  string
+	three []string
+	seven []string
+}{
+	{"06ab54879d3c8177a1fb822437e95842ec3676c2", []string{"worker63", "worker62", "worker64"}, []string{"n1", "n2", "n4", "n3", "n5", "n6", "n7"}},
+	{"a7c8d900b2c0a939f4761a3d037fc72384552741", []string{"worker62", "worker63", "worker64"}, []string{"n4", "n5", "n3", "n2", "n6", "n1", "n7"}},
+	{"7fe363e26a18b3f3a35226076826b1deef1f18eb", []string{"worker64", "worker62", "worker63"}, []string{"n6", "n4", "n1", "n7", "n2", "n5", "n3"}},
+	{"464c43863b3e5ee59ce41bd64851dc53c662949a", []string{"worker64", "worker62", "worker63"}, []string{"n1", "n6", "n4", "n3", "n5", "n2", "n7"}},
+	{"cba4525d3a64c5f2421f23b9eb99fe3630538fa1", []string{"worker62", "worker64", "worker63"}, []string{"n4", "n5", "n3", "n6", "n2", "n1", "n7"}},
+	{"331522cead8069425d99a9784e11f202a01c0e01", []string{"worker64", "worker62", "worker63"}, []string{"n3", "n4", "n6", "n5", "n1", "n2", "n7"}},
+	{"17c08f81c3614734f7ae21a35920e5d443c3060c", []string{"worker63", "worker64", "worker62"}, []string{"n1", "n6", "n4", "n5", "n2", "n7", "n3"}},
+	{"4a849030d6bd024394540939e71314db8d136a9e", []string{"worker62", "worker63", "worker64"}, []string{"n5", "n2", "n6", "n4", "n1", "n3", "n7"}},
+	{"e831f36d0dd5794b712fe61644efe9bb205c9549", []string{"worker62", "worker64", "worker63"}, []string{"n6", "n4", "n1", "n2", "n3", "n5", "n7"}},
+	{"f67dd54947fe381fe0d7359e634aa57ae82324c0", []string{"worker63", "worker64", "worker62"}, []string{"n5", "n2", "n1", "n6", "n7", "n4", "n3"}},
+	{"afb1be62a2f9a9bbe3888e81dee9f18e99e064ac", []string{"worker63", "worker62", "worker64"}, []string{"n3", "n7", "n5", "n1", "n6", "n4", "n2"}},
+	{"88dd13204862d23f421c2df7bbf50a8b1c729e3d", []string{"worker63", "worker64", "worker62"}, []string{"n4", "n1", "n5", "n7", "n3", "n6", "n2"}},
 }
 
-func TestNodeHashKeepsRestAPIPartition(t *testing.T) {
+func TestRendezvousOrderMatchesSharedVector(t *testing.T) {
+	three := []string{"worker64", "worker62", "worker63"} // deliberately unsorted
+	seven := []string{"n7", "n1", "n6", "n2", "n5", "n3", "n4"}
+	for _, v := range rendezvousVector {
+		if got := rendezvousOrder(v.hash, three); strings.Join(got, ",") != strings.Join(v.three, ",") {
+			t.Errorf("%s over 3: got %v want %v", v.hash[:8], got, v.three)
+		}
+		if got := rendezvousOrder(v.hash, seven); strings.Join(got, ",") != strings.Join(v.seven, ",") {
+			t.Errorf("%s over 7: got %v want %v", v.hash[:8], got, v.seven)
+		}
+	}
+}
+
+// NodeHash routes to the vector's first node, then to a pod of that node.
+func TestNodeHashRoutesToTheRendezvousOwner(t *testing.T) {
 	var as []corev1.EndpointAddress
 	as = append(as, fakePods("worker62", 30, 62)...)
 	as = append(as, fakePods("worker63", 30, 63)...)
 	as = append(as, fakePods("worker64", 30, 64)...)
 	s := &ServiceLocation{}
-	for _, h := range hashes(2000) {
-		a, err := s.distributeByNodeHash(&Source{InfoHash: h}, as, nil)
+	for _, v := range rendezvousVector {
+		a, err := s.distributeByNodeHash(&Source{InfoHash: v.hash}, as, nil)
 		if err != nil || a == nil {
-			t.Fatalf("hash %s: %v %v", h, a, err)
+			t.Fatalf("hash %s: %v %v", v.hash[:8], a, err)
 		}
-		if want := referenceNode(h, []string{"worker62", "worker63", "worker64"}); *a.NodeName != want {
-			t.Fatalf("hash %s: node %s, rest-api expects %s", h, *a.NodeName, want)
+		if *a.NodeName != v.three[0] {
+			t.Fatalf("hash %s: node %s, want %s", v.hash[:8], *a.NodeName, v.three[0])
 		}
 	}
 }
 
-// "fffff…" sits at the top of the space; with 7 nodes the floored interval
-// leaves it above len*interval and the old loop returned no address.
-func TestTopOfHashSpaceLandsOnTheLastNode(t *testing.T) {
+// Losing a node moves only its own hashes; the others keep their node.
+func TestNodeRendezvousOnlyMovesTheLostNodesHashes(t *testing.T) {
+	nodes := []string{"worker62", "worker63", "worker64", "worker65"}
+	rest := []string{"worker62", "worker63", "worker65"}
+	moved, lost := 0, 0
+	for _, h := range hashes(3000) {
+		before := rendezvousPick(h, nodes)
+		if before == "worker64" {
+			lost++
+			continue
+		}
+		if rendezvousPick(h, rest) != before {
+			moved++
+		}
+	}
+	if moved != 0 || lost == 0 {
+		t.Fatalf("moved=%d lost=%d", moved, lost)
+	}
+}
+
+// A hash at the top of the space used to fall out of the interval loop
+// into a nil address; every hash has an owner now.
+func TestTopOfHashSpaceGetsAnAddress(t *testing.T) {
 	var as []corev1.EndpointAddress
-	nodes := []string{"n1", "n2", "n3", "n4", "n5", "n6", "n7"}
-	for i, n := range nodes {
+	for i, n := range []string{"n1", "n2", "n3", "n4", "n5", "n6", "n7"} {
 		as = append(as, fakePods(n, 3, 10+i)...)
 	}
 	s := &ServiceLocation{}
-	top := "fffffffffffffffffffffffffffffffffffffffe"
-	a, err := s.distributeByNodeHash(&Source{InfoHash: top}, as, nil)
-	if err != nil || a == nil {
-		t.Fatalf("top hash: %v %v", a, err)
-	}
-	if *a.NodeName != "n7" {
-		t.Fatalf("top hash landed on %s, want n7", *a.NodeName)
-	}
-	if b, _ := s.distributeByHash(&Source{InfoHash: top}, as); b == nil {
-		t.Fatal("distributeByHash returned no address for the top hash")
+	for _, top := range []string{"fffffffffffffffffffffffffffffffffffffffe", "0000000000000000000000000000000000000000"} {
+		if a, err := s.distributeByNodeHash(&Source{InfoHash: top}, as, nil); err != nil || a == nil {
+			t.Fatalf("%s: %v %v", top[:5], a, err)
+		}
+		if b, _ := s.distributeByHash(&Source{InfoHash: top}, as); b == nil {
+			t.Fatalf("%s: distributeByHash returned no address", top[:5])
+		}
 	}
 }
