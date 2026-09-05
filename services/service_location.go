@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
@@ -214,24 +216,39 @@ func (s *ServiceLocation) addressToLocation(a *corev1.EndpointAddress, sub *core
 	}
 }
 
-func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
-	sort.Slice(as, func(i, j int) bool {
-		return as[i].IP < as[j].IP
-	})
-	hex := src.InfoHash[0:5]
-	num64, err := strconv.ParseInt(hex, 16, 64)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse hex from infohash=%v", src.InfoHash)
-	}
-	num := int(num64 * 1000)
-	total := 1048575 * 1000
-	interval := total / len(as)
-	for i := 0; i < len(as); i++ {
-		if num < (i+1)*interval {
-			return &as[i], nil
+// pickByRendezvous chooses the pod with the highest hash of (infohash, pod
+// IP) — highest-random-weight hashing. When a pod leaves, only the torrents
+// it held move (each to its own runner-up); when one joins, it takes an even
+// share from every other pod. The interval partition this replaced sorted
+// pods by IP as a string, so a pod restarting on a new IP shifted the
+// boundaries of every pod between its old and new position and their
+// torrents migrated to cold pods (duplicated across two pods until the
+// cleaner reaped the stale copy).
+//
+// GetFallback keeps its guarantee for free: excluding the failed IP leaves
+// the runner-up for that infohash, the same one on every proxy instance.
+func pickByRendezvous(infoHash string, as []corev1.EndpointAddress) *corev1.EndpointAddress {
+	key := strings.ToLower(infoHash)
+	var best *corev1.EndpointAddress
+	var bestScore uint64
+	for i := range as {
+		// sha1, not fnv: pod IPs differ in their last byte or two and
+		// fnv-1a mixes those too weakly for a max-of-30 pick — one pod
+		// drew 1.8× its share in the balance test.
+		sum := sha1.Sum([]byte(key + "\x00" + as[i].IP))
+		score := binary.BigEndian.Uint64(sum[:8])
+		if best == nil || score > bestScore || (score == bestScore && as[i].IP < best.IP) {
+			best, bestScore = &as[i], score
 		}
 	}
-	return nil, nil
+	return best
+}
+
+func (s *ServiceLocation) distributeByHash(src *Source, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
+	if len(as) == 0 {
+		return nil, nil
+	}
+	return pickByRendezvous(src.InfoHash, as), nil
 }
 
 func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.EndpointAddress, claims jwt.MapClaims) (*corev1.EndpointAddress, error) {
@@ -259,24 +276,32 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 	num := int(num64 * 1000)
 	total := 1048575 * 1000
 	if len(nodes) == 0 {
-		return nil, errors.Wrapf(err, "failed to distribute, no nodes found")
+		return nil, errors.Errorf("failed to distribute, no nodes found")
 	}
+	// Node level stays an interval partition of the hash space over nodes
+	// sorted by name: rest-api (services/subdomains.go) computes the same
+	// partition to point the client at the node thp calls home, so the
+	// arithmetic here must not change without changing it there. Pod level
+	// within the node is rendezvous — thp-only, nothing else mirrors it.
 	nodeInterval := total / len(nodes)
+	node := nodes[len(nodes)-1]
 	for i := 0; i < len(nodes); i++ {
-		var nas []corev1.EndpointAddress
-		for _, a := range as {
-			if *a.NodeName == nodes[i] {
-				nas = append(nas, a)
-			}
-		}
-		aInterval := nodeInterval / len(nas)
-		for j := 0; j < len(nas); j++ {
-			if num < i*nodeInterval+(j+1)*aInterval {
-				return &nas[j], nil
-			}
+		if num < (i+1)*nodeInterval {
+			node = nodes[i]
+			break
 		}
 	}
-	return nil, nil
+	// A hash at the very top of the space ("fffff…") is >= len*interval once
+	// integer division has floored the interval; it belongs to the last
+	// node, which the loop's default above gives it. Until 2026-09-05 the
+	// loop fell through to a nil address and the torrent was "unavailable".
+	var nas []corev1.EndpointAddress
+	for _, a := range as {
+		if *a.NodeName == node {
+			nas = append(nas, a)
+		}
+	}
+	return pickByRendezvous(src.InfoHash, nas), nil
 }
 
 func (s *ServiceLocation) filterNodesByRole(nodes []string, claims jwt.MapClaims) ([]string, error) {

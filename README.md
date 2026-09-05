@@ -54,3 +54,14 @@ GLOBAL OPTIONS:
    --help, -h                       show help
    --version, -v                    print the version
 ```
+
+## Routing by infohash
+
+Services with `distribution: NodeHash` are resolved in two steps. The node
+is an interval partition of the hash space (first five hex digits of the
+infohash) over the service's nodes sorted by name; rest-api computes the
+same partition to point clients at that node, so the two must stay in
+lockstep. The pod within the node is picked by rendezvous hashing over
+(infohash, pod IP): when a pod restarts on a new IP only its own torrents
+move, and a retry that excludes the failed pod lands on the same runner-up
+from every proxy instance. `distribution: Hash` is the pod step alone.
