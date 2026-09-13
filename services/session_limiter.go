@@ -174,6 +174,22 @@ func (l *SessionLimiter) isLightExt(path string) bool {
 	return false
 }
 
+// limiterPath is the path the session limiter accounts a request under.
+// A chained request such as /file.mkv~vi/opensubtitles/123.vtt is parsed
+// with Path = the source file, so every subtitle track of a movie used to
+// share one per-path slot and count as one more concurrent fetch of the
+// video: a player loading a handful of tracks hit maxConcPerPath and got
+// 429 before any byte was served. When the mod produces a light artifact
+// (subtitle, manifest, image) the full chained path is used instead, so
+// tracks get their own slots and pass the big-files cap. Heavy mod output
+// (HLS segments) keeps the source path and the caps that go with it.
+func (l *SessionLimiter) limiterPath(src *Source) string {
+	if src.Mod == nil || src.Mod.Path == "" || !l.isLightExt(src.Mod.Path) {
+		return src.Path
+	}
+	return src.Path + "~" + src.Mod.Type + src.Mod.Path
+}
+
 // SetSizeLookup wires the upstream-size cache the limiter consults to
 // classify a path as big or light. Call once at startup; concurrent reads
 // during normal operation use the cached value.

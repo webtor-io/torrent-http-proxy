@@ -246,7 +246,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}
 
 	if s.sl != nil && s.sl.Enabled() && source == External {
-		release, reason := s.sl.Acquire(sessionID, src.InfoHash, src.Path, s.getIP(r))
+		release, reason := s.sl.Acquire(sessionID, src.InfoHash, s.sl.limiterPath(src), s.getIP(r))
 		if release == nil {
 			logger.WithFields(logrus.Fields{
 				"session_id": sessionID,
