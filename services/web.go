@@ -338,6 +338,13 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Session-ID":  sessionID,
 	}
 
+	if src.Mod != nil {
+		// The mod segment is stripped from the path the service sees, so
+		// its type and argument travel as headers (e.g. ~tr:pt → "tr", "pt").
+		headers["X-Mod-Type"] = src.Mod.Type
+		headers["X-Mod-Extra"] = src.Mod.Extra
+	}
+
 	rate, ok := claims["rate"].(string)
 	if ok {
 		headers["X-Download-Rate"] = rate
