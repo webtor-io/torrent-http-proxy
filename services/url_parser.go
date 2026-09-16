@@ -10,6 +10,14 @@ import (
 	"github.com/pkg/errors"
 )
 
+// modExtraRe bounds the mod "extra" argument (the part after `:` in
+// ~tr:pt): up to 32 chars of a conservative allowlist. It arrives straight
+// from the client-controlled URL path and is forwarded as the X-Mod-Extra
+// header and, downstream, logged and interpreted (e.g. subtitle-translate
+// reads a language code from it) — so it's validated here rather than
+// relying solely on each downstream service to do it.
+var modExtraRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,32}$`)
+
 // Mod struct represents modification of source file.
 type Mod struct {
 	Type  string `json:"type"`
@@ -101,6 +109,9 @@ func (s *URLParser) extractMod(path string) (string, *Mod, error) {
 	}
 	if !exist {
 		return path, nil, nil
+	}
+	if !modExtraRe.MatchString(e) {
+		return path, nil, errors.Errorf("invalid mod extra=%q", e)
 	}
 	modPath := "/"
 	if len(p) > 1 {

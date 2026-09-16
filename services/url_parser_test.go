@@ -3,6 +3,7 @@ package services_test
 import (
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/urfave/cli"
@@ -38,4 +39,52 @@ func TestUrlParse(t *testing.T) {
 	}
 	args := os.Args[0:1]
 	_ = app.Run(args)
+}
+
+// TestExtractModExtraValidation covers I5: the mod "extra" argument
+// (~tr:<extra>) is client-controlled (it's forwarded as X-Mod-Extra and
+// logged raw downstream), so it must be bounded to a conservative allowlist
+// rather than passed through as-is.
+func TestExtractModExtraValidation(t *testing.T) {
+	const hash = "935d59df63e6b94305b5e2a32cdfd00488f1b055"
+
+	config := &s.ServicesConfig{
+		"default": {Name: "torrent-web-seeder"},
+		"tr":      {Name: "subtitle-translate"},
+	}
+	p := s.NewURLParser(config)
+
+	cases := []struct {
+		name    string
+		extra   string
+		wantErr bool
+	}{
+		{name: "ok: alnum", extra: "pt", wantErr: false},
+		{name: "control char (CR)", extra: "p\rt", wantErr: true},
+		{name: "control char (LF)", extra: "p\nt", wantErr: true},
+		{name: "too long (40 chars)", extra: strings.Repeat("a", 40), wantErr: true},
+		{name: "non-ASCII", extra: "é", wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u := &url.URL{Path: "/" + hash + "/file~tr:" + c.extra}
+			src, err := p.Parse(u)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for extra=%q, got none (mod=%+v)", c.extra, src.Mod)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for extra=%q: %v", c.extra, err)
+			}
+			if src.Mod == nil {
+				t.Fatalf("expected a mod for extra=%q, got none", c.extra)
+			}
+			if src.Mod.Extra != c.extra {
+				t.Fatalf("expected mod extra=%q, got %q", c.extra, src.Mod.Extra)
+			}
+		})
+	}
 }
