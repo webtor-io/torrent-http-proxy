@@ -170,6 +170,19 @@ func (s *Web) getIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// setModHeaders sets X-Mod-Type and X-Mod-Extra in headers unconditionally:
+// to the mod's values when src.Mod != nil, and to the empty string
+// otherwise. Called unconditionally (not just when a mod is present) so a
+// client-supplied X-Mod-Extra never reaches a downstream service.
+func setModHeaders(headers map[string]string, src *Source) {
+	headers["X-Mod-Type"] = ""
+	headers["X-Mod-Extra"] = ""
+	if src.Mod != nil {
+		headers["X-Mod-Type"] = src.Mod.Type
+		headers["X-Mod-Extra"] = src.Mod.Extra
+	}
+}
+
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry) {
 	wi := NewResponseWrtierInterceptor(w)
 	w = wi
@@ -338,12 +351,14 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Session-ID":  sessionID,
 	}
 
-	if src.Mod != nil {
-		// The mod segment is stripped from the path the service sees, so
-		// its type and argument travel as headers (e.g. ~tr:pt → "tr", "pt").
-		headers["X-Mod-Type"] = src.Mod.Type
-		headers["X-Mod-Extra"] = src.Mod.Extra
-	}
+	// Set unconditionally, like every other X-* header above: the mod
+	// segment is stripped from the path the service sees, so its type and
+	// argument travel as headers (e.g. ~tr:pt → "tr", "pt"). A source can be
+	// mod-less even when its first path segment happens to equal a mod name
+	// (GET /tr/<hash>/... is a valid mod-less source), so a client-supplied
+	// X-Mod-Type/X-Mod-Extra must never survive unmodified: Set with an
+	// empty string overwrites whatever the client sent.
+	setModHeaders(headers, src)
 
 	rate, ok := claims["rate"].(string)
 	if ok {
