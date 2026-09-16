@@ -35,7 +35,7 @@ func TestClickHouse(t *testing.T) {
 			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-				r.Role, 0,
+				r.Role, 0, "",
 			).WillReturnResult(sqlmock.NewResult(1, 1))
 		}
 		mock.ExpectCommit()
@@ -45,7 +45,7 @@ func TestClickHouse(t *testing.T) {
 			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-				r.Role, 0,
+				r.Role, 0, "",
 			).WillReturnResult(sqlmock.NewResult(1, 1))
 		}
 		mock.ExpectCommit()
@@ -55,7 +55,7 @@ func TestClickHouse(t *testing.T) {
 			stmt.ExpectExec().WithArgs(r.Timestamp, r.ApiKey, r.BytesWritten, r.TTFB,
 				r.Duration, r.Path, r.InfoHash, r.OriginalPath, r.SessionID,
 				r.Domain, r.Status, r.GroupedStatus, r.Edge, r.Source,
-				r.Role, 0,
+				r.Role, 0, "",
 			).WillReturnResult(sqlmock.NewResult(1, 1))
 		}
 		mock.ExpectCommit()
