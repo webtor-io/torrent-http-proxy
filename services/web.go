@@ -461,8 +461,10 @@ func (s *Web) Serve() error {
 		src, err := s.parser.Parse(r.URL)
 
 		if err != nil {
-			logger.WithError(err).Error("failed to parse url")
-			w.WriteHeader(500)
+			// The URL is the client's input: a bad hash, an empty path or an
+			// invalid mod argument is their error, not ours.
+			logger.WithError(err).Warn("failed to parse url")
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
