@@ -172,21 +172,41 @@ func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to distribute")
 	}
-	if a != nil && s.nn != "" && *a.NodeName != s.nn && cfg.PreferLocalNode {
-		var las []corev1.EndpointAddress
-		for _, a := range as {
-			if *a.NodeName == s.nn {
-				las = append(las, a)
-			}
-		}
-		if len(las) > 0 {
-			a, err = s.distributeByHash(src, las)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to distribute locally")
-			}
-		}
+	a, err = s.preferLocal(cfg, src, a, as)
+	if err != nil {
+		return nil, err
 	}
 	return s.addressToLocation(a, &subset), nil
+}
+
+// preferLocal swaps the distributed pick for a pod on this proxy's own node
+// when the service asks for it (PreferLocalNode) — the viewer was sent to
+// this node by rest-api, so the local pod is the one with the warm disk.
+//
+// Never for an internal caller. A service inside the cluster (subtitle
+// translation following a transcoder session, say) reaches the proxy's
+// ClusterIP on whichever node its own pod runs; "local" there is a random
+// node, and a transcoder session lives on exactly one pod — the rendezvous
+// one the viewer's own requests reached. Overriding sent the 2026-09-16
+// live-subtitle poll to a pod that had never seen the session: 404.
+func (s *ServiceLocation) preferLocal(cfg *ServiceConfig, src *Source, a *corev1.EndpointAddress, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
+	if a == nil || s.nn == "" || *a.NodeName == s.nn || !cfg.PreferLocalNode || src.Internal {
+		return a, nil
+	}
+	var las []corev1.EndpointAddress
+	for _, c := range as {
+		if *c.NodeName == s.nn {
+			las = append(las, c)
+		}
+	}
+	if len(las) == 0 {
+		return a, nil
+	}
+	la, err := s.distributeByHash(src, las)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to distribute locally")
+	}
+	return la, nil
 }
 
 func (s *ServiceLocation) getPort(sub *corev1.EndpointSubset, name string) int {

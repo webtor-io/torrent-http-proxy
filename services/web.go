@@ -82,16 +82,16 @@ func init() {
 
 func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter) *Web {
 	return &Web{
-		host:           c.String(webHostFlag),
-		port:           c.Int(webPortFlag),
-		baseURL:        fmt.Sprintf("http://%s:%d", c.String(torrentHTTPProxyHostFlag), c.Int(torrentHTTPProxyPortFlag)),
-		parser:         parser,
-		r:              r,
-		pr:             pr,
-		claims:         claims,
-		bucket:         bp,
-		clickHouse:     ch,
-		ah:             ah,
+		host:             c.String(webHostFlag),
+		port:             c.Int(webPortFlag),
+		baseURL:          fmt.Sprintf("http://%s:%d", c.String(torrentHTTPProxyHostFlag), c.Int(torrentHTTPProxyPortFlag)),
+		parser:           parser,
+		r:                r,
+		pr:               pr,
+		claims:           claims,
+		bucket:           bp,
+		clickHouse:       ch,
+		ah:               ah,
 		bandwidthLimit:   c.Bool(useBandwidthLimitFlag),
 		sl:               sl,
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
@@ -221,6 +221,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r.Header.Get("X-FORWARDED-FOR") != "" {
 		source = External
 	}
+	src.Internal = source == Internal
 
 	ads := false
 

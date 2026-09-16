@@ -180,3 +180,38 @@ func TestTopOfHashSpaceGetsAnAddress(t *testing.T) {
 		}
 	}
 }
+
+// preferLocalNode is a locality trick for the viewer's own requests: the
+// client was sent to this node, so the local pod holds its state. An
+// internal caller (a service on a random node) must keep the rendezvous
+// pick — that is the pod the viewer's session lives on.
+func TestPreferLocalNodeIsForExternalCallersOnly(t *testing.T) {
+	var as []corev1.EndpointAddress
+	as = append(as, fakePods("worker62", 30, 62)...)
+	as = append(as, fakePods("worker63", 30, 63)...)
+	s := &ServiceLocation{nn: "worker63"}
+	cfg := &ServiceConfig{PreferLocalNode: true}
+	v := rendezvousVector[0]
+	picked, err := s.distributeByNodeHash(&Source{InfoHash: v.hash}, as, nil)
+	if err != nil || picked == nil {
+		t.Fatal(err)
+	}
+	if *picked.NodeName == "worker63" {
+		// pick a hash whose owner is the other node so the override has something to do
+		for _, vv := range rendezvousVector {
+			p, _ := s.distributeByNodeHash(&Source{InfoHash: vv.hash}, as, nil)
+			if p != nil && *p.NodeName != "worker63" {
+				v, picked = vv, p
+				break
+			}
+		}
+	}
+	ext, err := s.preferLocal(cfg, &Source{InfoHash: v.hash}, picked, as)
+	if err != nil || ext == nil || *ext.NodeName != "worker63" {
+		t.Fatalf("external caller must be moved to the local node, got %v", ext)
+	}
+	in, err := s.preferLocal(cfg, &Source{InfoHash: v.hash, Internal: true}, picked, as)
+	if err != nil || in == nil || in.IP != picked.IP {
+		t.Fatalf("internal caller must keep the rendezvous pod %s, got %v", picked.IP, in)
+	}
+}

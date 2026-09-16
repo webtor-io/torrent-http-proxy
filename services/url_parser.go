@@ -38,6 +38,11 @@ type Source struct {
 	ApiKey     string `json:"api_key"`
 	Query      string `json:"query"`
 	Mod        *Mod
+	// Internal marks a request that came from inside the cluster (no
+	// X-Forwarded-For): a service fetching on a viewer's behalf, not the
+	// viewer's own client. Locality tricks that assume the caller sits on
+	// the node it was sent to do not apply to it.
+	Internal bool `json:"-"`
 }
 
 func (s *Source) GetKey() string {
