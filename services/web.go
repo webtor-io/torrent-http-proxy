@@ -162,6 +162,23 @@ func parseClientIP(s string) net.IP {
 	return net.ParseIP(s)
 }
 
+// escapePathSegments percent-encodes every segment of a decoded path so it
+// can be glued into a URL. src.Path is url.URL.Path — already decoded — so a
+// file name containing '#', '?' or '%' must be re-encoded before it is
+// handed to services that parse X-Source-Url as a URL (content-prober's
+// ffprobe, content-transcoder's ffmpeg, srt2vtt, video-info): an unescaped
+// '#' cuts the path at the fragment and the seeder is asked for a file that
+// does not exist. Slashes are kept, everything else follows url.PathEscape.
+// Seen with "Celeb vagyok… - S02 - 2008#10#27 - ….mkv" (2026-09-18): 118
+// "probing failed" over 51 torrents in a week were this.
+func escapePathSegments(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segs, "/")
+}
+
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
@@ -341,7 +358,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	}()
 
 	headers := map[string]string{
-		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + src.Path + "?" + src.Query,
+		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + escapePathSegments(src.Path) + "?" + src.Query,
 		"X-Proxy-Url":   s.baseURL,
 		"X-Info-Hash":   src.InfoHash,
 		"X-Path":        src.Path,

@@ -3,6 +3,7 @@ package services
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -52,4 +53,29 @@ func TestModHeadersScrubClientValue(t *testing.T) {
 			t.Fatalf("expected upstream to see X-Mod-Type=tr, got %q", got)
 		}
 	})
+}
+
+func TestEscapePathSegmentsForSourceURL(t *testing.T) {
+	cases := map[string]string{
+		"/plain/file.mkv":                       "/plain/file.mkv",
+		"/Show S02/Ep - 2008#10#27 - Title.mkv": "/Show%20S02/Ep%20-%202008%2310%2327%20-%20Title.mkv",
+		"/dir/what?.mp4":                        "/dir/what%3F.mp4",
+		"/dir/100%.avi":                         "/dir/100%25.avi",
+		"/dir/Kapcsoljuk Argentínát.mkv":        "/dir/Kapcsoljuk%20Argent%C3%ADn%C3%A1t.mkv",
+		"/a+b/c&d=e.mkv":                        "/a+b/c&d=e.mkv",
+		"":                                      "",
+	}
+	for in, want := range cases {
+		if got := escapePathSegments(in); got != want {
+			t.Errorf("escapePathSegments(%q) = %q, want %q", in, got, want)
+		}
+		// Round trip: the escaped form must parse back to the original path.
+		u, err := url.Parse("http://h" + escapePathSegments(in) + "?q=1")
+		if err != nil {
+			t.Fatalf("parse %q: %v", in, err)
+		}
+		if u.Path != in || u.Fragment != "" {
+			t.Errorf("round trip of %q gave path %q fragment %q", in, u.Path, u.Fragment)
+		}
+	}
 }
