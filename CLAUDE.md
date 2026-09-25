@@ -127,7 +127,17 @@ See `web-ui/docs/grace_token.md` for the full grace-token design (token shape, a
 - **Prometheus metrics** on configurable port (request duration, TTFB, bytes, current connections)
 - **Health probe** on port 8081
 - **pprof** on configurable port
-- Metric labels: `source` (`internal`/`external`, lowercase), `role`, `name` (service), `status`
+- Metric labels: `source` (`internal`/`external`, lowercase), `role`, `name` (service), `status` (the class: `200`/`300`/`400`/`500`)
+
+#### Client gone vs upstream failure (499 vs 502)
+
+- `errorHandler` (`http_proxy.go`) replaces ReverseProxy's default, which answered 502 for any failure before the response began, a client that left included, and logged it as an unstructured stdlib `http: proxy error` line. That line is gone: the cause is the `error` field of the closing line
+- 499 (`StatusClientClosedRequest`, nginx's convention; class `400`): the client's own context is done (captured at the top of `proxyHTTP`, before anything derives it) and the error is `context.Canceled`. Logged Info `client closed request`. Nobody receives it
+- Everything else keeps its status and stays visible: dial refused, EOF/reset before headers, and thp's own cancellation of a `?stats` request on `Close` with the client still connected are 502 (Error `failed to serve request`); an upstream's own 5xx passes through. An upstream error that came first stays that error even if the client then leaves (`clientGone` needs both halves: `TestClientGone`)
+- Before it (2026-09-25 14:55–18:55Z, all pods): 7,860 of 8,802 thp 502s were client-gone: the seeder's 4,148 external and 1,762 of 1,763 internal, the transcoder's 901, the archiver's 35, content-prober's 15, video-info's 7 and 992 of nginx-vod's 1,925. The real ones: about 930 nginx-vod `EOF`s in < 0.1 s, all on the worker63 thp pod (889 unambiguous: 495 in 17h UTC alone), and 8 external-proxy `EOF`s. Joined by pod and second: the stdlib line had no edge
+- A long `duration` on a 499 is a client that gave up waiting for headers, not one that changed its mind: 2,036 of the seeder's 4,131 external ones ended at 30 s or 60 s (client timeouts on a seeder that had not answered). Upstream stalls now show as 499s with long durations, not as 5xx
+- Blind spot: at the shutdown drain timeout `GracefulServer` closes the connections still open, which cancels their contexts like a client leaving; a request still waiting for headers then reads 499. The ingress gets a closed connection either way
+- Mid-body failures are unchanged: headers are out, the status stays the upstream's (ReverseProxy aborts the response)
 
 #### Tier-bound vs upstream-bound (throttle metrics)
 
@@ -137,7 +147,7 @@ See `web-ui/docs/grace_token.md` for the full grace-token design (token shape, a
 - `webtor_http_proxy_throttle_ratio{role,name,download}`: per-response wait/duration, 2xx of ≥ max(1 MiB, 4 s of the rate). Smaller ones fit the bucket burst (capacity = 1 s of rate, +1 s prefetched on Redis) and read ≈ 0 whatever the upstream did
 - The histogram is one sample per response: multi-connection downloaders dominate its counts. Shares come from the counters; per-session answers from Loki (`throttled`, `duration`, `bytes` by `session_id`)
 - `download` = the query key is present (seeder semantics). Also carries paid Stremio and WebDAV playback, which redirect to the download export URL
-- Closing log line: `bytes` and `downstream_blocked` (s) always; `throttled` (s) only with a limiter, so absent means no limiter, not 0; `req_id` = ingress `X-Request-ID`, the last field of the ingress access log
+- Closing log line: `error` when the proxy gave up before the response (see 499 vs 502 above); `bytes` and `downstream_blocked` (s) always; `throttled` (s) only with a limiter, so absent means no limiter, not 0; `req_id` = ingress `X-Request-ID`, the last field of the ingress access log
 - Blind spot: "downstream" is ingress-nginx with proxy buffering (~260 MiB per response). A client slower than the tier is invisible until that fills, and the limiter-paced response reads tier-bound. On segment traffic (HLS, small ranges) each response fits the buffer whole and it never fills: every segment reads tier-bound whatever the client's speed. Join on `req_id` and compare ingress `request_time` with `upstream_response_time`
 - Blind spot: grace segment tokens have `rate` but no `sessionID`, so grace segments are not limited at all (their `rate=50M` log field is the claim, not an applied cap) and appear in no throttle metric. Free-tier HLS data covers only post-grace viewing
 

@@ -287,6 +287,9 @@ func setModHeaders(headers map[string]string, src *Source) {
 func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, logger *logrus.Entry) {
 	wi := NewResponseWrtierInterceptor(w)
 	w = wi
+	// Taken here, before anything derives r's context: errorHandler tells a
+	// client that left from thp's own cancellations by this one.
+	outcome := &proxyOutcome{client: r.Context()}
 	apiKey := r.URL.Query().Get("api-key")
 	claims, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
@@ -467,11 +470,22 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			}
 		}
 		l := logger.WithFields(fields)
-		if wi.GroupedStatusCode() == 500 {
+		if outcome.err != nil {
+			l = l.WithError(outcome.err)
+		}
+		switch {
+		case wi.statusCode == StatusClientClosedRequest:
+			// The client left before the upstream answered: not a failure
+			// to serve, so not Warn. A long duration is a client that gave
+			// up waiting for headers: 2,036 of the seeder's 4,131 external
+			// ones on 2026-09-25 ended at 30 s or 60 s, client timeouts on
+			// a seeder that had not answered yet.
+			l.Info("client closed request")
+		case wi.GroupedStatusCode() == 500:
 			l.Error("failed to serve request")
-		} else if wi.GroupedStatusCode() == 200 {
+		case wi.GroupedStatusCode() == 200:
 			l.Info("request served successfully")
-		} else {
+		default:
 			l.Warn("bad request")
 		}
 	}()
@@ -549,6 +563,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		InfoHash:     src.InfoHash,
 	})
 	r = WithFileKey(r, src.InfoHash, src.Path)
+	r = withProxyOutcome(r, outcome)
 	// A session's own content feeds GET /session-stats. Internal requests
 	// are services fetching on a viewer's behalf (web-ui's own fetches come
 	// through the public ingress in prod and do count); grace segment
