@@ -33,6 +33,7 @@ type Claims struct {
 	apiKey    string
 	apiSecret string
 }
+
 // Rule describes an optional policy attached to a primary token. The grace
 // rule is the first kind: it carries a separate signed token that THP swaps
 // in on segment URLs while movie-time falls within DurationSec.
@@ -106,6 +107,16 @@ func ExtractRules(claims jwt.MapClaims) []Rule {
 		out = append(out, r)
 	}
 	return out
+}
+
+// tokenDomain is the token's domain claim, "default" when it has none. It
+// labels metrics and logs, and keys session stats: an embed's visitors share
+// its owner's sessionID and differ from the owner only here.
+func tokenDomain(claims jwt.MapClaims) string {
+	if d, ok := claims["domain"].(string); ok {
+		return d
+	}
+	return "default"
 }
 
 func NewClaims(c *cli.Context) *Claims {

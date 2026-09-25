@@ -267,14 +267,23 @@ func (s *HybridBucketPool) Get(mc jwt.MapClaims) (Throttler, error) {
 		return nil, nil
 	}
 	key := sessionID + rate
-	r, err := bytefmt.ToBytes(rate)
+	bytesPerSec, err := rateBytesPerSec(rate)
 	if err != nil {
-		return nil, errors.Errorf("failed to parse rate %v", rate)
+		return nil, err
 	}
 	return s.LazyMap.Get(key, func() (Throttler, error) {
-		bytesPerSec := float64(r) / 8
 		// capacity == rate: at most one second of idle accrual, no extra
 		// burst beyond what the configured rate allows.
 		return NewHybridBucket(bytesPerSec, bytesPerSec, s.rc, sessionID), nil
 	})
+}
+
+// rateBytesPerSec converts a token's rate claim, bits per second in bytefmt
+// units ("5M", "50M"), to bytes per second.
+func rateBytesPerSec(rate string) (float64, error) {
+	r, err := bytefmt.ToBytes(rate)
+	if err != nil {
+		return 0, errors.Errorf("failed to parse rate %v", rate)
+	}
+	return float64(r) / 8, nil
 }

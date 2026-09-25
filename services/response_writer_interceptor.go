@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -22,6 +23,12 @@ type ResponseWriterInterceptor struct {
 	// upstream's WriteHeader fires (which precedes the first body Write).
 	resolveSize func(statusCode int) prometheus.Counter
 	sizeCounter prometheus.Counter
+
+	// blocked is the wall time Write and Flush spent inside the downstream
+	// writer, in nanoseconds. Atomic because ReverseProxy's first flush runs
+	// on a time.AfterFunc goroutine: maxLatencyWriter serialises it with
+	// Write under its mutex, but from a different goroutine.
+	blocked atomic.Int64
 }
 
 func NewResponseWrtierInterceptor(w http.ResponseWriter) *ResponseWriterInterceptor {
@@ -52,7 +59,18 @@ func (w *ResponseWriterInterceptor) Write(p []byte) (int, error) {
 	if w.sizeCounter != nil {
 		w.sizeCounter.Add(float64(n))
 	}
-	return w.ResponseWriter.Write(p)
+	start := time.Now()
+	written, err := w.ResponseWriter.Write(p)
+	w.blocked.Add(int64(time.Since(start)))
+	return written, err
+}
+
+// Blocked reports how long handing the response downstream has blocked:
+// back-pressure from whoever reads it. In prod that is ingress-nginx, which
+// buffers up to ~260 MiB per response, so a slow client shows up here only
+// once that buffer is full.
+func (w *ResponseWriterInterceptor) Blocked() time.Duration {
+	return time.Duration(w.blocked.Load())
 }
 
 func (w *ResponseWriterInterceptor) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -69,7 +87,9 @@ func (w *ResponseWriterInterceptor) Flush() {
 		return
 	}
 
+	start := time.Now()
 	f.Flush()
+	w.blocked.Add(int64(time.Since(start)))
 }
 
 // Check interface implementations.

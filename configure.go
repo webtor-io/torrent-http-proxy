@@ -17,6 +17,7 @@ func configure(app *cli.App) {
 	app.Flags = cs.RegisterProbeFlags(app.Flags)
 	app.Flags = cs.RegisterPromFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
+	app.Flags = cs.RegisterShutdownFlags(app.Flags)
 	app.Flags = cs.RegisterRedisClientFlags(app.Flags)
 	app.Flags = s.RegisterWebFlags(app.Flags)
 	app.Flags = s.RegisterClickHouseFlags(app.Flags)
@@ -132,8 +133,14 @@ func run(c *cli.Context) error {
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
 		bucket, clickHouse, accessHistory, sessionLimiter)
+	// Bound before any servable starts: the probe answers Ready as soon as
+	// it listens, and a pod must not read Ready while its web port is
+	// unbound (maxSurge 1 retires the old pod on it).
+	if err := web.Listen(); err != nil {
+		web.Close()
+		return err
+	}
 	servers = append(servers, web)
-	defer web.Close()
 
 	// Setting ServeService
 	serve := cs.NewServe(servers...)
@@ -143,5 +150,11 @@ func run(c *cli.Context) error {
 	if err != nil {
 		log.WithError(err).Error("got serve error")
 	}
+	// Drain in-flight requests here, not in a defer: their deferred work
+	// adds to ClickHouse and must not meet a closed client, and the deferred
+	// closes above (ClickHouse, Redis, probe, prom) run as soon as run
+	// returns. A defer would also run it on a panic, delaying the crash by
+	// the whole shutdown timeout.
+	web.Close()
 	return err
 }

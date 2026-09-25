@@ -1,12 +1,16 @@
 package services
 
 import (
+	"context"
 	"fmt"
+	"math"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,6 +18,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
+	cs "github.com/webtor-io/common-services"
 )
 
 type SourceType string
@@ -38,6 +43,15 @@ type Web struct {
 	bandwidthLimit   bool
 	sl               *SessionLimiter
 	enforceSessionIP bool
+	stats            *SessionStats
+	// gs drains in-flight requests on Close, up to the shutdown timeout
+	// (WEB_SHUTDOWN_TIMEOUT), instead of dropping them with the listener.
+	gs *cs.GracefulServer
+	// closing is closed first thing in Close: responses that never end on
+	// their own (session-stats streams, the seeder's ?stats streams) end on
+	// it instead of holding up the drain.
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 const (
@@ -47,6 +61,20 @@ const (
 	torrentHTTPProxyPortFlag = "torrent-http-proxy-port"
 	useBandwidthLimitFlag    = "use-bandwidth-limit"
 	enforceSessionIPFlag     = "enforce-session-ip"
+)
+
+// A 2xx response enters webtor_http_proxy_throttle_ratio only when it is at
+// least throttleRatioMinBytes and at least throttleRatioMinRateSeconds' worth
+// of the token's rate. A session's bucket holds one second of the rate
+// (capacity == rate), and a Redis-backed one keeps up to another second
+// prefetched locally, so up to ~2 s of the rate leaves without any wait:
+// ~12 MiB at 50M, most HLS segments. Such a response reads ratio ≈ 0 whether
+// the upstream was slow or fast, which says nothing about tier vs upstream.
+// Four seconds leaves at least half of a tier-bound response to the limiter.
+// The byte floor keeps manifests, subtitles and probes out at rates under 2M.
+const (
+	throttleRatioMinBytes       = 1 << 20
+	throttleRatioMinRateSeconds = 4
 )
 
 var (
@@ -70,6 +98,29 @@ var (
 		Name: "webtor_http_proxy_request_total",
 		Help: "HTTP Proxy dial total",
 	}, []string{"source", "role", "name", "status"})
+	// The three throttle counters cover one population: responses a limiter
+	// was installed on, minus event streams. Per response, wait and
+	// downstream are parts of duration, so wait/duration and
+	// downstream/duration are time-weighted shares of that population;
+	// request_duration_seconds_sum also holds limiter-less requests and SSE.
+	// Labels match webtor_http_proxy_request_duration_seconds minus status.
+	promHTTPProxyThrottleWait = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_throttle_wait_seconds_total",
+		Help: "HTTP Proxy time throttled responses spent blocked in the bandwidth limiter in seconds",
+	}, []string{"source", "role", "name"})
+	promHTTPProxyThrottledDuration = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_throttled_request_duration_seconds_total",
+		Help: "HTTP Proxy duration of throttled responses in seconds",
+	}, []string{"source", "role", "name"})
+	promHTTPProxyThrottledDownstream = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_throttled_request_downstream_seconds_total",
+		Help: "HTTP Proxy time throttled responses spent blocked writing downstream in seconds",
+	}, []string{"source", "role", "name"})
+	promHTTPProxyThrottleRatio = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "webtor_http_proxy_throttle_ratio",
+		Help:    "HTTP Proxy share of response duration spent blocked in the bandwidth limiter (2xx of at least 1 MiB and 4 s of the rate)",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99},
+	}, []string{"role", "name", "download"})
 )
 
 func init() {
@@ -78,6 +129,10 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyRequestSize)
 	prometheus.MustRegister(promHTTPProxyRequestCurrent)
 	prometheus.MustRegister(promHTTPProxyRequestTotal)
+	prometheus.MustRegister(promHTTPProxyThrottleWait)
+	prometheus.MustRegister(promHTTPProxyThrottledDuration)
+	prometheus.MustRegister(promHTTPProxyThrottledDownstream)
+	prometheus.MustRegister(promHTTPProxyThrottleRatio)
 }
 
 func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter) *Web {
@@ -95,6 +150,9 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		bandwidthLimit:   c.Bool(useBandwidthLimitFlag),
 		sl:               sl,
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
+		stats:            NewSessionStats(),
+		closing:          make(chan struct{}),
+		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
 }
 
@@ -179,6 +237,32 @@ func escapePathSegments(p string) string {
 	return strings.Join(segs, "/")
 }
 
+// throttleRatio is the share of total that was spent blocked in the limiter,
+// clamped to [0, 1].
+func throttleRatio(waited, total time.Duration) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return math.Min(math.Max(waited.Seconds()/total.Seconds(), 0), 1)
+}
+
+// throttleRatioMinSize is the smallest response, in bytes, whose throttle
+// ratio is observed under the token rate; an unparsable rate observes none.
+func throttleRatioMinSize(rate string) int {
+	bytesPerSec, err := rateBytesPerSec(rate)
+	if err != nil {
+		return math.MaxInt
+	}
+	return max(throttleRatioMinBytes, int(math.Ceil(throttleRatioMinRateSeconds*bytesPerSec)))
+}
+
+// isEventStream reports whether the response is Server-Sent Events, the way
+// ReverseProxy recognises it for immediate flushing.
+func isEventStream(h http.Header) bool {
+	mt, _, _ := mime.ParseMediaType(h.Get("Content-Type"))
+	return mt == "text/event-stream"
+}
+
 func (s *Web) getIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
@@ -249,15 +333,16 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	if r, ok := claims["ads"].(bool); ok {
 		ads = r
 	}
-	domain := "default"
-	if d, ok := claims["domain"].(string); ok {
-		domain = d
-	}
+	domain := tokenDomain(claims)
 
 	sessionID := ""
 	if sid, ok := claims["sessionID"].(string); ok {
 		sessionID = sid
 	}
+
+	// Set by ingress-nginx and logged there as $req_id: joins this request
+	// to what the client actually received behind the ingress buffer.
+	reqID := r.Header.Get("X-Request-ID")
 
 	if s.enforceSessionIP && source == External && sessionID != "" {
 		if bound, ok := claims["remoteAddress"].(string); ok && bound != "" {
@@ -302,14 +387,21 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		)
 	}
 
+	// Set once the bandwidth limiter wraps the writer below; nil means the
+	// response was not throttled at all (internal caller, no rate in the
+	// token, limiting off), which is not the same as throttled for 0 s.
+	var tw *ThrottledResponseWriter
+
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Inc()
 	defer func() {
+		duration := time.Since(wi.start)
+		blocked := wi.Blocked()
 		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {
 			err := s.clickHouse.Add(&StatRecord{
 				ApiKey:        apiKey,
 				BytesWritten:  uint64(wi.bytesWritten),
 				Domain:        domain,
-				Duration:      uint64(time.Since(wi.start).Milliseconds()),
+				Duration:      uint64(duration.Milliseconds()),
 				Edge:          src.GetEdgeName(),
 				GroupedStatus: uint64(wi.GroupedStatusCode()),
 				InfoHash:      src.InfoHash,
@@ -327,14 +419,14 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				logger.WithError(err).Warn("failed to store data to ClickHouse")
 			}
 		}
-		promHTTPProxyRequestDuration.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(time.Since(wi.start).Seconds())
+		promHTTPProxyRequestDuration.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(duration.Seconds())
 		if wi.bytesWritten > 0 {
 			promHTTPProxyRequestTTFB.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Observe(wi.ttfb.Seconds())
 		}
 		promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Dec()
 		promHTTPProxyRequestTotal.WithLabelValues(string(source), role, src.GetEdgeName(), strconv.Itoa(wi.GroupedStatusCode())).Inc()
 		rate, _ := claims["rate"].(string)
-		l := logger.WithFields(logrus.Fields{
+		fields := logrus.Fields{
 			"domain":     domain,
 			"role":       role,
 			"source":     string(source),
@@ -342,12 +434,39 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"infohash":   src.InfoHash,
 			"path":       src.Path,
 			"ttfb":       wi.ttfb.Seconds(),
-			"duration":   time.Since(wi.start).Seconds(),
+			"duration":   duration.Seconds(),
 			"status":     strconv.Itoa(wi.statusCode),
 			"rate":       rate,
 			"session_id": sessionID,
 			"referer":    r.Referer(),
-		})
+			"bytes":      wi.bytesWritten,
+			// Time blocked handing bytes downstream; what is left of
+			// duration after it and throttled is upstream and TTFB.
+			"downstream_blocked": blocked.Seconds(),
+		}
+		if reqID != "" {
+			fields["req_id"] = reqID
+		}
+		if tw != nil {
+			waited := tw.Waited()
+			fields["throttled"] = waited.Seconds()
+			// Status streams (the seeder's ?stats=true, warmup) hold a
+			// limited connection for minutes and barely write: not content
+			// throughput, so they are logged but kept out of every metric.
+			if !isEventStream(wi.Header()) {
+				edge := src.GetEdgeName()
+				promHTTPProxyThrottleWait.WithLabelValues(string(source), role, edge).Add(waited.Seconds())
+				promHTTPProxyThrottledDuration.WithLabelValues(string(source), role, edge).Add(duration.Seconds())
+				promHTTPProxyThrottledDownstream.WithLabelValues(string(source), role, edge).Add(blocked.Seconds())
+				if wi.GroupedStatusCode() == 200 && wi.bytesWritten >= throttleRatioMinSize(rate) {
+					// The seeder serves an attachment whenever the key is
+					// present; rest-api spells it download=true.
+					_, download := r.URL.Query()["download"]
+					promHTTPProxyThrottleRatio.WithLabelValues(role, edge, strconv.FormatBool(download)).Observe(throttleRatio(waited, duration))
+				}
+			}
+		}
+		l := logger.WithFields(fields)
 		if wi.GroupedStatusCode() == 500 {
 			l.Error("failed to serve request")
 		} else if wi.GroupedStatusCode() == 200 {
@@ -391,7 +510,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			return
 		}
 		if b != nil {
-			w = NewThrottledRequestWrtier(w, b)
+			tw = NewThrottledRequestWrtier(w, b)
+			w = tw
 		}
 	}
 
@@ -429,16 +549,74 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		InfoHash:     src.InfoHash,
 	})
 	r = WithFileKey(r, src.InfoHash, src.Path)
+	// A session's own content feeds GET /session-stats. Internal requests
+	// are services fetching on a viewer's behalf (web-ui's own fetches come
+	// through the public ingress in prod and do count); grace segment
+	// tokens carry no session. The stream answers for 40-hex infohashes, and
+	// checkHash lets any first segment with 5 hex digits in it through: a
+	// key under anything else would be kept and never read.
+	if source == External && sessionID != "" && isInfoHash(src.InfoHash) {
+		sw := &sessionStatsWriter{
+			ResponseWriter: w,
+			stats:          s.stats,
+			key:            sessionStatsKey{sessionID: sessionID, domain: domain, infoHash: strings.ToLower(src.InfoHash)},
+			rate:           rate,
+			tw:             tw,
+		}
+		defer sw.done()
+		w = sw
+	}
+	// The seeder's ?stats event stream (web-ui's status page) never ends on
+	// its own: left to the drain, one open status page holds every rollout
+	// for the whole shutdown timeout and is cut at its end all the same. It
+	// ends as Close begins, with the session-stats streams, and web-ui
+	// reopens it on the new pod. The key, not the Content-Type: ?warmup is an
+	// event stream too, and its end reads as "warmup complete".
+	if _, ok := r.URL.Query()["stats"]; ok {
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		go func() {
+			select {
+			case <-s.closing:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		r = r.WithContext(ctx)
+	}
 	pr.ServeHTTP(w, r)
 }
 
-func (s *Web) Serve() error {
+// Listen binds the web port. run() calls it before any servable starts: the
+// probe answers Ready as soon as it listens, and the DaemonSet's maxSurge 1
+// retires the old pod on that, so the port must be bound first. Connections
+// made before Serve wait in the backlog.
+func (s *Web) Listen() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return errors.Wrap(err, "failed to web listen to tcp connection")
 	}
 	s.ln = ln
+	return nil
+}
+
+// Serve serves on the port Listen bound, binding it first if Listen was not
+// called. After Close, or once Close has drained it, it returns nil.
+func (s *Web) Serve() error {
+	if s.ln == nil {
+		if err := s.Listen(); err != nil {
+			return err
+		}
+	}
+	logrus.Infof("serving Web at %v", s.ln.Addr())
+	return s.gs.Serve(&http.Server{
+		Handler:        s.newMux(),
+		MaxHeaderBytes: 50 << 20,
+	}, s.ln)
+}
+
+func (s *Web) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	var ip net.IP
@@ -461,6 +639,8 @@ func (s *Web) Serve() error {
 	})
 
 	mux.HandleFunc("/speedtest", s.handleSpeedtest)
+
+	mux.HandleFunc(sessionStatsPath, s.handleSessionStats)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" ||
@@ -505,16 +685,19 @@ func (s *Web) Serve() error {
 		s.proxyHTTP(w, r, src, logger)
 
 	})
-	logrus.Infof("serving Web at %v", addr)
-	srv := &http.Server{
-		Handler:        mux,
-		MaxHeaderBytes: 50 << 20,
-	}
-	return srv.Serve(ln)
+	return mux
 }
 
+// Close shuts the web server down and returns once in-flight requests are
+// done, so run() calls it before closing what their deferred work uses
+// (ClickHouse). Streams that never end on their own end first (session-stats
+// and the seeder's ?stats, see proxyHTTP): each would hold the drain for the
+// whole timeout. Then the listener closes and in-flight requests (downloads)
+// get up to the shutdown timeout, after which what is left is cut. The stats
+// janitor stops last. Safe to call more than once, concurrently, and before
+// Serve; every call waits for the drain.
 func (s *Web) Close() {
-	if s.ln != nil {
-		_ = s.ln.Close()
-	}
+	s.closeOnce.Do(func() { close(s.closing) })
+	s.gs.Close()
+	s.stats.Close()
 }

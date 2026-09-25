@@ -67,3 +67,99 @@ that node, over pod IPs. A node or pod that leaves moves only the hashes
 it owned; one that joins takes an even share from each. A retry that
 excludes the failed pod lands on the same runner-up from every proxy
 instance. `distribution: Hash` is the pod step alone.
+
+## Shutdown
+
+On SIGTERM the proxy stops accepting connections and lets the requests in
+flight (downloads, segments) finish for up to `--shutdown-timeout` /
+`WEB_SHUTDOWN_TIMEOUT` (default 20s; the chart sets 60s), then cuts what is
+still open; a client resumes with Range. Streams that never end on their own
+end first: session-stats streams and the seeder's `?stats` streams (web-ui's
+status page, which reopens them on the new pod). `?warmup` streams are
+drained like downloads: their end means "warmup complete". ClickHouse, Redis
+and the probe close only after the drain, so a finishing request still gets
+its analytics row. Keep `terminationGracePeriodSeconds` at least preStop
+sleep + timeout + 2s.
+
+A download longer than the timeout still holds the drain to its end: on a
+busy pod the drain runs the whole timeout and logs the Warn `web shutdown
+timed out, closing remaining connections`. That is expected on a rollout; it
+means downloads were cut, not that the drain is stuck.
+
+The first rollout of this version does not drain: each old pod terminates
+under its own spec (no preStop, the old grace period) and runs the old
+binary, which exits on SIGTERM. `maxSurge: 1` does apply, so every node gets
+a Ready replacement first. Judge the drain on the second rollout
+(`kubectl -n webtor rollout restart ds/torrent-http-proxy`): `closing web`
+and `web closed` in the old pod's log about 10 s after its deletion, and
+ingress 502s and the TTFB count against the first rollout and against the
+same hour a day before.
+
+The web port is bound before the probe starts listening, so the pod cannot
+answer Ready while its web port is unbound; a port that cannot be bound ends
+the process before any probe is served.
+
+## Session stats
+
+Contract for web-ui:
+
+```
+GET <scheme>://<node host>/session-stats/<infohash>?token=<JWT minted by web-ui: sessionID, domain, hash=<infohash>, the viewer's usual claims and exp, no iat/nbf>&api-key=<key>
+host = the host of a thp export URL for this resource fetched with use-premium-domain=false (premium edge buffers SSE).
+200 text/event-stream, X-Accel-Buffering: no, no CORS. Event every 1 s: {"window_sec":5,"bytes_per_sec":…, "conns":…, "rate":"5M"?, "throttled":0..1?} — throttled = the limiter wait of this session's requests for this infohash, summed, over the window's wall time, clamped to 1 (one request: the share of time the limiter held it; N parallel requests held together read 1 at 1/N of the time, so judge the plan by throttled with bytes_per_sec near rate); omitted when no limited request was open in the window. First event has a zero-length window: treat its speed as unknown; until the stream is window_sec old, bytes_per_sec and throttled cover only its age.
+The stream ends at the token's exp and on thp shutdown: mint a new token for every open and reopen. 403 wrong or expired token, 429 over 4 streams per (session, domain, infohash) or 32 per session, 503 over 5000 per pod.
+```
+
+The proxy serves this itself. It streams Server-Sent Events, one per second
+(the first one right away), about what this proxy instance delivers to the
+token's session for that torrent:
+
+```
+data: {"window_sec":5,"bytes_per_sec":655360,"conns":1,"rate":"5M","throttled":0.93}
+```
+
+- `bytes_per_sec`: bytes delivered to the session for the torrent over the
+  last `window_sec` seconds (over the stream's age while it is younger)
+- `conns`: content requests open now
+- `rate`: the rate claim of the latest content request; absent when none
+- `throttled`: the limiter wait of all the session's requests for the
+  torrent, summed, over the same span of wall time (the stream's age while
+  it is younger), clamped to 1. For one request it is the share of the time
+  the limiter held it. It is not the share of time any request was held:
+  the session's requests share one bucket, a dry bucket holds them all at
+  once and each one's wait counts, so N parallel requests held together for
+  1/N of the window already read 1. With `bytes_per_sec` near the rate that
+  is the tier binding; well below it, the sum overstates. Absent when no
+  bandwidth-limited request was open in the window, which is not the same
+  as 0
+
+The first event covers no time yet: `bytes_per_sec` is 0 and `throttled`
+is absent even while a download runs. Treat the speed as unknown until the
+second event. Events two to five cover the 1 to 4 seconds the stream has
+been open, not `window_sec`, so they swing with where a segment fetch falls.
+
+Content counts when it is a 2xx, non-event-stream response to a request
+with the same `sessionID` and `domain` claims for that torrent. A token
+without `sessionID` (such as a grace segment token) counts nowhere.
+
+The token is HS256 with the API secret, the one web-ui signs grace tokens
+with: the viewer's ordinary claims plus the standard `hash` claim = the
+infohash (any case), a non-empty `sessionID` and a numeric `exp` later than
+the current second; `domain` keys the stream like content (absent reads as
+`default`). Leave `iat` and `nbf` out: they are checked with no leeway, so a
+web-ui clock a second ahead of the proxy's makes a fresh token a 403. The
+token is checked when the stream opens and the stream ends at its `exp`, so
+mint a new one for every open and reopen. Export tokens, which browsers see,
+carry no `hash` and never open the stream. The stream's token is an ordinary
+token bound to one torrent: on content it serves that torrent at the viewer's
+rate, like the export token, so mint it with the viewer's `rate`.
+
+Status codes: 400 for an infohash that is not 40 hex digits (checked first),
+403 for anything wrong with the token or api-key (a missing `sessionID`
+included), 429 over 4 streams per (session, domain, infohash) or 32 per
+session, 503 over 5000 streams. The per-torrent cap is what one token can
+take, so a leaked token cannot lock its session out of other torrents. No
+answer carries CORS headers: the reader is web-ui's backend. Counts are per
+proxy instance, so call it on the same node as the content URLs, on a host
+with no buffering proxy in front: the events are ~120 bytes a second and a
+buffering proxy holds them back.
