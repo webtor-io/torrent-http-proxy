@@ -12,7 +12,7 @@ require (
 	github.com/prometheus/common v0.67.2 // indirect
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.17
-	github.com/webtor-io/common-services v0.0.0-20260924165121-39d5e0fb95a0
+	github.com/webtor-io/common-services v0.0.0-20260925142105-6ffe7f0e19ed
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
