@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	code.cloudfoundry.org/bytefmt v0.51.0
 	github.com/DATA-DOG/go-sqlmock v1.5.0
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/juju/ratelimit v1.0.2
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
@@ -21,6 +20,7 @@ require (
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/alicebob/miniredis/v2 v2.36.1
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/redis/go-redis/v9 v9.16.0
 	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4

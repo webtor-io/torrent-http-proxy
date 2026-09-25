@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
@@ -577,8 +577,8 @@ func isInfoHash(s string) bool {
 	return len(s) == 40 && err == nil
 }
 
-// tokenExpiry is the token's exp claim as jwt-go reads it: a JSON number of
-// whole seconds. false when it is absent or not a number.
+// tokenExpiry is the token's exp claim as the jwt library reads it: a JSON
+// number of whole seconds. false when it is absent or not a number.
 func tokenExpiry(claims jwt.MapClaims) (time.Time, bool) {
 	switch exp := claims["exp"].(type) {
 	case float64:
@@ -602,10 +602,11 @@ func sessionStatsTokenSession(claims jwt.MapClaims, infoHash string, now time.Ti
 	if bound, _ := claims["hash"].(string); !strings.EqualFold(bound, infoHash) {
 		return "", time.Time{}, "hash"
 	}
-	// jwt-go checks exp only when present and a number: required here, so a
-	// leaked token does not work forever. And not at its last second, which
-	// jwt-go still takes: the stream ends at exp, and one that would end
-	// before its first tick is no stream.
+	// The jwt library checks exp only when present: required here, so a
+	// leaked token does not work forever. And not at its last second: the
+	// stream ends at exp, and one that would end before its first tick is no
+	// stream. golang-jwt v4 refuses that second and a non-number exp itself;
+	// the old library took both, and this check does not lean on either.
 	expires, ok := tokenExpiry(claims)
 	if !ok || !now.Before(expires) {
 		return "", time.Time{}, "exp"

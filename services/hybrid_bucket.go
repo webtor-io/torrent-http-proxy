@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/bytefmt"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/juju/ratelimit"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"

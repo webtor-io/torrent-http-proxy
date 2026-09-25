@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/webtor-io/lazymap"

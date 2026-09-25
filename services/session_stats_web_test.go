@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/urfave/cli"
@@ -658,13 +658,13 @@ func TestSessionStatsAuth(t *testing.T) {
 		{"no sessionID", u(with(func(c jwt.MapClaims) { delete(c, "sessionID") })), http.StatusForbidden},
 		{"empty sessionID", u(with(func(c jwt.MapClaims) { c["sessionID"] = "" })), http.StatusForbidden},
 		{"no exp", u(with(func(c jwt.MapClaims) { delete(c, "exp") })), http.StatusForbidden},
-		// jwt-go checks exp only when it is a number.
+		// The jwt library refuses these two itself now; thp's own check is
+		// pinned without the library in TestSessionStatsTokenSession.
 		{"exp not a number", u(with(func(c jwt.MapClaims) { c["exp"] = "never" })), http.StatusForbidden},
-		// jwt-go still takes a token in the second of its exp; the stream
-		// would end at once.
+		// The stream would end at once.
 		{"exp this second", u(with(func(c jwt.MapClaims) { c["exp"] = time.Now().Unix() })), http.StatusForbidden},
-		// jwt-go checks iat and nbf with no leeway: the contract says to
-		// leave them out, since a web-ui clock ahead of thp's is a 403.
+		// The jwt library checks iat and nbf with no leeway: the contract
+		// says to leave them out, since a web-ui clock ahead of thp's is a 403.
 		{"iat in the past", u(with(func(c jwt.MapClaims) { c["iat"] = time.Now().Add(-time.Minute).Unix() })), http.StatusOK},
 		{"iat ahead of thp's clock", u(with(func(c jwt.MapClaims) { c["iat"] = time.Now().Add(time.Minute).Unix() })), http.StatusForbidden},
 		{"nbf ahead of thp's clock", u(with(func(c jwt.MapClaims) { c["nbf"] = time.Now().Add(time.Minute).Unix() })), http.StatusForbidden},
