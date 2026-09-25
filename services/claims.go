@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
@@ -138,6 +139,15 @@ func (s *Claims) Get(tokenString string, apiKey string) (jwt.MapClaims, error) {
 
 	if s.apiKey != apiKey {
 		return nil, errors.New("wrong api key")
+	}
+
+	// encoding/base64 skips CR and LF, so the jwt library takes a valid
+	// token with a line break in its signature. The token then goes
+	// upstream as X-Token, which Go's client refuses to send: a 502 and an
+	// error line for a request that should be a 403. dgrijalva/jwt-go
+	// refused most such tokens only by accident of its padding arithmetic.
+	if strings.ContainsAny(tokenString, "\r\n") {
+		return nil, errors.New("token contains a line break")
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {

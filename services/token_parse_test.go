@@ -181,6 +181,14 @@ func parseCases(t *testing.T, secret string) []parseCase {
 		{name: "claims not an object", token: handToken(t, hdrHS256, []int{1, 2}, secret)},
 		{name: "bearer prefix", token: "Bearer " + goodTok},
 		{name: "padded segments", token: padded},
+		// The signature still verifies (base64 skips CR and LF), and the
+		// token would go upstream in a header Go refuses to send: a 502
+		// where a 403 belongs. Four breaks after the signature got past
+		// the old library too; fewer did not.
+		{name: "line break after the signature", token: goodTok + "\n"},
+		{name: "CRLF after the signature", token: goodTok + "\r\n"},
+		{name: "line break inside the signature", token: parts[0] + "." + parts[1] + "." + parts[2][:10] + "\n" + parts[2][10:]},
+		{name: "four line breaks after the signature", token: goodTok + "\n\n\n\n"},
 		{name: "no token", token: ""},
 	}
 }
