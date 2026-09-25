@@ -106,7 +106,7 @@ Contract for web-ui:
 ```
 GET <scheme>://<node host>/session-stats/<infohash>?token=<JWT minted by web-ui: sessionID, domain, hash=<infohash>, the viewer's usual claims and exp, no iat/nbf>&api-key=<key>
 host = the host of a thp export URL for this resource fetched with use-premium-domain=false (premium edge buffers SSE).
-200 text/event-stream, X-Accel-Buffering: no, no CORS. Event every 1 s: {"window_sec":5,"bytes_per_sec":…, "conns":…, "rate":"5M"?, "throttled":0..1?} — throttled = the limiter wait of this session's requests for this infohash, summed, over the window's wall time, clamped to 1 (one request: the share of time the limiter held it; N parallel requests held together read 1 at 1/N of the time, so judge the plan by throttled with bytes_per_sec near rate); omitted when no limited request was open in the window. First event has a zero-length window: treat its speed as unknown; until the stream is window_sec old, bytes_per_sec and throttled cover only its age.
+200 text/event-stream, X-Accel-Buffering: no, no CORS. Event every 1 s: {"window_sec":5,"bytes_per_sec":…, "conns":…, "active":true|false, "rate":"5M"?, "throttled":0..1?} — active = a content request of this session for this infohash was open at some moment since this stream's previous event (open now, or ended since, however short; the first event: open now); a request counts, in active as in conns, from its final response headers: one still waiting upstream for its first byte (a transcoder segment not produced yet) is in neither, however long it waits; judge presence by active, not conns: conns is read once a second and misses segment fetches shorter than that. Proxies before active send no such field: fall back to conns > 0 or bytes_per_sec > 0 (the latter stays up to window_sec after the last byte). throttled = the limiter wait of this session's requests for this infohash, summed, over the window's wall time, clamped to 1 (one request: the share of time the limiter held it; N parallel requests held together read 1 at 1/N of the time, so judge the plan by throttled with bytes_per_sec near rate); omitted when no limited request was open in the window. First event has a zero-length window: treat its speed as unknown; until the stream is window_sec old, bytes_per_sec and throttled cover only its age.
 The stream ends at the token's exp and on thp shutdown: mint a new token for every open and reopen. 403 wrong or expired token, 429 over 4 streams per (session, domain, infohash) or 32 per session, 503 over 5000 per pod.
 ```
 
@@ -115,12 +115,21 @@ The proxy serves this itself. It streams Server-Sent Events, one per second
 token's session for that torrent:
 
 ```
-data: {"window_sec":5,"bytes_per_sec":655360,"conns":1,"rate":"5M","throttled":0.93}
+data: {"window_sec":5,"bytes_per_sec":655360,"conns":1,"active":true,"rate":"5M","throttled":0.93}
 ```
 
 - `bytes_per_sec`: bytes delivered to the session for the torrent over the
   last `window_sec` seconds (over the stream's age while it is younger)
-- `conns`: content requests open now
+- `conns`: content requests open now, read once a second. A segment
+  fetched in less than that between two readings is not in it
+- `active`: a content request was open at some moment since this stream's
+  previous event: one is open now, or one ended since, however short. The
+  first event has no previous one and says whether one is open now. A
+  request is open, here and in `conns`, from its final response headers on:
+  one still waiting upstream for its first byte (content-transcoder holds a
+  segment request until the segment is produced) is in neither, however
+  long it waits. Always present, `false` included; a proxy without it sends
+  no such field. Tabs of one viewer each get their own answer
 - `rate`: the rate claim of the latest content request; absent when none
 - `throttled`: the limiter wait of all the session's requests for the
   torrent, summed, over the same span of wall time (the stream's age while

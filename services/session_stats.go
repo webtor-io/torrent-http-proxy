@@ -20,8 +20,9 @@ import (
 
 // GET /session-stats/<infohash> streams, as Server-Sent Events, what this pod
 // is delivering to the caller's session for that torrent: the speed over the
-// last window, the content requests open now, the token's rate, and the time
-// that traffic spent in the tier's limiter over the window's wall time.
+// last window, the content requests open now, whether one was open at all
+// since the previous event, the token's rate, and the time that traffic spent
+// in the tier's limiter over the window's wall time.
 //
 // Per pod and in memory is enough: rest-api points every export URL of an
 // infohash at its rendezvous home node, ingress there reaches the thp pod on
@@ -129,6 +130,11 @@ type sessionStatsEntry struct {
 	// Changed once per request.
 	conns      atomic.Int64 // open content requests; the refcount
 	lastActive atomic.Int64 // when the last request ended
+	// Requests ended, ever. It only grows, so every stream compares it with
+	// its own previous sample and none takes another's news, as a flag the
+	// reader clears would. A count, not lastActive: two ends in one clock
+	// reading would look like none.
+	ends atomic.Int64
 
 	mu sync.Mutex
 	// limitedOpen integrates limitedConns over time up to limitedAt: the
@@ -299,6 +305,9 @@ func (s *SessionStats) release(e *sessionStatsEntry, limited bool) {
 	}
 	e.mu.Unlock()
 	e.lastActive.Store(now)
+	// Before conns falls, and sample loads conns first: a sample that no
+	// longer counts the request open sees it ended.
+	e.ends.Add(1)
 	e.conns.Add(-1)
 }
 
@@ -309,6 +318,7 @@ func (s *SessionStats) lookup(k sessionStatsKey) *sessionStatsEntry {
 }
 
 type statsTotals struct {
+	ends        int64 // requests ended
 	bytes       int64
 	wait        int64 // ns
 	limitedOpen int64 // ns
@@ -343,6 +353,7 @@ func (s *SessionStats) sample(k sessionStatsKey) statsSample {
 	x.bytes = e.bytes.Load()
 	x.wait = e.wait.Load()
 	x.conns = e.conns.Load()
+	x.ends = e.ends.Load() // after conns: see release
 	return x
 }
 
@@ -416,7 +427,11 @@ type sessionStatsEvent struct {
 	WindowSec   int     `json:"window_sec"`
 	BytesPerSec float64 `json:"bytes_per_sec"`
 	Conns       int64   `json:"conns"`
-	Rate        string  `json:"rate,omitempty"`
+	// A content request of the key was open at some moment since the
+	// previous event (see event). Always sent, false included: web-ui tells
+	// an older proxy, which has no such field, by its absence.
+	Active bool   `json:"active"`
+	Rate   string `json:"rate,omitempty"`
 	// The limiter wait of the key's requests, summed, over the window's
 	// wall time, 0..1 (see event). nil: no limited request was open in the
 	// window (no limiter at all, or nothing open), which is not the same as 0.
@@ -439,9 +454,25 @@ type sessionStatsEvent struct {
 // and N parallel ranges stalled mid-body split a binding tier into 1/(N+1).
 // Open time only decides whether there is an answer: none when no limited
 // request was open in the window, which is not the same as 0.
+//
+// active is about the time since the previous event, not the window: a
+// request is open now, or one ended since the stream's previous sample.
+// conns alone is a gauge read once a second, and a viewer without a limiter
+// gets an HLS segment in a fraction of that: the reading almost never lands
+// inside a request (2026-09-25, a paid viewer at 1.1–2.2 MB/s read conns 0
+// in every event). Open means counted: from the response's start (see
+// sessionStatsWriter), so a request still waiting for its first byte is in
+// neither conns nor active. The first event has no previous one: open now.
+// A new entry reads active from its first sample: push zeroed the kept
+// totals, and an entry is born with a request open, whose end moves ends
+// before conns falls.
 func (r *statsRing) event() sessionStatsEvent {
 	first, last := r.samples[0], r.samples[len(r.samples)-1]
 	ev := sessionStatsEvent{WindowSec: sessionStatsWindowSec, Conns: last.conns, Rate: last.rate}
+	ev.Active = last.conns > 0
+	if n := len(r.samples); n > 1 && last.ends != r.samples[n-2].ends {
+		ev.Active = true
+	}
 	span := time.Duration(last.at - first.at)
 	if span <= 0 {
 		return ev

@@ -291,6 +291,143 @@ func TestStatsRingWindow(t *testing.T) {
 	}
 }
 
+// act is a sample at `at` with conns requests open now and ends requests
+// ended so far on e.
+func act(at time.Duration, e *sessionStatsEntry, conns, ends int64) statsSample {
+	x := statsSample{at: int64(at), entry: e, conns: conns}
+	x.ends = ends
+	return x
+}
+
+// active answers for the time since the previous event, not for the window:
+// a request open now, or one that ended since the stream's last sample,
+// however short it was. The first event has no previous one: open now.
+func TestStatsRingActive(t *testing.T) {
+	a, b := &sessionStatsEntry{}, &sessionStatsEntry{}
+	s := time.Second
+	cases := []struct {
+		name    string
+		samples []statsSample
+		want    bool
+	}{
+		{"first event, a request open", []statsSample{act(0, a, 1, 0)}, true},
+		{"first event, requests ended before the stream opened", []statsSample{act(0, a, 0, 5)}, false},
+		{"first event, no entry", []statsSample{act(0, nil, 0, 0)}, false},
+		// An HLS segment without a limiter: opened and closed between two
+		// samples, conns never saw it.
+		{"a request opened and ended between two events", []statsSample{act(0, a, 0, 0), act(s, a, 0, 1)}, true},
+		{"a request open at the previous event ended since", []statsSample{act(0, a, 1, 0), act(s, a, 0, 1)}, true},
+		{"a request open throughout", []statsSample{act(0, a, 1, 0), act(s, a, 1, 0)}, true},
+		{"nothing open, nothing ended since the previous event", []statsSample{act(0, a, 0, 2), act(s, a, 0, 2)}, false},
+		// bytes_per_sec still averages the request in; active does not.
+		{"idle since the previous event, busy earlier in the window", []statsSample{act(0, a, 0, 0), act(s, a, 0, 3), act(2*s, a, 0, 3)}, false},
+		// The samples of one tick: a span of 0 is no reason to skip it.
+		{"the clock did not move", []statsSample{act(s, a, 0, 0), act(s, a, 0, 1)}, true},
+		// A new entry holds only what came after the last sample, even
+		// when its count equals the old entry's.
+		{"entry recreated since the previous event", []statsSample{act(0, a, 0, 1), act(s, b, 0, 1)}, true},
+		{"entry created since the previous event", []statsSample{act(0, nil, 0, 0), act(s, a, 0, 1)}, true},
+		{"entry dropped", []statsSample{act(0, a, 0, 4), act(s, nil, 0, 0)}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newStatsRing(sessionStatsWindowSec + 1)
+			for _, x := range c.samples {
+				r.push(x)
+			}
+			if got := r.event().Active; got != c.want {
+				t.Errorf("active = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The case of the bug: a request that opens and closes between two events
+// (a segment fetched in well under a second) reads active in the next
+// event, conns 0 and all; the event after that, with nothing since, does
+// not. The fake clock does not move while the request runs, so a request
+// that ends at the very instant of the previous sample must count too.
+func TestSessionStatsActiveBetweenEvents(t *testing.T) {
+	s, clk := newTestSessionStats(t)
+	k := statsKey("s1", "h")
+	r := newStatsRing(sessionStatsWindowSec + 1)
+	next := func() sessionStatsEvent {
+		clk.Advance(time.Second)
+		r.push(s.sample(k))
+		return r.event()
+	}
+	r.push(s.sample(k))
+	if ev := r.event(); ev.Active {
+		t.Errorf("first event %+v before any request: want inactive", ev)
+	}
+	e := s.acquire(k, "", false)
+	e.bytes.Add(1000)
+	s.release(e, false)
+	if ev := next(); !ev.Active || ev.Conns != 0 {
+		t.Errorf("event after a request opened and closed between ticks: %+v, want active with conns 0", ev)
+	}
+	if ev := next(); ev.Active || ev.BytesPerSec == 0 {
+		t.Errorf("event after an idle second: %+v, want inactive while the window still holds the bytes", ev)
+	}
+	// Open at one event, gone before the next: still active in the next.
+	e = s.acquire(k, "", false)
+	if ev := next(); !ev.Active || ev.Conns != 1 {
+		t.Errorf("event with a request open: %+v, want active, conns 1", ev)
+	}
+	s.release(e, false)
+	if ev := next(); !ev.Active || ev.Conns != 0 {
+		t.Errorf("event after the open request ended: %+v, want active, conns 0", ev)
+	}
+	if ev := next(); ev.Active {
+		t.Errorf("event after an idle second: %+v, want inactive", ev)
+	}
+}
+
+// Ends are counted, not timed: two requests that end in one clock reading,
+// with a sample between them, are two ends. When the last end's time is
+// compared instead, the second one looks like no change.
+func TestSessionStatsActiveCountsEndsNotTimes(t *testing.T) {
+	s, clk := newTestSessionStats(t)
+	k := statsKey("s1", "h")
+	r := newStatsRing(sessionStatsWindowSec + 1)
+	clk.Advance(time.Second)
+	s.release(s.acquire(k, "", false), false)
+	r.push(s.sample(k))
+	// The same clock reading: the sample and the next request share it.
+	s.release(s.acquire(k, "", false), false)
+	clk.Advance(time.Second)
+	r.push(s.sample(k))
+	if ev := r.event(); !ev.Active {
+		t.Errorf("event after a second request ended in the previous sample's clock reading: %+v, want active", ev)
+	}
+}
+
+// Up to four streams read one key (tabs of one viewer). Each compares with
+// its own previous sample: the stream that samples first does not take the
+// news from the others.
+func TestSessionStatsActiveSeenByEveryStream(t *testing.T) {
+	s, clk := newTestSessionStats(t)
+	k := statsKey("s1", "h")
+	a, b := newStatsRing(sessionStatsWindowSec+1), newStatsRing(sessionStatsWindowSec+1)
+	a.push(s.sample(k))
+	b.push(s.sample(k))
+	s.release(s.acquire(k, "", false), false)
+	clk.Advance(time.Second)
+	a.push(s.sample(k))
+	clk.Advance(100 * time.Millisecond)
+	b.push(s.sample(k))
+	if !a.event().Active || !b.event().Active {
+		t.Errorf("active: stream a %v, stream b %v; want both true", a.event().Active, b.event().Active)
+	}
+	clk.Advance(900 * time.Millisecond)
+	a.push(s.sample(k))
+	clk.Advance(100 * time.Millisecond)
+	b.push(s.sample(k))
+	if a.event().Active || b.event().Active {
+		t.Errorf("after an idle second: stream a %v, stream b %v; want both false", a.event().Active, b.event().Active)
+	}
+}
+
 // conns and rate are the latest sample's, not window aggregates.
 func TestStatsRingConnsAndRateAreCurrent(t *testing.T) {
 	a := &sessionStatsEntry{}
@@ -308,15 +445,17 @@ func TestStatsRingConnsAndRateAreCurrent(t *testing.T) {
 
 // The wire format web-ui is built against: rate and throttled are left out
 // when there is nothing to say, and throttled 0 is not the same as absent.
+// active is always there, false included: web-ui tells an older proxy,
+// which never sends it, by its absence.
 func TestSessionStatsEventJSON(t *testing.T) {
 	cases := []struct {
 		ev   sessionStatsEvent
 		want string
 	}{
-		{sessionStatsEvent{WindowSec: 5}, `{"window_sec":5,"bytes_per_sec":0,"conns":0}`},
-		{sessionStatsEvent{WindowSec: 5, BytesPerSec: 655360.5, Conns: 2, Rate: "5M", Throttled: ptr(0)},
-			`{"window_sec":5,"bytes_per_sec":655360.5,"conns":2,"rate":"5M","throttled":0}`},
-		{sessionStatsEvent{WindowSec: 5, Throttled: ptr(0.75)}, `{"window_sec":5,"bytes_per_sec":0,"conns":0,"throttled":0.75}`},
+		{sessionStatsEvent{WindowSec: 5}, `{"window_sec":5,"bytes_per_sec":0,"conns":0,"active":false}`},
+		{sessionStatsEvent{WindowSec: 5, BytesPerSec: 655360.5, Conns: 2, Active: true, Rate: "5M", Throttled: ptr(0)},
+			`{"window_sec":5,"bytes_per_sec":655360.5,"conns":2,"active":true,"rate":"5M","throttled":0}`},
+		{sessionStatsEvent{WindowSec: 5, Active: true, Throttled: ptr(0.75)}, `{"window_sec":5,"bytes_per_sec":0,"conns":0,"active":true,"throttled":0.75}`},
 	}
 	for _, c := range cases {
 		b, err := json.Marshal(c.ev)

@@ -592,6 +592,16 @@ func field(t *testing.T, ev map[string]any, key string) float64 {
 	return v
 }
 
+// boolField returns a boolean from an event, failing when absent.
+func boolField(t *testing.T, ev map[string]any, key string) bool {
+	t.Helper()
+	v, ok := ev[key].(bool)
+	if !ok {
+		t.Fatalf("%s = %#v in %v, want a boolean", key, ev[key], ev)
+	}
+	return v
+}
+
 func openStreams(s *SessionStats) int {
 	s.streamsMu.Lock()
 	defer s.streamsMu.Unlock()
@@ -778,6 +788,10 @@ func TestSessionStatsStreamHeadersAndFirstEvent(t *testing.T) {
 	if field(t, ev, "window_sec") != sessionStatsWindowSec || field(t, ev, "conns") != 1 || ev["rate"] != "5M" {
 		t.Errorf("first event %v, want window_sec %d, conns 1, rate 5M", ev, sessionStatsWindowSec)
 	}
+	// No previous event to compare with: open now is active.
+	if !boolField(t, ev, "active") {
+		t.Errorf("first event %v with a request open, want active", ev)
+	}
 	if _, ok := ev["throttled"]; ok {
 		t.Errorf("first event has throttled %v: no window yet, want absent", ev["throttled"])
 	}
@@ -789,8 +803,8 @@ func TestSessionStatsStreamEvents(t *testing.T) {
 	key := statsKey("s1", harnessHash)
 	s := openStats(t, statsURL(srv.URL, strings.ToUpper(harnessHash), statsToken(t, statsSecret, "s1")))
 	ev := s.next(t)
-	if field(t, ev, "conns") != 0 || field(t, ev, "bytes_per_sec") != 0 {
-		t.Errorf("event before any request %v, want zeros", ev)
+	if field(t, ev, "conns") != 0 || field(t, ev, "bytes_per_sec") != 0 || boolField(t, ev, "active") {
+		t.Errorf("event before any request %v, want zeros and inactive", ev)
 	}
 	if _, ok := ev["rate"]; ok {
 		t.Errorf("rate %v before any request, want absent", ev["rate"])
@@ -884,6 +898,105 @@ func TestSessionStatsStreamReportsLiveDownload(t *testing.T) {
 	releaseBody()
 	if r, ok := <-resp; ok {
 		_ = r.Body.Close()
+	}
+}
+
+// The bug of 2026-09-25: a paid viewer (no limiter) gets each HLS segment in
+// well under a second, and conns, sampled once a second, read 0 in every
+// event while bytes_per_sec showed 1–2 MB/s. A request that opens and closes
+// between two ticks reads active in the next event, through the real mux;
+// the event after an idle second does not, though its window still holds
+// the bytes.
+func TestSessionStatsStreamReportsShortRequestBetweenTicks(t *testing.T) {
+	const session = "s-ss-short"
+	h := newThrottleHarness(t, fixedBody(http.StatusOK, 1000))
+	srv := newStatsServer(t, h.web)
+	s := openStats(t, statsURL(srv.URL, harnessHash, statsToken(t, h.secret, session)))
+	if ev := s.next(t); boolField(t, ev, "active") || field(t, ev, "conns") != 0 {
+		t.Fatalf("first event %v, want inactive with conns 0", ev)
+	}
+	// No rate claim: no limiter, as for a paid viewer.
+	paid := jwt.MapClaims{"role": "t-ss-short", "sessionID": session}
+	if status, body := h.get(t, paid, true); status != http.StatusOK || len(body) != 1000 {
+		t.Fatalf("got %d with %d bytes, want 200 with 1000", status, len(body))
+	}
+	// The client can have the body before the handler returns; the case is
+	// a request already over when the stream samples.
+	eventually(t, "the request to end", func() bool {
+		e := h.statsEntry(session)
+		return e != nil && e.conns.Load() == 0
+	})
+	h.clock.Advance(time.Second)
+	ev := s.next(t)
+	if !boolField(t, ev, "active") || field(t, ev, "conns") != 0 || field(t, ev, "bytes_per_sec") != 1000 {
+		t.Errorf("event after the request %v, want active, conns 0, 1000 B/s", ev)
+	}
+	h.clock.Advance(time.Second)
+	ev = s.next(t)
+	if boolField(t, ev, "active") || field(t, ev, "bytes_per_sec") != 500 {
+		t.Errorf("event after an idle second %v, want inactive, 500 B/s over the 2 s", ev)
+	}
+}
+
+// What the contract says of active and conns alike: a request counts from
+// its final response headers, so one still waiting upstream for its first
+// byte (content-transcoder's WaitForSegment before any header) is in
+// neither. Counting it earlier would count 404s for made-up hashes. Once
+// its response has come, it reads active: the harness does count it.
+func TestSessionStatsStreamSkipsRequestAwaitingFirstByte(t *testing.T) {
+	const session = "s-ss-ttfb"
+	entered := make(chan struct{}, 1)
+	respond := make(chan struct{})
+	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		select {
+		case <-respond:
+		case <-r.Context().Done():
+			return
+		}
+		fixedBody(http.StatusOK, 1000)(w, r)
+	})
+	releaseRespond := releaser(t, respond)
+	srv := newStatsServer(t, h.web)
+	s := openStats(t, statsURL(srv.URL, harnessHash, statsToken(t, h.secret, session)))
+	s.next(t)
+	paid := jwt.MapClaims{"role": "t-ss-ttfb", "sessionID": session}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/"+harnessHash+"/Sintel/Sintel.mkv?token="+signToken(t, h.secret, paid)+"&api-key=k", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_, err = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached the upstream")
+	}
+	h.clock.Advance(time.Second)
+	if ev := s.next(t); boolField(t, ev, "active") || field(t, ev, "conns") != 0 {
+		t.Errorf("event while the request awaits its first byte %v, want inactive with conns 0", ev)
+	}
+	releaseRespond()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the request to end", func() bool {
+		e := h.statsEntry(session)
+		return e != nil && e.conns.Load() == 0
+	})
+	h.clock.Advance(time.Second)
+	if ev := s.next(t); !boolField(t, ev, "active") {
+		t.Errorf("event after the response %v, want active", ev)
 	}
 }
 
