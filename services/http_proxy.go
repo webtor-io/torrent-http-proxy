@@ -106,9 +106,12 @@ func delCORSHeaders(header http.Header) {
 }
 
 // StatusClientClosedRequest is nginx's 499: the client closed its connection
-// before the response began. The client is gone, so nobody receives it; it
-// is what thp records, so that a client that left is not counted as an
-// upstream failure.
+// before the response began. thp records it (metrics, closing log line) so
+// that a client that left is not counted as an upstream failure; it never
+// writes it. "Its context is done" is not "nobody reads": net/http cancels
+// the context on EOF from the client, and a client that only half-closed
+// (FIN on its write side) still reads the answer, so the wire keeps the 502
+// it always got.
 const StatusClientClosedRequest = 499
 
 type proxyOutcomeKey struct{}
@@ -123,6 +126,9 @@ type proxyOutcome struct {
 	client context.Context
 	// err is what errorHandler was called with; nil when it was not.
 	err error
+	// clientGone: err was the client leaving (see clientGone). The wire got
+	// 502; proxyHTTP records 499.
+	clientGone bool
 }
 
 func withProxyOutcome(r *http.Request, o *proxyOutcome) *http.Request {
@@ -145,16 +151,13 @@ func clientGone(client context.Context, err error) bool {
 // errorHandler replaces ReverseProxy's default, which answers 502 whatever
 // the cause, a client that left included, and logs "http: proxy error"
 // through the standard logger with nothing to tell which edge it was.
-// A client that left gets 499, which nobody receives; everything else stays
-// the 502 a connected client gets today. The error goes to proxyHTTP's
-// closing log line.
+// It writes the same 502 whatever the cause, so nothing on the wire changes;
+// it only notes the error and whether it was the client leaving, which
+// proxyHTTP records as 499 and logs in its closing line.
 func errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	if o, ok := r.Context().Value(proxyOutcomeKey{}).(*proxyOutcome); ok {
 		o.err = err
-		if clientGone(o.client, err) {
-			w.WriteHeader(StatusClientClosedRequest)
-			return
-		}
+		o.clientGone = clientGone(o.client, err)
 	}
 	w.WriteHeader(http.StatusBadGateway)
 }

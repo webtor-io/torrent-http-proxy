@@ -397,6 +397,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	promHTTPProxyRequestCurrent.WithLabelValues(string(source), role, src.GetEdgeName()).Inc()
 	defer func() {
+		if outcome.clientGone {
+			// errorHandler wrote the 502 it always did (a half-closed
+			// client still reads it); from here on, what thp records.
+			wi.statusCode = StatusClientClosedRequest
+		}
 		duration := time.Since(wi.start)
 		blocked := wi.Blocked()
 		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {

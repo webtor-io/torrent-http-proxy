@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -165,9 +166,58 @@ func TestProxyClientGoneBeforeHeadersIs499(t *testing.T) {
 	leave()
 	e := recvEntry(t, done)
 
-	if rec.Code != StatusClientClosedRequest {
-		t.Errorf("wrote %d, want %d", rec.Code, StatusClientClosedRequest)
+	// The wire is unchanged: 499 is only what thp records.
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("wrote %d, want the 502 it always wrote", rec.Code)
 	}
+	expectLine(t, e, logrus.InfoLevel, "client closed request", "499", context.Canceled.Error())
+	expectOnly(t, before, snapStatus(t, role), "400")
+}
+
+// A client that half-closes (FIN on its write side) and keeps reading has a
+// done context in net/http, exactly like one that left, yet it still reads
+// the answer: it must get the 502 it always got, while thp records 499.
+func TestWebClientHalfClosedStillGets502(t *testing.T) {
+	const role = "t-half-closed"
+	hook := logtest.NewGlobal()
+	t.Cleanup(func() { logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks)) })
+	arrived := make(chan struct{}, 1)
+	s := newServedWeb(t, arrivedThenHold(arrived), 30*time.Second)
+	before := snapStatus(t, role)
+
+	c, err := net.Dial("tcp", s.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	path := "/" + harnessHash + "/Sintel/Sintel.mkv?token=" + signToken(t, s.secret, tierClaims(role, "s-half-closed", "2M")) + "&api-key=k"
+	if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: thp\r\nX-Forwarded-For: 203.0.113.7\r\n\r\n", path); err != nil {
+		t.Fatal(err)
+	}
+	recvSignal(t, arrived, "the request to reach the upstream")
+	if err := c.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatalf("half-closed client read no response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("half-closed client received %d, want the 502 it always got", resp.StatusCode)
+	}
+
+	var e *logrus.Entry
+	eventually(t, "the closing log line", func() bool {
+		for _, x := range hook.AllEntries() {
+			if closingMessages[x.Message] && x.Data["role"] == role {
+				e = x
+				return true
+			}
+		}
+		return false
+	})
 	expectLine(t, e, logrus.InfoLevel, "client closed request", "499", context.Canceled.Error())
 	expectOnly(t, before, snapStatus(t, role), "400")
 }
