@@ -99,6 +99,21 @@ The web port is bound before the probe starts listening, so the pod cannot
 answer Ready while its web port is unbound; a port that cannot be bound ends
 the process before any probe is served.
 
+## Bandwidth limit
+
+With `--use-bandwidth-limit`, an external request whose token carries
+`rate` (bits per second in bytefmt units: `5M`, `50M`) and `sessionID` is
+paced by a token bucket holding one second of that rate. There is one bucket
+per session and rate: the session's requests at one rate share it on every
+proxy instance, through Redis; its requests at another rate (grace segments
+at `50M` next to the tier's `5M`) draw on a bucket of their own. `5M` and
+`5MB` are one rate. The Redis key is `bw:limit:<sessionID>:<rate in bytes per
+second>` (`5M` → `bw:limit:<sessionID>:655360`) and expires 5 minutes after
+its last use. Without Redis configured, or while it is unreachable, each
+instance limits on its own. A token without `sessionID` or without `rate` is
+not limited; a `rate` that does not parse (`5X`, empty, a bare number) fails
+every request on the token with 500.
+
 ## Session stats
 
 Contract for web-ui:
@@ -106,7 +121,7 @@ Contract for web-ui:
 ```
 GET <scheme>://<node host>/session-stats/<infohash>?token=<JWT minted by web-ui: sessionID, domain, hash=<infohash>, the viewer's usual claims and exp, no iat/nbf>&api-key=<key>
 host = the host of a thp export URL for this resource fetched with use-premium-domain=false (premium edge buffers SSE).
-200 text/event-stream, X-Accel-Buffering: no, no CORS. Event every 1 s: {"window_sec":5,"bytes_per_sec":…, "conns":…, "active":true|false, "rate":"5M"?, "throttled":0..1?} — active = a content request of this session for this infohash was open at some moment since this stream's previous event (open now, or ended since, however short; the first event: open now); a request counts, in active as in conns, from its final response headers: one still waiting upstream for its first byte (a transcoder segment not produced yet) is in neither, however long it waits; judge presence by active, not conns: conns is read once a second and misses segment fetches shorter than that. Proxies before active send no such field: fall back to conns > 0 or bytes_per_sec > 0 (the latter stays up to window_sec after the last byte). throttled = the limiter wait of this session's requests for this infohash, summed, over the window's wall time, clamped to 1 (one request: the share of time the limiter held it; N parallel requests held together read 1 at 1/N of the time, so judge the plan by throttled with bytes_per_sec near rate); omitted when no limited request was open in the window. First event has a zero-length window: treat its speed as unknown; until the stream is window_sec old, bytes_per_sec and throttled cover only its age.
+200 text/event-stream, X-Accel-Buffering: no, no CORS. Event every 1 s: {"window_sec":5,"bytes_per_sec":…, "conns":…, "active":true|false, "rate":"5M"?, "throttled":0..1?} — active = a content request of this session for this infohash was open at some moment since this stream's previous event (open now, or ended since, however short; the first event: open now); a request counts, in active as in conns, from its final response headers: one still waiting upstream for its first byte (a transcoder segment not produced yet) is in neither, however long it waits; judge presence by active, not conns: conns is read once a second and misses segment fetches shorter than that. Proxies before active send no such field: fall back to conns > 0 or bytes_per_sec > 0 (the latter stays up to window_sec after the last byte). throttled = the limiter wait of this session's requests for this infohash, grace segments excepted, summed, over the window's wall time, clamped to 1 (one request: the share of time the limiter held it; N parallel requests held together read 1 at 1/N of the time, so judge the plan by throttled with bytes_per_sec near rate); omitted when no limited request was open in the window. First event has a zero-length window: treat its speed as unknown; until the stream is window_sec old, bytes_per_sec and throttled cover only its age.
 The stream ends at the token's exp and on thp shutdown: mint a new token for every open and reopen. 403 wrong or expired token, 429 over 4 streams per (session, domain, infohash) or 32 per session, 503 over 5000 per pod.
 ```
 
@@ -130,17 +145,18 @@ data: {"window_sec":5,"bytes_per_sec":655360,"conns":1,"active":true,"rate":"5M"
   segment request until the segment is produced) is in neither, however
   long it waits. Always present, `false` included; a proxy without it sends
   no such field. Tabs of one viewer each get their own answer
-- `rate`: the rate claim of the latest content request; absent when none
+- `rate`: the rate claim of the latest content request not on a grace
+  token (the viewer's own rate); absent when none
 - `throttled`: the limiter wait of all the session's requests for the
-  torrent, summed, over the same span of wall time (the stream's age while
-  it is younger), clamped to 1. For one request it is the share of the time
-  the limiter held it. It is not the share of time any request was held:
-  the session's requests share one bucket, a dry bucket holds them all at
-  once and each one's wait counts, so N parallel requests held together for
-  1/N of the window already read 1. With `bytes_per_sec` near the rate that
-  is the tier binding; well below it, the sum overstates. Absent when no
-  bandwidth-limited request was open in the window, which is not the same
-  as 0
+  torrent but grace segments, summed, over the same span of wall time (the
+  stream's age while it is younger), clamped to 1. For one request it is
+  the share of the time the limiter held it. It is not the share of time
+  any request was held: the session's requests at one rate share one
+  bucket, a dry bucket holds them all at once and each one's wait counts,
+  so N parallel requests held together for 1/N of the window already read
+  1. With `bytes_per_sec` near the rate that is the tier binding; well
+  below it, the sum overstates. Absent when no bandwidth-limited request
+  was open in the window, which is not the same as 0
 
 The first event covers no time yet: `bytes_per_sec` is 0 and `throttled`
 is absent even while a download runs. Treat the speed as unknown until the
@@ -149,7 +165,12 @@ been open, not `window_sec`, so they swing with where a segment fetch falls.
 
 Content counts when it is a 2xx, non-event-stream response to a request
 with the same `sessionID` and `domain` claims for that torrent. A token
-without `sessionID` (such as a grace segment token) counts nowhere.
+without `sessionID` (such as today's grace segment token) counts nowhere. A
+grace segment token (`kind` grace) with them counts in `bytes_per_sec`,
+`conns` and `active`, not in `rate` or `throttled`: its 50M is the grace
+window's, not the viewer's, so inside grace `bytes_per_sec` can exceed the
+`rate` with `throttled` near 0, and grace bytes stay in the window for up
+to `window_sec` after it ends.
 
 The token is HS256 with the API secret, the one web-ui signs grace tokens
 with: the viewer's ordinary claims plus the standard `hash` claim = the

@@ -572,16 +572,21 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// A session's own content feeds GET /session-stats. Internal requests
 	// are services fetching on a viewer's behalf (web-ui's own fetches come
 	// through the public ingress in prod and do count); grace segment
-	// tokens carry no session. The stream answers for 40-hex infohashes, and
-	// checkHash lets any first segment with 5 hex digits in it through: a
-	// key under anything else would be kept and never read.
+	// tokens carry no session yet. The stream answers for 40-hex
+	// infohashes, and checkHash lets any first segment with 5 hex digits in
+	// it through: a key under anything else would be kept and never read.
 	if source == External && sessionID != "" && isInfoHash(src.InfoHash) {
 		sw := &sessionStatsWriter{
 			ResponseWriter: w,
 			stats:          s.stats,
 			key:            sessionStatsKey{sessionID: sessionID, domain: domain, infoHash: strings.ToLower(src.InfoHash)},
-			rate:           rate,
-			tw:             tw,
+		}
+		if isGraceToken(claims) {
+			// Its bytes and its time open are the viewer's; its rate and its
+			// limiter's wait are the grace window's, not the tier's.
+			sw.grace = true
+		} else {
+			sw.rate, sw.tw = rate, tw
 		}
 		defer sw.done()
 		w = sw

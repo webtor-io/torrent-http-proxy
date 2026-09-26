@@ -204,6 +204,66 @@ func TestSessionStatsUnlimitedRequest(t *testing.T) {
 	}
 }
 
+// graceSegmentClaims is web-ui's grace segment token (GraceClaims) as it
+// will be once it carries the session: bound to the harness's torrent, 50M.
+func graceSegmentClaims(session string) jwt.MapClaims {
+	return jwt.MapClaims{"role": "grace", "kind": "grace", "rate": "50M", "hash": harnessHash, "sessionID": session}
+}
+
+// A grace segment on the key of the session's playlist polls: its bytes and
+// its time open count, its rate and its limiter's wait do not. rate stays
+// the tier's with a grace segment the latest request, and throttled holds
+// only the tier's wait, so a binding grace bucket never reads as the tier
+// binding (web-ui: throttled ≥ 0.5 and use ≥ 0.9 of rate).
+func TestSessionStatsGraceSegmentKeepsTierRateAndWait(t *testing.T) {
+	const session = "s-ss-grace"
+	tier := tierClaims("nobody", session, "5M")
+	grace := graceSegmentClaims(session)
+	release := make(chan struct{})
+	h := newThrottleHarness(t, heldBody(64<<10, release))
+	releaseBody := releaser(t, release)
+	// Both limiters bind: ~3 ms of wait for the tier's 64 KiB, ~6.5 ms for
+	// grace's.
+	h.useThrottler(t, tier, &perByteThrottler{50 * time.Nanosecond})
+	h.useThrottler(t, grace, &perByteThrottler{100 * time.Nanosecond})
+
+	tierDone := h.serveAsync(t, httptest.NewRecorder(), h.request(t, tier, true, ""))
+	eventually(t, "the tier request's bytes in the entry", func() bool {
+		e := h.statsEntry(session)
+		return e != nil && e.bytes.Load() == 64<<10
+	})
+	// The grace segment starts after it: the latest request of the key.
+	graceDone := h.serveAsync(t, httptest.NewRecorder(), h.request(t, grace, true, ""))
+	e := h.statsEntry(session)
+	eventually(t, "both requests' bytes in one entry", func() bool { return e.bytes.Load() == 128<<10 })
+	if e.conns.Load() != 2 || limitedConns(e) != 1 {
+		t.Errorf("conns %d, limited %d while both are open; want 2, 1 (the grace segment is not the tier's)",
+			e.conns.Load(), limitedConns(e))
+	}
+	h.clock.Advance(3 * time.Second)
+	if x := h.web.stats.sample(statsKey(session, harnessHash)); x.rate != "5M" || x.limitedOpen != int64(3*time.Second) {
+		t.Errorf("rate %q, limited open %v with the grace segment the latest request; want 5M, 3s",
+			x.rate, time.Duration(x.limitedOpen))
+	}
+	releaseBody()
+	ft, fg := <-tierDone, <-graceDone
+	if ft == nil || fg == nil {
+		t.Fatal("no closing log line")
+	}
+	// The grace segment had a limiter and waited in it, or the case proves
+	// nothing about its wait.
+	if seconds(t, fg, "throttled") <= 0 {
+		t.Fatal("the grace segment's limiter never held it")
+	}
+	if got, want := time.Duration(e.wait.Load()).Seconds(), seconds(t, ft, "throttled"); got != want {
+		t.Errorf("entry wait %v s, want the tier request's alone (%v s; grace waited %v s)",
+			got, want, seconds(t, fg, "throttled"))
+	}
+	if e.conns.Load() != 0 || limitedConns(e) != 0 {
+		t.Errorf("conns %d, limited %d after both ended; want 0, 0", e.conns.Load(), limitedConns(e))
+	}
+}
+
 // Only a session's own content counts: not what services fetch on its
 // behalf, not status streams, not tokens without a session.
 func TestSessionStatsSkipsNonContent(t *testing.T) {

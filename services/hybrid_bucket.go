@@ -77,6 +77,9 @@ type HybridBucket struct {
 	probing  bool
 }
 
+// NewHybridBucket returns sessionID's bucket at rate. Its Redis balance is
+// shared with every bucket of the same session and rate, on any pod, and
+// with no other: see bucketKey.
 func NewHybridBucket(rate float64, capacity float64, rc redis.UniversalClient, sessionID string) *HybridBucket {
 	return &HybridBucket{
 		local:      0, // start empty — first write goes to Redis for coordination
@@ -84,9 +87,22 @@ func NewHybridBucket(rate float64, capacity float64, rc redis.UniversalClient, s
 		capacity:   capacity,
 		lastRefill: time.Now(),
 		rc:         rc,
-		redisKey:   "bw:limit:" + sessionID,
+		redisKey:   "bw:limit:" + bucketKey(sessionID, rate),
 		redisOK:    rc != nil,
 	}
+}
+
+// bucketKey names one session's bucket at one rate: the suffix of its Redis
+// key and its key in HybridBucketPool. A session holds tokens at two rates
+// at once (its tier's, and grace's 50M on grace segments); on one key
+// whichever drained the balance would leave the other nothing, and each
+// call would clamp it to its own capacity. The rate is the one the Lua
+// script is told (ARGV[2], whole bytes per second), not the claim's
+// spelling ("5M" and "5MB" are one bucket). It never contains ':', so the
+// last ':' splits the key whatever the sessionID holds. Capacity is not in
+// it: the pool always sets it to the rate.
+func bucketKey(sessionID string, bytesPerSec float64) string {
+	return sessionID + ":" + strconv.FormatInt(int64(bytesPerSec), 10)
 }
 
 // Wait blocks until count tokens are available, satisfying the Throttler interface.
@@ -242,7 +258,8 @@ func (hb *HybridBucket) probeRedis() {
 	}
 }
 
-// HybridBucketPool manages per-session HybridBucket instances via lazymap.
+// HybridBucketPool manages HybridBucket instances per (session, rate) via
+// lazymap.
 type HybridBucketPool struct {
 	*lazymap.LazyMap[Throttler]
 	rc redis.UniversalClient
@@ -266,12 +283,11 @@ func (s *HybridBucketPool) Get(mc jwt.MapClaims) (Throttler, error) {
 	if !ok {
 		return nil, nil
 	}
-	key := sessionID + rate
 	bytesPerSec, err := rateBytesPerSec(rate)
 	if err != nil {
 		return nil, err
 	}
-	return s.LazyMap.Get(key, func() (Throttler, error) {
+	return s.LazyMap.Get(bucketKey(sessionID, bytesPerSec), func() (Throttler, error) {
 		// capacity == rate: at most one second of idle accrual, no extra
 		// burst beyond what the configured rate allows.
 		return NewHybridBucket(bytesPerSec, bytesPerSec, s.rc, sessionID), nil

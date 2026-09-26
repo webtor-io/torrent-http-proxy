@@ -74,6 +74,110 @@ func TestHybridBucketPoolGet_Cached(t *testing.T) {
 	}
 }
 
+// ---------- bucket key: one bucket per (session, rate) ----------
+
+// newPodPool returns a pool the way one thp pod runs it: its own client to
+// the Redis every pod shares.
+func newPodPool(t *testing.T, mr *miniredis.Miniredis) *HybridBucketPool {
+	t.Helper()
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	return NewHybridBucketPool(rc)
+}
+
+func poolBucket(t *testing.T, p *HybridBucketPool, sessionID, rate string) *HybridBucket {
+	t.Helper()
+	th, err := p.Get(jwt.MapClaims{"sessionID": sessionID, "rate": rate})
+	if err != nil {
+		t.Fatalf("Get(%q, %q): %v", sessionID, rate, err)
+	}
+	hb, ok := th.(*HybridBucket)
+	if !ok {
+		t.Fatalf("Get(%q, %q) = %T, want *HybridBucket", sessionID, rate, th)
+	}
+	return hb
+}
+
+// A session holds tokens at two rates at once: the tier's on its primary
+// token (playlist, post-grace segments) and grace's 50M on grace segments.
+// Each is a bucket of its own; on one Redis key the one that drains it
+// leaves the other nothing, and each call re-clamps the balance to its own
+// capacity.
+func TestHybridBucketRatesOfOneSessionDoNotShareTokens(t *testing.T) {
+	for _, order := range [][2]string{{"5M", "50M"}, {"50M", "5M"}} {
+		t.Run(order[0]+" drained, then "+order[1], func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			pool := newPodPool(t, mr)
+			first := poolBucket(t, pool, "s1", order[0])
+			second := poolBucket(t, pool, "s1", order[1])
+
+			if got := first.refillFromRedis(first.capacity); got != first.capacity {
+				t.Fatalf("%s: fresh bucket granted %.0f, want its capacity %.0f", order[0], got, first.capacity)
+			}
+			if got := second.refillFromRedis(second.capacity); got != second.capacity {
+				t.Errorf("%s after %s was drained: granted %.0f, want its own full capacity %.0f (keys %v)",
+					order[1], order[0], got, second.capacity, mr.Keys())
+			}
+		})
+	}
+}
+
+// Two pods serving one session at one rate hold one bucket between them:
+// that is what makes the limit per session and not per pod. The rate is
+// the bucket's, not the claim's spelling: "5M" and "5MB" are one rate.
+func TestHybridBucketSameRateSharedAcrossPods(t *testing.T) {
+	for _, rates := range [][2]string{{"5M", "5M"}, {"5M", "5MB"}} {
+		t.Run(rates[0]+" and "+rates[1], func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			a := poolBucket(t, newPodPool(t, mr), "s1", rates[0])
+			b := poolBucket(t, newPodPool(t, mr), "s1", rates[1])
+			if a == b {
+				t.Fatal("two pools returned one instance; want one per pod")
+			}
+
+			if got := a.refillFromRedis(a.capacity); got != a.capacity {
+				t.Fatalf("pod A: fresh bucket granted %.0f, want %.0f", got, a.capacity)
+			}
+			// Pod A just took the whole second; pod B gets only what
+			// accrued since (ms of the rate), far under half of it.
+			if got := b.refillFromRedis(b.capacity); got >= b.capacity/2 {
+				t.Errorf("pod B granted %.0f of %.0f right after pod A drained the session's bucket; want the shared balance (keys %v)",
+					got, b.capacity, mr.Keys())
+			}
+		})
+	}
+}
+
+// The key is what an operator looks up in Redis; it expires 5 min after the
+// session's last write at that rate.
+func TestHybridBucketRedisKey(t *testing.T) {
+	mr := miniredis.RunT(t)
+	hb := poolBucket(t, newPodPool(t, mr), "s1", "5M")
+	hb.refillFromRedis(1)
+
+	const want = "bw:limit:s1:655360" // 5M bits/s = 655360 bytes/s
+	keys := mr.Keys()
+	if len(keys) != 1 || keys[0] != want {
+		t.Fatalf("keys %v, want [%s]", keys, want)
+	}
+	if ttl := mr.TTL(want); ttl != 5*time.Minute {
+		t.Errorf("TTL %v, want 5m", ttl)
+	}
+}
+
+// The pool's key keeps session and rate apart: "a1" at 5M is not "a" at 15M.
+func TestHybridBucketPoolKeySeparatesSessionFromRate(t *testing.T) {
+	pool := NewHybridBucketPool(nil)
+	a1 := poolBucket(t, pool, "a1", "5M")
+	a := poolBucket(t, pool, "a", "15M")
+	if a1 == a {
+		t.Fatal(`session "a1" at 5M and session "a" at 15M got one bucket`)
+	}
+	if a.rate != 15*1024*1024/8 {
+		t.Errorf(`session "a" at 15M: bucket rate %.0f B/s, want %d`, a.rate, 15*1024*1024/8)
+	}
+}
+
 // ---------- helpers ----------
 
 // measureThroughput calls hb.Wait(chunkSize) in a loop for the given duration

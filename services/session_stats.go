@@ -144,7 +144,7 @@ type sessionStatsEntry struct {
 	limitedConns int64
 	limitedOpen  int64
 	limitedAt    int64
-	rate         string // of the most recent request
+	rate         string // of the most recent request not on a grace token
 }
 
 // limitedOpenAt is limitedOpen carried forward to now. e.mu held.
@@ -247,10 +247,41 @@ func (s *SessionStats) sweep() {
 	}
 }
 
-// acquire counts a content request whose response has started. It returns
-// nil, and the request goes uncounted, when the map or the session's share
-// of it is full.
+// acquire counts a content request whose response has started: its bytes,
+// its time open, its rate (the stream's, until a later request's) and,
+// when limited, its limiter's wait. It returns nil, and the request goes
+// uncounted, when the map or the session's share of it is full.
 func (s *SessionStats) acquire(k sessionStatsKey, rate string, limited bool) *sessionStatsEntry {
+	e := s.open(k)
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.rate = rate
+	if limited {
+		now := s.now()
+		e.limitedOpen = e.limitedOpenAt(now)
+		e.limitedAt = now
+		e.limitedConns++
+	}
+	return e
+}
+
+// acquireGrace counts a grace segment (isGraceToken) whose response has
+// started: its bytes and its time open, which are the viewer's, and not its
+// rate or its limiter's wait, which are the grace window's. rate and
+// throttled stay the tier's however the key's requests interleave: the
+// grace bucket binding is not the tier binding, and a playlist poll on the
+// primary token between two grace segments would flip rate between them.
+// Its writer has no tw, so release takes it as unlimited too.
+func (s *SessionStats) acquireGrace(k sessionStatsKey) *sessionStatsEntry {
+	return s.open(k)
+}
+
+// open finds or makes k's entry and counts one more request open on it;
+// nil when the map or the session's share of it is full.
+func (s *SessionStats) open(k sessionStatsKey) *sessionStatsEntry {
 	s.mu.Lock()
 	e := s.entries[k]
 	if e == nil {
@@ -282,15 +313,6 @@ func (s *SessionStats) acquire(k sessionStatsKey, rate string, limited bool) *se
 	// Under s.mu: from here on the janitor sees an open request.
 	e.conns.Add(1)
 	s.mu.Unlock()
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.rate = rate
-	if limited {
-		now := s.now()
-		e.limitedOpen = e.limitedOpenAt(now)
-		e.limitedAt = now
-		e.limitedConns++
-	}
 	return e
 }
 
@@ -430,23 +452,27 @@ type sessionStatsEvent struct {
 	// A content request of the key was open at some moment since the
 	// previous event (see event). Always sent, false included: web-ui tells
 	// an older proxy, which has no such field, by its absence.
-	Active bool   `json:"active"`
-	Rate   string `json:"rate,omitempty"`
-	// The limiter wait of the key's requests, summed, over the window's
-	// wall time, 0..1 (see event). nil: no limited request was open in the
-	// window (no limiter at all, or nothing open), which is not the same as 0.
+	Active bool `json:"active"`
+	// The rate claim of the latest request not on a grace token: the tier's
+	// (see acquireGrace).
+	Rate string `json:"rate,omitempty"`
+	// The limiter wait of the key's requests, grace segments excepted,
+	// summed, over the window's wall time, 0..1 (see event). nil: no limited
+	// request was open in the window (no limiter at all, or nothing open),
+	// which is not the same as 0.
 	Throttled *float64 `json:"throttled,omitempty"`
 }
 
 // event averages over the span the ring covers: window_sec once it is full,
 // less while the stream is younger. A single sample spans nothing.
 //
-// throttled is the limiter wait of all the key's requests, summed, over that
-// span of wall time, clamped to 1. For one request that is the share of the
-// time the limiter held it. It is not the share of time any request was
-// held: the bucket is the session's, a dry bucket holds every request at
-// once, and each one's wait counts, so N parallel requests held together for
-// 1/N of the window already read 1. At the cap that is right (the tier binds
+// throttled is the limiter wait of all the key's requests but grace
+// segments (acquireGrace), summed, over that span of wall time, clamped to
+// 1. For one request that is the share of the time the limiter held it. It
+// is not the share of time any request was held: the bucket is the
+// session's, a dry bucket holds every request at once, and each one's wait
+// counts, so N parallel requests held together for 1/N of the window
+// already read 1. At the cap that is right (the tier binds
 // them all); below it the sum overstates, which is why a reader also wants
 // bytes_per_sec near the rate. The time requests were open would be the
 // wrong denominator: ingress takes an HLS segment whole at the tier's pace,
@@ -496,8 +522,11 @@ type sessionStatsWriter struct {
 	http.ResponseWriter
 	stats *SessionStats
 	key   sessionStatsKey
+	// grace: the request is on a grace token. Its rate and tw are unset:
+	// it counts through acquireGrace, bytes and time open only.
+	grace bool
 	rate  string
-	tw    *ThrottledResponseWriter // nil: no limiter on the response
+	tw    *ThrottledResponseWriter // nil: no limiter on the response, or grace
 	// WriteHeader(1xx) also arrives here, from the Transport's readLoop
 	// goroutine via ReverseProxy's Got1xxResponse, and touches no field;
 	// every other WriteHeader and Write runs on the handler goroutine.
@@ -513,6 +542,10 @@ func (w *sessionStatsWriter) start(statusCode int) {
 	w.started = true
 	// Callers pass final statuses only; a 1xx never gets here.
 	if statusCode >= 300 || isEventStream(w.Header()) {
+		return
+	}
+	if w.grace {
+		w.e = w.stats.acquireGrace(w.key)
 		return
 	}
 	w.e = w.stats.acquire(w.key, w.rate, w.tw != nil)

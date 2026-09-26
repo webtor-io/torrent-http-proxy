@@ -120,6 +120,15 @@ func tokenDomain(claims jwt.MapClaims) string {
 	return "default"
 }
 
+// isGraceToken: the token is one web-ui mints for a grace rule (`kind`
+// grace, web-ui docs/grace_token.md), which rewriteManifestForGrace swaps
+// onto segments inside the grace window. Its rate is lent for those
+// segments; it is not the session's own.
+func isGraceToken(claims jwt.MapClaims) bool {
+	kind, _ := claims["kind"].(string)
+	return kind == "grace"
+}
+
 func NewClaims(c *cli.Context) *Claims {
 	return &Claims{
 		apiKey:    c.String(apiKeyFlag),

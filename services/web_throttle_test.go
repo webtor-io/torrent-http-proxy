@@ -136,8 +136,12 @@ func (h *throttleHarness) useThrottler(t *testing.T, claims jwt.MapClaims, th Th
 	t.Helper()
 	sid, _ := claims["sessionID"].(string)
 	rate, _ := claims["rate"].(string)
-	// HybridBucketPool keys a session's bucket by sessionID+rate.
-	if _, err := h.web.bucket.LazyMap.Get(sid+rate, func() (Throttler, error) { return th, nil }); err != nil {
+	// HybridBucketPool keys a session's bucket by bucketKey(sessionID, rate).
+	bytesPerSec, err := rateBytesPerSec(rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.web.bucket.LazyMap.Get(bucketKey(sid, bytesPerSec), func() (Throttler, error) { return th, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := h.web.bucket.Get(claims); err != nil || got != th {
@@ -503,6 +507,36 @@ func TestThrottleMetricsWithoutLimiter(t *testing.T) {
 			seconds(t, f, "downstream_blocked")
 			if v, ok := f["req_id"]; ok {
 				t.Errorf("req_id field = %v without an X-Request-ID, want absent", v)
+			}
+		})
+	}
+}
+
+// A rate the limiter cannot parse fails every request on the token with
+// 500: it is not "no limiter", which is what a token without rate or
+// sessionID gets (TestThrottleMetricsWithoutLimiter).
+func TestWebUnparsableRateFailsRequest(t *testing.T) {
+	for _, rate := range []string{"5X", "", "5"} {
+		t.Run(strconv.Quote(rate), func(t *testing.T) {
+			h := newThrottleHarness(t, fixedBody(http.StatusOK, 1000))
+			r := h.request(t, tierClaims("t-badrate", "s-badrate", rate), true, "")
+			src, err := h.web.parser.Parse(r.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.URL.Path = src.Path
+			rec := httptest.NewRecorder()
+			logger, hook := logtest.NewNullLogger()
+			h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
+			if rec.Code != http.StatusInternalServerError || rec.Body.Len() != 0 {
+				t.Errorf("status %d with %d bytes, want 500 and no content", rec.Code, rec.Body.Len())
+			}
+			logged := false
+			for _, e := range hook.AllEntries() {
+				logged = logged || e.Message == "failed to get bucket"
+			}
+			if !logged {
+				t.Error(`no "failed to get bucket" line`)
 			}
 		})
 	}
