@@ -549,9 +549,9 @@ func TestRewriteManifest_FMP4(t *testing.T) {
 //   - plain, as content-transcoder answers a playlist: uncompressed whatever
 //     it is asked, with the Content-Length of what it sent. The rewrite
 //     changes the length, so a Content-Length left from the upstream would
-//     promise more bytes than the body has and the server would cut the
-//     response short. The playlists a passthrough session serves come this
-//     way.
+//     promise more bytes than the body has: the client reads the whole body
+//     and then gets an unexpected EOF. The playlists a passthrough session
+//     serves come this way.
 //   - gzip, as nginx-vod answers (gzip on for application/vnd.apple.mpegurl):
 //     compressed when asked. The client's Accept-Encoding is dropped
 //     (HTTPProxy.get), the Transport asks for gzip on its own and undoes it
