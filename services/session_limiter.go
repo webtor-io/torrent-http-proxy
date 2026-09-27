@@ -17,6 +17,7 @@ const (
 	LightExtsFlag          = "light-exts"
 	MaxConcTotalFlag       = "max-conc-total"
 	MaxIPsPerSessionFlag   = "max-ips-per-session"
+	LimiterRejectDelayFlag = "limiter-reject-delay"
 )
 
 // defaultLightExts is the built-in fast-path whitelist used when --light-exts
@@ -69,6 +70,12 @@ func RegisterSessionLimiterFlags(f []cli.Flag) []cli.Flag {
 			Value:  5,
 			EnvVar: "MAX_IPS_PER_SESSION",
 		},
+		cli.DurationFlag{
+			Name:   LimiterRejectDelayFlag,
+			Usage:  "hold a request the session limiter refuses this long before answering 429 (0 = answer at once)",
+			Value:  2 * time.Second,
+			EnvVar: "LIMITER_REJECT_DELAY",
+		},
 	)
 }
 
@@ -119,6 +126,9 @@ type SessionLimiter struct {
 	lightExts          map[string]struct{}
 	maxTotal           int
 	maxIPsPerSession   int
+	// rejectDelay holds a refusal before it is answered (see
+	// Web.refuseLimited).
+	rejectDelay time.Duration
 
 	sizeLookup SizeLookup
 
@@ -157,6 +167,7 @@ func NewSessionLimiter(c *cli.Context) *SessionLimiter {
 		lightExts:          parseLightExts(c.String(LightExtsFlag)),
 		maxTotal:           c.Int(MaxConcTotalFlag),
 		maxIPsPerSession:   c.Int(MaxIPsPerSessionFlag),
+		rejectDelay:        c.Duration(LimiterRejectDelayFlag),
 		sessions:           make(map[string]*sessionState),
 	}
 }

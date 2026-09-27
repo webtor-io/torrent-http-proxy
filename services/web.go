@@ -125,6 +125,10 @@ var (
 		Help:    "HTTP Proxy share of response duration spent blocked in the bandwidth limiter (2xx of at least 1 MiB and 4 s of the rate)",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99},
 	}, []string{"role", "name", "download"})
+	promSessionLimiterRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_session_limiter_rejected_total",
+		Help: "HTTP Proxy requests the session limiter refused with 429, by the cap that refused them",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -137,6 +141,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyThrottledDuration)
 	prometheus.MustRegister(promHTTPProxyThrottledDownstream)
 	prometheus.MustRegister(promHTTPProxyThrottleRatio)
+	prometheus.MustRegister(promSessionLimiterRejected)
 }
 
 func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers) *Web {
@@ -395,7 +400,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				"request_ip": s.getIP(r),
 				"reason":     reason,
 			}).Warn("session limiter rejected")
-			w.WriteHeader(http.StatusTooManyRequests)
+			s.refuseLimited(w, r, reason)
 			return
 		}
 		defer release()
@@ -746,6 +751,36 @@ func (s *Web) newMux() *http.ServeMux {
 // get up to the shutdown timeout, after which what is left is cut. The stats
 // janitor stops last. Safe to call more than once, concurrently, and before
 // Serve; every call waits for the drain.
+// limiterRetryAfter is the Retry-After, in seconds, of a session limiter
+// refusal: a client that honours it waits this long on top of the hold.
+const limiterRetryAfter = "5"
+
+// refuseLimited answers a request the session limiter refused: 429 with
+// Retry-After, held for the limiter's rejectDelay first. Download managers
+// that open more connections to one file than the per-path cap admits
+// retry the surplus ones at once and without end: on 2026-09-27 one session
+// made 24 requests a second, half of all refusals, and a handful of such
+// sessions made the rest. Whether they honour Retry-After is not known. A
+// client does wait for the answer before it retries on that connection, so
+// the hold caps such a loop at one try per delay per connection whatever
+// the client makes of the header. A held refusal costs a goroutine and a
+// socket, never a slot; it ends early when the client leaves or thp shuts
+// down.
+func (s *Web) refuseLimited(w http.ResponseWriter, r *http.Request, reason string) {
+	promSessionLimiterRejected.WithLabelValues(reason).Inc()
+	if d := s.sl.rejectDelay; d > 0 {
+		t := time.NewTimer(d)
+		select {
+		case <-t.C:
+		case <-r.Context().Done():
+		case <-s.closing:
+		}
+		t.Stop()
+	}
+	w.Header().Set("Retry-After", limiterRetryAfter)
+	w.WriteHeader(http.StatusTooManyRequests)
+}
+
 func (s *Web) Close() {
 	s.closeOnce.Do(func() { close(s.closing) })
 	s.gs.Close()
