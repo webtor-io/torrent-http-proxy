@@ -38,7 +38,7 @@ func newNewWeb(t *testing.T, upstream http.HandlerFunc, shutdownTimeout time.Dur
 			t.Fatal(err)
 		}
 	}
-	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), h.web.parser, h.web.r, h.web.pr, h.web.claims, h.web.bucket, nil, nil, nil)
+	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), h.web.parser, h.web.r, h.web.pr, h.web.claims, h.web.bucket, nil, nil, nil, nil)
 	return web, h.secret
 }
 

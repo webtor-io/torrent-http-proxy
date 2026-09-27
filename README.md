@@ -101,7 +101,7 @@ the process before any probe is served.
 
 ## Bandwidth limit
 
-With `--use-bandwidth-limit`, an external request whose token carries
+With `--use-bandwidth-limit`, an external request (see Internal callers) whose token carries
 `rate` (bits per second in bytefmt units: `5M`, `50M`) and `sessionID` is
 paced by a token bucket holding one second of that rate. There is one bucket
 per session and rate: the session's requests at one rate share it on every
@@ -113,6 +113,31 @@ its last use. Without Redis configured, or while it is unreachable, each
 instance limits on its own. A token without `sessionID` or without `rate` is
 not limited; a `rate` that does not parse (`5X`, empty, a bare number) fails
 every request on the token with 500.
+
+## Internal callers
+
+Limits and per-viewer accounting apply to external requests only: the
+session limiter, the session IP check, the bandwidth limit and session
+stats. A request is internal when the connection comes from a pod of one of
+the services the proxy routes to (the addresses in their Kubernetes
+Endpoints, ready or not, refreshed every second from the endpoints cache
+routing uses and kept for two minutes after they leave), or from an address
+listed in `INTERNAL_CALLER_ADDRS` (`--internal-caller-addrs`, comma-separated
+IPs). Those are services fetching on a viewer's behalf (nginx-vod reading the
+mp4 behind a segment, the transcoder or the prober reading the source, the
+archiver reading each file) while serving the viewer's own request, which was
+limited already. Headers play no part: X-Forwarded-For is the client's to
+write, and nginx-vod passes the viewer's on. Everything else, the ingress
+included, is external. Services located through the environment
+(`endpointsProvider: Environment`) name a destination, not a caller, and add
+nothing: with every service on one host, list the address the services
+connect from in `INTERNAL_CALLER_ADDRS` and have the front proxy connect from
+a different one, or the front's traffic is internal too.
+
+The closing log line carries `source` (`internal`/`external`, this
+classification) and, on internal requests, `caller` (the service). Routing is
+independent of it: a request without X-Forwarded-For is not steered to the
+proxy's own node, as before.
 
 ## Session stats
 

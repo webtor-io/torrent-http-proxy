@@ -19,6 +19,7 @@ import (
 	logtest "github.com/sirupsen/logrus/hooks/test"
 	cs "github.com/webtor-io/common-services"
 	"github.com/webtor-io/lazymap"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // throttleTestSvc is the "default" service of the harness; its name is also
@@ -72,10 +73,31 @@ func newThrottleHarness(t *testing.T, upstream http.HandlerFunc) *throttleHarnes
 			bucket:         NewHybridBucketPool(nil),
 			bandwidthLimit: true,
 			stats:          stats,
+			callers:        harnessCallers(t),
 			closing:        make(chan struct{}),
 			gs:             cs.NewGracefulServer(time.Second),
 		},
 	}
+}
+
+// harnessCallerIP is the one pod of the harness's internal callers: the
+// service harnessCallerSvc, as its endpoints list it.
+const (
+	harnessCallerIP  = "10.0.70.5"
+	harnessCallerSvc = "nginx-vod"
+)
+
+// harnessCallers knows harnessCallerIP, through a refresh of its endpoints.
+func harnessCallers(t *testing.T) *InternalCallers {
+	t.Helper()
+	ic := newInternalCallers([]string{harnessCallerSvc}, func(string) (*corev1.Endpoints, error) {
+		return endpointsOf([]string{harnessCallerIP}, nil), nil
+	}, nil, time.Hour, time.Hour, time.Now)
+	ic.refresh()
+	if name, ok := ic.Caller(harnessCallerIP + ":41234"); !ok || name != harnessCallerSvc {
+		t.Fatalf("harness caller %s reads %q, %v: the harness proves nothing", harnessCallerIP, name, ok)
+	}
+	return ic
 }
 
 // fixedBody answers with status and size zero bytes in one Write.
@@ -87,8 +109,10 @@ func fixedBody(status, size int) http.HandlerFunc {
 	}
 }
 
-// request builds a request for the harness's torrent. External ones carry
-// X-Forwarded-For, as everything that comes through the ingress does.
+// request builds a request for the harness's torrent. External ones come
+// from an address no endpoints list (httptest's 192.0.2.1) and carry
+// X-Forwarded-For, as everything through the ingress does; internal ones from
+// the harness's caller pod, without it, as content-transcoder's FFmpeg does.
 func (h *throttleHarness) request(t *testing.T, claims jwt.MapClaims, external bool, query string) *http.Request {
 	t.Helper()
 	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.secret))
@@ -99,6 +123,8 @@ func (h *throttleHarness) request(t *testing.T, claims jwt.MapClaims, external b
 		"/08ada5a7a6183aae1e09d831df6748d566095a10/Sintel/Sintel.mkv?token="+tok+"&api-key=k"+query, nil)
 	if external {
 		r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	} else {
+		r.RemoteAddr = harnessCallerIP + ":41234"
 	}
 	return r
 }

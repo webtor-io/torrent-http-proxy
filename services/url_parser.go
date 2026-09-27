@@ -41,7 +41,10 @@ type Source struct {
 	// Internal marks a request that came from inside the cluster (no
 	// X-Forwarded-For): a service fetching on a viewer's behalf, not the
 	// viewer's own client. Locality tricks that assume the caller sits on
-	// the node it was sent to do not apply to it.
+	// the node it was sent to do not apply to it. Routing only: whether the
+	// request is limited and accounted to the viewer is the connection's
+	// peer (InternalCallers), and nginx-vod, internal there, forwards the
+	// viewer's X-Forwarded-For.
 	Internal bool `json:"-"`
 }
 

@@ -89,6 +89,9 @@ func (h *throttleHarness) getPath(t *testing.T, path string, claims jwt.MapClaim
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A real connection comes from loopback: internal when loopback is a
+	// listed caller, external otherwise.
+	h.web.callers.addrs.Store(loopbackCallers(!external))
 	if external {
 		req.Header.Set("X-Forwarded-For", "203.0.113.7")
 	}
@@ -1183,7 +1186,7 @@ func TestNewWebWiresSessionStats(t *testing.T) {
 	for _, f := range RegisterWebFlags(nil) {
 		f.Apply(set)
 	}
-	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), nil, nil, nil, &Claims{apiKey: "k", apiSecret: statsSecret}, nil, nil, nil, nil)
+	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), nil, nil, nil, &Claims{apiKey: "k", apiSecret: statsSecret}, nil, nil, nil, nil, nil)
 	srv := newStatsServer(t, web)
 	s := openStats(t, statsURL(srv.URL, harnessHash, statsToken(t, statsSecret, "s1")))
 	if s.resp.StatusCode != http.StatusOK {

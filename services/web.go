@@ -44,6 +44,10 @@ type Web struct {
 	sl               *SessionLimiter
 	enforceSessionIP bool
 	stats            *SessionStats
+	// callers tells a service of ours fetching on a viewer's behalf from
+	// everyone else by the connection's peer: only the rest is limited and
+	// accounted to the viewer. nil knows none: everything is external.
+	callers *InternalCallers
 	// gs drains in-flight requests on Close, up to the shutdown timeout
 	// (WEB_SHUTDOWN_TIMEOUT), instead of dropping them with the listener.
 	gs *cs.GracefulServer
@@ -135,7 +139,7 @@ func init() {
 	prometheus.MustRegister(promHTTPProxyThrottleRatio)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers) *Web {
 	return &Web{
 		host:             c.String(webHostFlag),
 		port:             c.Int(webPortFlag),
@@ -151,6 +155,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		sl:               sl,
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 		stats:            NewSessionStats(),
+		callers:          callers,
 		closing:          make(chan struct{}),
 		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
@@ -321,11 +326,27 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
-	source := Internal
-	if r.Header.Get("X-FORWARDED-FOR") != "" {
-		source = External
+	// How to route: a request without X-Forwarded-For did not come through
+	// the ingress, and its caller does not sit on the node rest-api sent the
+	// viewer to (see preferLocal). Not who is calling: nginx-vod passes the
+	// viewer's X-Forwarded-For on with its subrequests.
+	src.Internal = r.Header.Get("X-FORWARDED-FOR") == ""
+
+	// Who is calling, for limits and accounting: a pod of one of our services
+	// fetching on the viewer's behalf (internal), or anyone else (external),
+	// by the connection's peer and nothing the client can write. Only an
+	// external request takes a session limiter slot, draws on the session's
+	// bandwidth bucket and counts in its session stats: the viewer's own
+	// request to that service already has. Until 2026-09-27 this was the
+	// X-Forwarded-For above, so nginx-vod's mp4 reads were the viewer's
+	// second request: they took slots of the session's caps (429 mid-segment,
+	// the client got 502) and paid the tier's rate a second time (441 such
+	// reads in 5 minutes spent 58% of their time in the limiter).
+	source := External
+	caller, internal := s.callers.Caller(r.RemoteAddr)
+	if internal {
+		source = Internal
 	}
-	src.Internal = source == Internal
 
 	ads := false
 
@@ -455,6 +476,10 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		if reqID != "" {
 			fields["req_id"] = reqID
 		}
+		if internal {
+			// The service whose pod made the request.
+			fields["caller"] = caller
+		}
 		if tw != nil {
 			waited := tw.Waited()
 			fields["throttled"] = waited.Seconds()
@@ -570,9 +595,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	r = WithFileKey(r, src.InfoHash, src.Path)
 	r = withProxyOutcome(r, outcome)
 	// A session's own content feeds GET /session-stats. Internal requests
-	// are services fetching on a viewer's behalf (web-ui's own fetches come
-	// through the public ingress in prod and do count); grace segment
-	// tokens carry no session yet. The stream answers for 40-hex
+	// are our services fetching on a viewer's behalf (web-ui's own fetches
+	// come through the public ingress in prod: external, and they count);
+	// grace segment tokens carry no session yet. The stream answers for 40-hex
 	// infohashes, and checkHash lets any first segment with 5 hex digits in
 	// it through: a key under anything else would be kept and never read.
 	if source == External && sessionID != "" && isInfoHash(src.InfoHash) {

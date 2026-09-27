@@ -30,6 +30,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterHTTPProxyFlags(app.Flags)
 	app.Flags = s.RegisterSessionLimiterFlags(app.Flags)
 	app.Flags = s.RegisterFileSizeCacheFlags(app.Flags)
+	app.Flags = s.RegisterInternalCallersFlags(app.Flags)
 
 	app.Action = run
 }
@@ -130,9 +131,17 @@ func run(c *cli.Context) error {
 	sessionLimiter := s.NewSessionLimiter(c)
 	sessionLimiter.SetSizeLookup(fileSizeCache.Get)
 
+	// Setting InternalCallers: which connections are our own services
+	// fetching on a viewer's behalf, from the endpoints routing reads
+	internalCallers, err := s.NewInternalCallers(c, config, endpointsPool)
+	if err != nil {
+		return err
+	}
+	defer internalCallers.Close()
+
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
-		bucket, clickHouse, accessHistory, sessionLimiter)
+		bucket, clickHouse, accessHistory, sessionLimiter, internalCallers)
 	// Bound before any servable starts: the probe answers Ready as soon as
 	// it listens, and a pod must not read Ready while its web port is
 	// unbound (maxSurge 1 retires the old pod on it).
@@ -141,6 +150,8 @@ func run(c *cli.Context) error {
 		return err
 	}
 	servers = append(servers, web)
+	// After Listen: a pod that cannot serve does not ask the API for anything.
+	internalCallers.Start()
 
 	// Setting ServeService
 	serve := cs.NewServe(servers...)
