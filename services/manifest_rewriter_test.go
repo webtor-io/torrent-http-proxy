@@ -1,10 +1,20 @@
 package services
 
 import (
+	"bytes"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 const (
@@ -189,5 +199,446 @@ func TestParseSessionOffset(t *testing.T) {
 		if got != c.want {
 			t.Errorf("body=%q want=%v got=%v", c.body, c.want, got)
 		}
+	}
+}
+
+// fMP4 playlists, as content-transcoder serves them for a passthrough
+// session (its docs/session-transcoding.md, "Passthrough output"): the hls
+// muxer's own playlist -- FFmpeg 8.1.2, -hls_segment_type fmp4 -hls_flags
+// temp_file -hls_fmp4_init_filename <prefix>-init-<gen>.mp4; the first video
+// case and the audio case are lines a run of that binary wrote, the others
+// the same layout -- after PlaylistForStream
+// (#EXT-X-SESSION-OFFSET and #EXT-X-START after #EXTM3U, #EXT-X-ENDLIST
+// held back while the run produces), with the client's query appended to
+// every reference, the URI in #EXT-X-MAP included. The query is in the
+// order browsers send it, api-key first: the token is matched as &token=.
+//
+// The rule these pin: only a URI line (the one after #EXTINF) is a segment
+// whose token follows the window. A URI inside a tag -- the init in
+// #EXT-X-MAP, a rendition in #EXT-X-MEDIA -- stays on the primary token
+// with the rest of the line: every line that starts with '#' passes
+// through byte for byte.
+const (
+	fmp4Primary = "?api-key=K&token=" + primaryJWT
+	fmp4Grace   = "?api-key=K&token=" + graceJWT
+)
+
+func m3u8(lines ...string) string { return strings.Join(lines, "\n") + "\n" }
+
+// firstDiff names the first line where got and want part.
+func firstDiff(got, want string) string {
+	g, w := strings.Split(got, "\n"), strings.Split(want, "\n")
+	for i := 0; i < len(g) || i < len(w); i++ {
+		var gl, wl string
+		if i < len(g) {
+			gl = g[i]
+		}
+		if i < len(w) {
+			wl = w[i]
+		}
+		if gl != wl {
+			return fmt.Sprintf("line %d: got %q, want %q", i+1, gl, wl)
+		}
+	}
+	return "no difference"
+}
+
+func TestRewriteManifest_FMP4(t *testing.T) {
+	const p, g = fmp4Primary, fmp4Grace
+	cases := []struct {
+		name  string
+		grace int
+		in    string
+		want  string
+	}{
+		{
+			// v0-2160.m3u8.ffmpeg of a run from the start (4 s GOPs). Grace
+			// 8: segments starting at 0 and 4 are in the window, the one at
+			// 8 is not.
+			name:  "video from the start",
+			grace: 8,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:0.000",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-216d035412fb7bb8.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-0.m4s"+p,
+				"#EXTINF:4.000000,",
+				"v0-2160-1.m4s"+p,
+				"#EXTINF:4.059000,",
+				"v0-2160-2.m4s"+p,
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-216d035412fb7bb8.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-0.m4s"+g,
+				"#EXTINF:4.000000,",
+				"v0-2160-1.m4s"+g,
+				"#EXTINF:4.059000,",
+				"v0-2160-2.m4s"+p,
+			),
+		},
+		{
+			// A run after a seek: the offset is its real start, a keyframe
+			// before the quantized point; 10 s GOPs at 23.976 fps (built,
+			// not copied from a run). The
+			// window (1200) ends inside the playlist: .m4s segments before
+			// it on grace, after it on primary, the init on primary.
+			name:  "video after a seek, window ends inside",
+			grace: 1200,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:1186.937",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:10",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:10.010000,",
+				"v0-2160-0.m4s"+p, // 1186.937
+				"#EXTINF:10.010000,",
+				"v0-2160-1.m4s"+p, // 1196.947
+				"#EXTINF:10.010000,",
+				"v0-2160-2.m4s"+p, // 1206.957
+				"#EXTINF:8.341667,",
+				"v0-2160-3.m4s"+p, // 1216.967
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:10",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:10.010000,",
+				"v0-2160-0.m4s"+g,
+				"#EXTINF:10.010000,",
+				"v0-2160-1.m4s"+g,
+				"#EXTINF:10.010000,",
+				"v0-2160-2.m4s"+p,
+				"#EXTINF:8.341667,",
+				"v0-2160-3.m4s"+p,
+			),
+		},
+		{
+			// a0.m3u8.ffmpeg of the same kind of run: audio is fMP4 too and
+			// cut on its own clock.
+			name:  "audio rendition",
+			grace: 1200,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:1190.000",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="a0-init-f2358d9841203756.mp4`+p+`"`,
+				"#EXTINF:4.010667,",
+				"a0-0.m4s"+p, // 1190
+				"#EXTINF:3.989333,",
+				"a0-1.m4s"+p, // 1194.010667
+				"#EXTINF:4.010667,",
+				"a0-2.m4s"+p, // 1198
+				"#EXTINF:0.106667,",
+				"a0-3.m4s"+p, // 1202.010667
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="a0-init-f2358d9841203756.mp4`+p+`"`,
+				"#EXTINF:4.010667,",
+				"a0-0.m4s"+g,
+				"#EXTINF:3.989333,",
+				"a0-1.m4s"+g,
+				"#EXTINF:4.010667,",
+				"a0-2.m4s"+g,
+				"#EXTINF:0.106667,",
+				"a0-3.m4s"+p,
+			),
+		},
+		{
+			// Past the window: nothing swaps, the offset tag goes.
+			name:  "video past the window",
+			grace: 1200,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:1500.000",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:10",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:10.010000,",
+				"v0-2160-0.m4s"+p,
+				"#EXTINF:10.010000,",
+				"v0-2160-1.m4s"+p,
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:10",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:10.010000,",
+				"v0-2160-0.m4s"+p,
+				"#EXTINF:10.010000,",
+				"v0-2160-1.m4s"+p,
+			),
+		},
+		{
+			// A second init after a discontinuity (RFC 8216 4.3.2.5: a MAP
+			// applies to the segments after it until the next). FFmpeg's
+			// hls muxer writes #EXT-X-MAP once, before the first segment
+			// (hlsenc.c hls_window), so content-transcoder's playlists do
+			// not have this; the shape is the spec's. The second MAP stays
+			// on primary with segments on grace either side of it, and
+			// movie time runs on across the discontinuity: the segment at
+			// 12 is past the window, not at 4 of a new count.
+			name:  "discontinuity and a second MAP",
+			grace: 12,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:0.000",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-0.m4s"+p,
+				"#EXTINF:4.000000,",
+				"v0-2160-1.m4s"+p,
+				"#EXT-X-DISCONTINUITY",
+				`#EXT-X-MAP:URI="v0-2160-init-5f00e1d2c3b4a596.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-2.m4s"+p,
+				"#EXTINF:4.000000,",
+				"v0-2160-3.m4s"+p,
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-0.m4s"+g,
+				"#EXTINF:4.000000,",
+				"v0-2160-1.m4s"+g,
+				"#EXT-X-DISCONTINUITY",
+				`#EXT-X-MAP:URI="v0-2160-init-5f00e1d2c3b4a596.mp4`+p+`"`,
+				"#EXTINF:4.000000,",
+				"v0-2160-2.m4s"+g,
+				"#EXTINF:4.000000,",
+				"v0-2160-3.m4s"+p,
+			),
+		},
+		{
+			// FFmpeg 8.1.2's -hls_flags single_file output (not a flag
+			// content-transcoder uses): the init and every segment are
+			// byte ranges of one file. BYTERANGE on the MAP and the
+			// #EXT-X-BYTERANGE between #EXTINF and its URI pass through,
+			// and the tag in between does not part #EXTINF from its URI.
+			name:  "byte ranges",
+			grace: 8,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:0.000",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-180.m4s`+p+`",BYTERANGE="3241@0"`,
+				"#EXTINF:4.000000,",
+				"#EXT-X-BYTERANGE:81787@3241",
+				"v0-180.m4s"+p,
+				"#EXTINF:4.000000,",
+				"#EXT-X-BYTERANGE:87512@85028",
+				"v0-180.m4s"+p,
+				"#EXTINF:4.080000,",
+				"#EXT-X-BYTERANGE:83739@172540",
+				"v0-180.m4s"+p,
+			),
+			want: m3u8(
+				"#EXTM3U",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:4",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-180.m4s`+p+`",BYTERANGE="3241@0"`,
+				"#EXTINF:4.000000,",
+				"#EXT-X-BYTERANGE:81787@3241",
+				"v0-180.m4s"+g,
+				"#EXTINF:4.000000,",
+				"#EXT-X-BYTERANGE:87512@85028",
+				"v0-180.m4s"+g,
+				"#EXTINF:4.080000,",
+				"#EXT-X-BYTERANGE:83739@172540",
+				"v0-180.m4s"+p,
+			),
+		},
+		{
+			// A passthrough session's master (passthroughMasterPlaylist,
+			// served with the offset): the renditions' URIs are inside
+			// #EXT-X-MEDIA and stay on primary, as does the variant (no
+			// #EXTINF before it).
+			name:  "passthrough master",
+			grace: 1200,
+			in: m3u8(
+				"#EXTM3U",
+				"#EXT-X-SESSION-OFFSET:0.000",
+				`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="English",AUTOSELECT=YES,DEFAULT=YES,URI="a0.m3u8`+p+`"`,
+				`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitles",LANGUAGE="eng",NAME="English",URI="s0.m3u8`+p+`"`,
+				`#EXT-X-STREAM-INF:BANDWIDTH=48000000,RESOLUTION=3840x2160,CODECS="hvc1.2.4.L150.90,mp4a.40.2",VIDEO-RANGE=PQ,AUDIO="audio",SUBTITLES="subtitles"`,
+				"v0-2160.m3u8"+p,
+			),
+			want: m3u8(
+				"#EXTM3U",
+				`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="English",AUTOSELECT=YES,DEFAULT=YES,URI="a0.m3u8`+p+`"`,
+				`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitles",LANGUAGE="eng",NAME="English",URI="s0.m3u8`+p+`"`,
+				`#EXT-X-STREAM-INF:BANDWIDTH=48000000,RESOLUTION=3840x2160,CODECS="hvc1.2.4.L150.90,mp4a.40.2",VIDEO-RANGE=PQ,AUDIO="audio",SUBTITLES="subtitles"`,
+				"v0-2160.m3u8"+p,
+			),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := string(RewriteManifest([]byte(c.in), claimsWithGrace(c.grace), primaryJWT))
+			if got != c.want {
+				t.Errorf("%s\ngot:\n%s", firstDiff(got, c.want), got)
+			}
+		})
+	}
+}
+
+// TestProxyHTTP_FMP4PlaylistGrace sends a passthrough variant through
+// proxyHTTP to an upstream that answers like content-transcoder (the
+// request's query appended to every reference, the MAP URI included) and
+// compresses what it is asked to, as nginx-vod does (gzip on for
+// application/vnd.apple.mpegurl). The client's Accept-Encoding is dropped
+// (HTTPProxy.get), the Transport asks for gzip on its own and undoes it
+// before modifyResponse: the upstream hop is compressed, the rewrite sees
+// plain text, and the client gets the rewritten playlist uncompressed with
+// its length.
+func TestProxyHTTP_FMP4PlaylistGrace(t *testing.T) {
+	in := m3u8(
+		"#EXTM3U",
+		"#EXT-X-SESSION-OFFSET:1186.937",
+		"#EXT-X-START:TIME-OFFSET=0",
+		"#EXT-X-VERSION:7",
+		"#EXT-X-TARGETDURATION:10",
+		"#EXT-X-MEDIA-SEQUENCE:0",
+		"#EXT-X-PLAYLIST-TYPE:EVENT",
+		`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4?Q"`,
+		"#EXTINF:10.010000,",
+		"v0-2160-0.m4s?Q",
+		"#EXTINF:10.010000,",
+		"v0-2160-1.m4s?Q",
+		"#EXTINF:10.010000,",
+		"v0-2160-2.m4s?Q",
+	)
+	var (
+		mu         sync.Mutex
+		upPath     string
+		upEncoding string
+		compressed bool
+	)
+	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		body := strings.ReplaceAll(in, "?Q", "?"+r.URL.RawQuery)
+		mu.Lock()
+		upPath, upEncoding = r.URL.Path, r.Header.Get("Accept-Encoding")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			var b bytes.Buffer
+			zw := gzip.NewWriter(&b)
+			_, _ = zw.Write([]byte(body))
+			_ = zw.Close()
+			mu.Lock()
+			compressed = true
+			mu.Unlock()
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Length", strconv.Itoa(b.Len()))
+			_, _ = w.Write(b.Bytes())
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = io.WriteString(w, body)
+	})
+	// The transcoder is a mod: .../<file>~hls/session/<id>/<playlist>.
+	(*h.web.parser.configs)["hls"] = &ServiceConfig{Name: throttleTestSvc, EndpointsProvider: Environment}
+
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claimsWithGrace(1200)).SignedString([]byte(h.secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := "api-key=k&token=" + tok
+	r := httptest.NewRequest(http.MethodGet,
+		"/08ada5a7a6183aae1e09d831df6748d566095a10/Sintel/Sintel.mkv~hls/session/abc/v0-2160.m3u8?"+query, nil)
+	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	r.Header.Set("Accept-Encoding", "gzip, br")
+	src, err := h.web.parser.Parse(r.URL)
+	if err != nil || src.Mod == nil {
+		t.Fatalf("parse: %v %+v", err, src)
+	}
+	r.URL.Path = src.Mod.Path // what Serve does for a mod
+	rec := httptest.NewRecorder()
+	logger, _ := logtest.NewNullLogger()
+	h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
+
+	p, g := "?"+query, "?api-key=k&token="+graceJWT
+	want := m3u8(
+		"#EXTM3U",
+		"#EXT-X-START:TIME-OFFSET=0",
+		"#EXT-X-VERSION:7",
+		"#EXT-X-TARGETDURATION:10",
+		"#EXT-X-MEDIA-SEQUENCE:0",
+		"#EXT-X-PLAYLIST-TYPE:EVENT",
+		`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+		"#EXTINF:10.010000,",
+		"v0-2160-0.m4s"+g,
+		"#EXTINF:10.010000,",
+		"v0-2160-1.m4s"+g,
+		"#EXTINF:10.010000,",
+		"v0-2160-2.m4s"+p,
+	)
+	mu.Lock()
+	defer mu.Unlock()
+	if upPath != "/session/abc/v0-2160.m3u8" {
+		t.Fatalf("upstream got %q", upPath)
+	}
+	if upEncoding != "gzip" || !compressed {
+		t.Errorf("upstream saw Accept-Encoding %q, compressed %v: want the Transport's own gzip, not the client's", upEncoding, compressed)
+	}
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("status %d, Content-Encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	if got := rec.Body.String(); got != want {
+		t.Errorf("%s\ngot:\n%s", firstDiff(got, want), got)
+	}
+	if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
+		t.Errorf("Content-Length %q for %d bytes", cl, rec.Body.Len())
 	}
 }

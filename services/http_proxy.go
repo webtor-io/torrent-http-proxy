@@ -262,11 +262,21 @@ func (s *HTTPProxy) get(loc *Location) (*httputil.ReverseProxy, error) {
 	p.ModifyResponse = s.modifyResponse
 	p.ErrorHandler = errorHandler
 	p.FlushInterval = -1
-	// Strip Accept-Encoding for .m3u8 paths so backend (nginx-vod, content-transcoder)
-	// returns plain text. modifyResponse rewrites segment tokens via byte-level
-	// substring match, which silently fails on a gzipped body — needle never
-	// found, gzipped body passes through unchanged. Manifests are tiny (<200 KB);
-	// edge gzip via ingress/CDN remains effective for the wire.
+	// Strip the client's Accept-Encoding for .m3u8 paths. modifyResponse
+	// rewrites segment tokens via byte-level substring match, which silently
+	// fails on a gzipped body — needle never found, gzipped body passes
+	// through unchanged. With the header gone, the Transport asks for gzip on
+	// its own (no Range, not HEAD) and decompresses before modifyResponse:
+	// net/http undoes only what it asked for. So the upstream hop may still
+	// be compressed (nginx-vod gzips playlists), and the rewrite sees plain
+	// text either way (TestProxyHTTP_FMP4PlaylistGrace).
+	//
+	// The client gets the playlist uncompressed: thp does not compress, and
+	// the ingress does not either (its gzip/brotli types leave out
+	// application/vnd.apple.mpegurl, checked 2026-09-27). Nor are playlists
+	// tiny: every reference carries the token. content-transcoder's
+	// playlists through thp, 1 h on 2026-09-27: p50 68 KB, p95 684 KB,
+	// max 2.0 MB.
 	defaultDirector := p.Director
 	p.Director = func(req *http.Request) {
 		defaultDirector(req)
