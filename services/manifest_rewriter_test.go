@@ -205,13 +205,14 @@ func TestParseSessionOffset(t *testing.T) {
 // fMP4 playlists, as content-transcoder serves them for a passthrough
 // session (its docs/session-transcoding.md, "Passthrough output"): the hls
 // muxer's own playlist -- FFmpeg 8.1.2, -hls_segment_type fmp4 -hls_flags
-// temp_file -hls_fmp4_init_filename <prefix>-init-<gen>.mp4; the first video
-// case and the audio case are lines a run of that binary wrote, the others
-// the same layout -- after PlaylistForStream
-// (#EXT-X-SESSION-OFFSET and #EXT-X-START after #EXTM3U, #EXT-X-ENDLIST
-// held back while the run produces), with the client's query appended to
-// every reference, the URI in #EXT-X-MAP included. The query is in the
-// order browsers send it, api-key first: the token is matched as &token=.
+// temp_file -hls_fmp4_init_filename <prefix>-init-<gen>.mp4 -- after
+// PlaylistForStream (#EXT-X-SESSION-OFFSET and #EXT-X-START after #EXTM3U,
+// #EXT-X-ENDLIST held back while the run produces), with the client's query
+// appended to every reference, the URI in #EXT-X-MAP included. The query is
+// in the order browsers send it, api-key first: the token is matched as
+// &token=. Two cases carry what that binary wrote in content-transcoder's
+// end-to-end runs, each case says which; the others are built in the same
+// layout.
 //
 // The rule these pin: only a URI line (the one after #EXTINF) is a segment
 // whose token follows the window. A URI inside a tag -- the init in
@@ -252,9 +253,11 @@ func TestRewriteManifest_FMP4(t *testing.T) {
 		want  string
 	}{
 		{
-			// v0-2160.m3u8.ffmpeg of a run from the start (4 s GOPs). Grace
-			// 8: segments starting at 0 and 4 are in the window, the one at
-			// 8 is not.
+			// v0-2160.m3u8.ffmpeg of an end-to-end run from the start (4 s
+			// GOPs, generation 216d035412fb7bb8): the tags, #EXTINF and URI
+			// lines as FFmpeg wrote them, with PlaylistForStream's two tags,
+			// no #EXT-X-ENDLIST and the query added. Grace 8: segments
+			// starting at 0 and 4 are in the window, the one at 8 is not.
 			name:  "video from the start",
 			grace: 8,
 			in: m3u8(
@@ -334,8 +337,10 @@ func TestRewriteManifest_FMP4(t *testing.T) {
 			),
 		},
 		{
-			// a0.m3u8.ffmpeg of the same kind of run: audio is fMP4 too and
-			// cut on its own clock.
+			// a0.m3u8.ffmpeg of another end-to-end run, one started at 30 s
+			// (generation f2358d9841203756), added to as above: audio is
+			// fMP4 too and cut on its own clock. The offset is not that
+			// run's: 1190 puts the window's end inside the playlist.
 			name:  "audio rendition",
 			grace: 1200,
 			in: m3u8(
@@ -375,7 +380,10 @@ func TestRewriteManifest_FMP4(t *testing.T) {
 			),
 		},
 		{
-			// Past the window: nothing swaps, the offset tag goes.
+			// Past the window: nothing swaps, the offset tag goes. The fMP4
+			// form of TestRewriteManifest_OffsetPastGrace_NoSwap; it does not
+			// pin RewriteManifest's early return for this, which the walk
+			// matches (without it the package stays green).
 			name:  "video past the window",
 			grace: 1200,
 			in: m3u8(
@@ -534,14 +542,24 @@ func TestRewriteManifest_FMP4(t *testing.T) {
 }
 
 // TestProxyHTTP_FMP4PlaylistGrace sends a passthrough variant through
-// proxyHTTP to an upstream that answers like content-transcoder (the
-// request's query appended to every reference, the MAP URI included) and
-// compresses what it is asked to, as nginx-vod does (gzip on for
-// application/vnd.apple.mpegurl). The client's Accept-Encoding is dropped
-// (HTTPProxy.get), the Transport asks for gzip on its own and undoes it
-// before modifyResponse: the upstream hop is compressed, the rewrite sees
-// plain text, and the client gets the rewritten playlist uncompressed with
-// its length.
+// proxyHTTP to an upstream that appends the request's query to every
+// reference, the MAP URI included, as content-transcoder does. Two
+// upstreams, since thp fronts both kinds:
+//
+//   - plain, as content-transcoder answers a playlist: uncompressed whatever
+//     it is asked, with the Content-Length of what it sent. The rewrite
+//     changes the length, so a Content-Length left from the upstream would
+//     promise more bytes than the body has and the server would cut the
+//     response short. The playlists a passthrough session serves come this
+//     way.
+//   - gzip, as nginx-vod answers (gzip on for application/vnd.apple.mpegurl):
+//     compressed when asked. The client's Accept-Encoding is dropped
+//     (HTTPProxy.get), the Transport asks for gzip on its own and undoes it
+//     before modifyResponse, taking the upstream's Content-Length away with
+//     the encoding.
+//
+// Either way the rewrite sees plain text and the client gets the rewritten
+// playlist uncompressed with its own length.
 func TestProxyHTTP_FMP4PlaylistGrace(t *testing.T) {
 	in := m3u8(
 		"#EXTM3U",
@@ -559,86 +577,106 @@ func TestProxyHTTP_FMP4PlaylistGrace(t *testing.T) {
 		"#EXTINF:10.010000,",
 		"v0-2160-2.m4s?Q",
 	)
-	var (
-		mu         sync.Mutex
-		upPath     string
-		upEncoding string
-		compressed bool
-	)
-	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
-		body := strings.ReplaceAll(in, "?Q", "?"+r.URL.RawQuery)
-		mu.Lock()
-		upPath, upEncoding = r.URL.Path, r.Header.Get("Accept-Encoding")
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			var b bytes.Buffer
-			zw := gzip.NewWriter(&b)
-			_, _ = zw.Write([]byte(body))
-			_ = zw.Close()
+	for _, up := range []struct {
+		name string
+		gzip bool
+	}{
+		{name: "plain with Content-Length, as content-transcoder"},
+		{name: "gzip when asked, as nginx-vod", gzip: true},
+	} {
+		t.Run(up.name, func(t *testing.T) {
+			var (
+				mu         sync.Mutex
+				upPath     string
+				upEncoding string
+				upLength   int
+				compressed bool
+			)
+			h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+				body := strings.ReplaceAll(in, "?Q", "?"+r.URL.RawQuery)
+				mu.Lock()
+				upPath, upEncoding, upLength = r.URL.Path, r.Header.Get("Accept-Encoding"), len(body)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+				if up.gzip && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+					var b bytes.Buffer
+					zw := gzip.NewWriter(&b)
+					_, _ = zw.Write([]byte(body))
+					_ = zw.Close()
+					mu.Lock()
+					compressed = true
+					mu.Unlock()
+					w.Header().Set("Content-Encoding", "gzip")
+					w.Header().Set("Content-Length", strconv.Itoa(b.Len()))
+					_, _ = w.Write(b.Bytes())
+					return
+				}
+				w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+				_, _ = io.WriteString(w, body)
+			})
+			// The transcoder is a mod: .../<file>~hls/session/<id>/<playlist>.
+			(*h.web.parser.configs)["hls"] = &ServiceConfig{Name: throttleTestSvc, EndpointsProvider: Environment}
+
+			tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claimsWithGrace(1200)).SignedString([]byte(h.secret))
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := "api-key=k&token=" + tok
+			r := httptest.NewRequest(http.MethodGet,
+				"/08ada5a7a6183aae1e09d831df6748d566095a10/Sintel/Sintel.mkv~hls/session/abc/v0-2160.m3u8?"+query, nil)
+			r.Header.Set("X-Forwarded-For", "203.0.113.7")
+			r.Header.Set("Accept-Encoding", "gzip, br")
+			src, err := h.web.parser.Parse(r.URL)
+			if err != nil || src.Mod == nil {
+				t.Fatalf("parse: %v %+v", err, src)
+			}
+			r.URL.Path = src.Mod.Path // what Serve does for a mod
+			rec := httptest.NewRecorder()
+			logger, _ := logtest.NewNullLogger()
+			h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
+
+			p, g := "?"+query, "?api-key=k&token="+graceJWT
+			want := m3u8(
+				"#EXTM3U",
+				"#EXT-X-START:TIME-OFFSET=0",
+				"#EXT-X-VERSION:7",
+				"#EXT-X-TARGETDURATION:10",
+				"#EXT-X-MEDIA-SEQUENCE:0",
+				"#EXT-X-PLAYLIST-TYPE:EVENT",
+				`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
+				"#EXTINF:10.010000,",
+				"v0-2160-0.m4s"+g,
+				"#EXTINF:10.010000,",
+				"v0-2160-1.m4s"+g,
+				"#EXTINF:10.010000,",
+				"v0-2160-2.m4s"+p,
+			)
 			mu.Lock()
-			compressed = true
-			mu.Unlock()
-			w.Header().Set("Content-Encoding", "gzip")
-			w.Header().Set("Content-Length", strconv.Itoa(b.Len()))
-			_, _ = w.Write(b.Bytes())
-			return
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		_, _ = io.WriteString(w, body)
-	})
-	// The transcoder is a mod: .../<file>~hls/session/<id>/<playlist>.
-	(*h.web.parser.configs)["hls"] = &ServiceConfig{Name: throttleTestSvc, EndpointsProvider: Environment}
-
-	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claimsWithGrace(1200)).SignedString([]byte(h.secret))
-	if err != nil {
-		t.Fatal(err)
-	}
-	query := "api-key=k&token=" + tok
-	r := httptest.NewRequest(http.MethodGet,
-		"/08ada5a7a6183aae1e09d831df6748d566095a10/Sintel/Sintel.mkv~hls/session/abc/v0-2160.m3u8?"+query, nil)
-	r.Header.Set("X-Forwarded-For", "203.0.113.7")
-	r.Header.Set("Accept-Encoding", "gzip, br")
-	src, err := h.web.parser.Parse(r.URL)
-	if err != nil || src.Mod == nil {
-		t.Fatalf("parse: %v %+v", err, src)
-	}
-	r.URL.Path = src.Mod.Path // what Serve does for a mod
-	rec := httptest.NewRecorder()
-	logger, _ := logtest.NewNullLogger()
-	h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
-
-	p, g := "?"+query, "?api-key=k&token="+graceJWT
-	want := m3u8(
-		"#EXTM3U",
-		"#EXT-X-START:TIME-OFFSET=0",
-		"#EXT-X-VERSION:7",
-		"#EXT-X-TARGETDURATION:10",
-		"#EXT-X-MEDIA-SEQUENCE:0",
-		"#EXT-X-PLAYLIST-TYPE:EVENT",
-		`#EXT-X-MAP:URI="v0-2160-init-0a12b34c56d78e90.mp4`+p+`"`,
-		"#EXTINF:10.010000,",
-		"v0-2160-0.m4s"+g,
-		"#EXTINF:10.010000,",
-		"v0-2160-1.m4s"+g,
-		"#EXTINF:10.010000,",
-		"v0-2160-2.m4s"+p,
-	)
-	mu.Lock()
-	defer mu.Unlock()
-	if upPath != "/session/abc/v0-2160.m3u8" {
-		t.Fatalf("upstream got %q", upPath)
-	}
-	if upEncoding != "gzip" || !compressed {
-		t.Errorf("upstream saw Accept-Encoding %q, compressed %v: want the Transport's own gzip, not the client's", upEncoding, compressed)
-	}
-	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "" {
-		t.Fatalf("status %d, Content-Encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
-	}
-	if got := rec.Body.String(); got != want {
-		t.Errorf("%s\ngot:\n%s", firstDiff(got, want), got)
-	}
-	if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
-		t.Errorf("Content-Length %q for %d bytes", cl, rec.Body.Len())
+			defer mu.Unlock()
+			if upPath != "/session/abc/v0-2160.m3u8" {
+				t.Fatalf("upstream got %q", upPath)
+			}
+			// The Transport asks for gzip in both cases: the client's
+			// header is gone and it adds its own. Only nginx-vod's kind
+			// answers compressed.
+			if upEncoding != "gzip" || compressed != up.gzip {
+				t.Errorf("upstream saw Accept-Encoding %q, compressed %v: want the Transport's own gzip, not the client's, compressed %v",
+					upEncoding, compressed, up.gzip)
+			}
+			// Otherwise the upstream's Content-Length would pass as the
+			// rewritten body's and the check below would prove nothing.
+			if upLength == len(want) {
+				t.Fatalf("the rewrite keeps the length (%d): the test cannot tell the upstream's Content-Length from its own", upLength)
+			}
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "" {
+				t.Fatalf("status %d, Content-Encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+			}
+			if got := rec.Body.String(); got != want {
+				t.Errorf("%s\ngot:\n%s", firstDiff(got, want), got)
+			}
+			if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
+				t.Errorf("Content-Length %q for %d bytes", cl, rec.Body.Len())
+			}
+		})
 	}
 }
