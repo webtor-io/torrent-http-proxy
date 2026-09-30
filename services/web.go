@@ -472,7 +472,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"status":     strconv.Itoa(wi.statusCode),
 			"rate":       rate,
 			"session_id": sessionID,
-			"referer":    r.Referer(),
+			"referer":    redactURL(r.Referer()),
 			"bytes":      wi.bytesWritten,
 			// Time blocked handing bytes downstream; what is left of
 			// duration after it and throttled is upstream and TTFB.

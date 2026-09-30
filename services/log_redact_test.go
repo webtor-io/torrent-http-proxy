@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
@@ -90,5 +91,41 @@ func TestRequestLogKeepsNoCredentials(t *testing.T) {
 		if p := fmt.Sprint(claimsLine.Data["Path"]); !strings.Contains(p, "Sintel.mkv") {
 			t.Errorf("Path %q: the file should still be there", p)
 		}
+	}
+}
+
+// A request served: its line keeps the Referer, which can be a page whose
+// own URL carries the key and the token -- redacted like the rest.
+func TestServedLogKeepsNoCredentials(t *testing.T) {
+	h := newThrottleHarness(t, fixedBody(http.StatusOK, 1000))
+	h.web.claims = &Claims{apiKey: redactKey, apiSecret: statsSecret}
+	tok := signToken(t, statsSecret, viewerClaims(time.Now().Add(time.Hour).Unix()))
+	hook := logtest.NewGlobal()
+	defer hook.Reset()
+
+	r := httptest.NewRequest(http.MethodGet, "/"+harnessHash+"/Sintel/Sintel.mkv?api-key="+redactKey+"&token="+tok, nil)
+	r.Header.Set("Referer", "https://example.org/watch?api-key="+redactKey+"&token="+tok)
+	rec := httptest.NewRecorder()
+	h.web.newMux().ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	served := false
+	for _, e := range hook.AllEntries() {
+		if e.Message == "request served successfully" {
+			served = true
+			if ref := fmt.Sprint(e.Data["referer"]); !strings.Contains(ref, "example.org/watch") {
+				t.Errorf("referer %q: the page should still be there", ref)
+			}
+		}
+		for k, v := range e.Data {
+			s := fmt.Sprint(v)
+			if strings.Contains(s, tok[:40]) || strings.Contains(s, redactKey) {
+				t.Errorf("%q: field %s keeps a credential: %s", e.Message, k, s)
+			}
+		}
+	}
+	if !served {
+		t.Fatal("no request-served line")
 	}
 }
