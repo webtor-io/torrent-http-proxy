@@ -169,7 +169,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		logger: logrus.WithFields(logrus.Fields{
 			"component": "retry",
 			"infohash":  rc.Src.InfoHash,
-			"path":      rc.Src.Path,
+			"path":      redactURL(rc.Src.Path),
 		}),
 	}
 	return resp, nil

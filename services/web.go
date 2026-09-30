@@ -382,7 +382,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 					"session_ip": bound,
 					"request_ip": reqIP,
 					"infohash":   src.InfoHash,
-					"path":       src.Path,
+					"path":       redactURL(src.Path),
 				}).Warn("session IP mismatch")
 				w.WriteHeader(http.StatusTooManyRequests)
 				return
@@ -396,7 +396,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			logger.WithFields(logrus.Fields{
 				"session_id": sessionID,
 				"infohash":   src.InfoHash,
-				"path":       src.Path,
+				"path":       redactURL(src.Path),
 				"request_ip": s.getIP(r),
 				"reason":     reason,
 			}).Warn("session limiter rejected")
@@ -466,7 +466,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"source":     string(source),
 			"edge":       src.GetEdgeName(),
 			"infohash":   src.InfoHash,
-			"path":       src.Path,
+			"path":       redactURL(src.Path),
 			"ttfb":       wi.ttfb.Seconds(),
 			"duration":   duration.Seconds(),
 			"status":     strconv.Itoa(wi.statusCode),
@@ -707,7 +707,7 @@ func (s *Web) newMux() *http.ServeMux {
 			return
 		}
 		logger := logrus.WithFields(logrus.Fields{
-			"URL":  r.URL.String(),
+			"URL":  redactURL(r.URL.String()),
 			"Host": r.Host,
 		})
 
@@ -723,7 +723,7 @@ func (s *Web) newMux() *http.ServeMux {
 
 		logger = logger.WithFields(logrus.Fields{
 			"InfoHash": src.InfoHash,
-			"Path":     src.Path,
+			"Path":     redactURL(src.Path),
 		})
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
