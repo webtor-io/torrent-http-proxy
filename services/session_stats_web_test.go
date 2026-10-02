@@ -213,7 +213,7 @@ func graceSegmentClaims(session string) jwt.MapClaims {
 	return jwt.MapClaims{"role": "grace", "kind": "grace", "rate": "50M", "hash": harnessHash, "sessionID": session}
 }
 
-// A grace segment on the key of the session's playlist polls: its bytes and
+// A grace segment on the key of the session's ordinary segments: its bytes and
 // its time open count, its rate and its limiter's wait do not. rate stays
 // the tier's with a grace segment the latest request, and throttled holds
 // only the tier's wait, so a binding grace bucket never reads as the tier
@@ -1196,4 +1196,49 @@ func TestNewWebWiresSessionStats(t *testing.T) {
 	web.Close()
 	s.expectEnd(t)
 	web.Close()
+}
+
+// Playlist refreshes continue while media is paused. They must not create
+// viewer presence, speed, or limiter evidence, even on an existing entry.
+func TestSessionStatsPlaylistPollsAreNotTransfers(t *testing.T) {
+	for _, contentType := range []string{"application/vnd.apple.mpegurl", "application/x-mpegURL; charset=utf-8", "application/dash+xml"} {
+		t.Run(contentType, func(t *testing.T) {
+			claims := tierClaims("playlist", "playlist-session", "5M")
+			h := newThrottleHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", contentType)
+				_, _ = w.Write([]byte("#EXTM3U\n"))
+			}))
+			h.useThrottler(t, claims, &perByteThrottler{time.Microsecond})
+			key := statsKey("playlist-session", harnessHash)
+			poll := func() {
+				t.Helper()
+				code, body := h.getPath(t, "/"+harnessHash+"/film.mkv~hls/index.m3u8", claims, true)
+				if code != 200 || string(body) != "#EXTM3U\n" {
+					t.Fatalf("playlist response: %d %q", code, body)
+				}
+			}
+			poll()
+			if h.statsEntry("playlist-session") != nil {
+				t.Fatal("playlist created a transfer entry")
+			}
+			// A preceding media segment: polling must leave all its totals alone.
+			e := h.web.stats.acquire(key, "5M", true)
+			e.bytes.Add(10000)
+			h.web.stats.release(e, true)
+			before := h.web.stats.sample(key)
+			h.clock.Advance(time.Second)
+			poll()
+			after := h.web.stats.sample(key)
+			if before.statsTotals != after.statsTotals || after.conns != 0 || after.rate != before.rate {
+				t.Fatalf("poll changed media counters: before %+v after %+v", before, after)
+			}
+			ring := newStatsRing(6)
+			ring.push(before)
+			ring.push(after)
+			ev := ring.event()
+			if ev.Active || ev.BytesPerSec != 0 || ev.Throttled != nil {
+				t.Fatalf("poll looks like a transfer: %+v", ev)
+			}
+		})
+	}
 }

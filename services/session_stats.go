@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -272,8 +273,8 @@ func (s *SessionStats) acquire(k sessionStatsKey, rate string, limited bool) *se
 // started: its bytes and its time open, which are the viewer's, and not its
 // rate or its limiter's wait, which are the grace window's. rate and
 // throttled stay the tier's however the key's requests interleave: the
-// grace bucket binding is not the tier binding, and a playlist poll on the
-// primary token between two grace segments would flip rate between them.
+// grace bucket binding is not the tier binding. Interleaved ordinary
+// segments must keep the tier rate; manifest polls do not count at all.
 // Its writer has no tw, so release takes it as unlimited too.
 func (s *SessionStats) acquireGrace(k sessionStatsKey) *sessionStatsEntry {
 	return s.open(k)
@@ -514,8 +515,8 @@ func (r *statsRing) event() sessionStatsEvent {
 // sessionStatsWriter feeds one proxied response into its key's entry. The
 // entry is resolved once, when the response starts (final WriteHeader or
 // first Write), since only then are the status and Content-Type known. Only
-// 2xx content counts: event streams (the seeder's ?stats=true, warmup) are
-// status, not content, and an error carries none (counting it would let
+// 2xx content counts: event streams and streaming manifests are control
+// traffic, not media delivery, and an error carries none (counting it would let
 // requests for made-up hashes, answered 404, fill the map). After that a
 // Write costs two atomic adds and, under a limiter, one load.
 type sessionStatsWriter struct {
@@ -541,7 +542,7 @@ func (w *sessionStatsWriter) start(statusCode int) {
 	}
 	w.started = true
 	// Callers pass final statuses only; a 1xx never gets here.
-	if statusCode >= 300 || isEventStream(w.Header()) {
+	if statusCode >= 300 || isEventStream(w.Header()) || isStreamingManifest(w.Header()) {
 		return
 	}
 	if w.grace {
@@ -549,6 +550,19 @@ func (w *sessionStatsWriter) start(statusCode int) {
 		return
 	}
 	w.e = w.stats.acquire(w.key, w.rate, w.tw != nil)
+}
+
+// A player refreshes manifests even with a full buffer or paused. Counting
+// them would manufacture viewer presence and speed without media delivery.
+// Use the response type: both the transcoder and nginx-vod set it, including
+// for nested routes. This affects session stats only, not bandwidth limits.
+func isStreamingManifest(h http.Header) bool {
+	mt, _, _ := mime.ParseMediaType(h.Get("Content-Type"))
+	switch mt {
+	case "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml":
+		return true
+	}
+	return false
 }
 
 func (w *sessionStatsWriter) WriteHeader(statusCode int) {
