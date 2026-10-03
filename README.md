@@ -193,7 +193,9 @@ second event. Events two to five cover the 1 to 4 seconds the stream has
 been open, not `window_sec`, so they swing with where a segment fetch falls.
 
 Content counts when it is a 2xx, non-event-stream response to a request
-with the same `sessionID` and `domain` claims for that torrent. A token
+with the same `sessionID` and `domain` claims for that torrent, other than
+a cache probe (a `done` key in the query: rest-api asks it on the viewer's
+token, and the seeder answers with a status, no content). A token
 without `sessionID` (such as today's grace segment token) counts nowhere. A
 grace segment token (`kind` grace) with them counts in `bytes_per_sec`,
 `conns` and `active`, not in `rate` or `throttled`: its 50M is the grace

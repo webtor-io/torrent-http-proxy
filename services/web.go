@@ -605,8 +605,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// come through the public ingress in prod: external, and they count);
 	// grace segment tokens carry no session yet. The stream answers for 40-hex
 	// infohashes, and checkHash lets any first segment with 5 hex digits in
-	// it through: a key under anything else would be kept and never read.
-	if source == External && sessionID != "" && isInfoHash(src.InfoHash) {
+	// it through: a key under anything else would be kept and never read. A
+	// `done` key is rest-api's cache probe on the viewer's token, answered
+	// with a status and no content (the seeder dispatches on the key, as on
+	// `stats` below): not the viewer's transfer.
+	_, cacheProbe := r.URL.Query()["done"]
+	if source == External && sessionID != "" && isInfoHash(src.InfoHash) && !cacheProbe {
 		sw := &sessionStatsWriter{
 			ResponseWriter: w,
 			stats:          s.stats,

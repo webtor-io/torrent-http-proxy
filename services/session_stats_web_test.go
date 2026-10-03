@@ -307,6 +307,31 @@ func TestSessionStatsSkipsNonContent(t *testing.T) {
 	}
 }
 
+// rest-api asks the seeder whether a file is complete with ?done=true on the
+// export URL it mints: the viewer's token, through the public ingress, so
+// external and the viewer's session. The answer is a 200 with no body when
+// it is: a question about the file, not a transfer to the viewer, and
+// counted it showed the viewer as present for 2 to 3 seconds.
+func TestSessionStatsSkipsCacheProbe(t *testing.T) {
+	probed := make(chan bool, 1)
+	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		_, ok := r.URL.Query()["done"]
+		probed <- ok
+	})
+	f := h.serve(t, httptest.NewRecorder(), h.request(t, tierClaims("t-ss-done", "s-ss-done", "2M"), true, "&done=true"))
+	select {
+	case ok := <-probed:
+		if !ok || f["status"] != "200" {
+			t.Fatalf("upstream saw done %v, status %v: the case proves nothing", ok, f["status"])
+		}
+	default:
+		t.Fatal("the probe never reached the upstream")
+	}
+	if n := entryCount(h.web.stats); n != 0 {
+		t.Errorf("%d session stats entries after a cache probe, want none", n)
+	}
+}
+
 // Only content counts. An error carries none, and counting it would let one
 // token fill the map with requests for made-up hashes, each answered 404.
 func TestSessionStatsCountsOnlySuccess(t *testing.T) {
