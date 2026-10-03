@@ -148,6 +148,31 @@ func TestHybridBucketSameRateSharedAcrossPods(t *testing.T) {
 	}
 }
 
+// A token minted before the viewer had a session (web-ui's first page
+// without its cookie) carries sessionID "". Keyed on it, every such viewer
+// on every pod drew on one bucket; the address the token names keys it.
+func TestHybridBucketEmptySessionKeyedByAddress(t *testing.T) {
+	mr := miniredis.RunT(t)
+	bucket := func(p *HybridBucketPool, addr string) *HybridBucket {
+		t.Helper()
+		th, err := p.Get(jwt.MapClaims{"sessionID": "", "remoteAddress": addr, "rate": "5M"})
+		hb, ok := th.(*HybridBucket)
+		if err != nil || !ok {
+			t.Fatalf("Get(%q) = %T, %v; want *HybridBucket", addr, th, err)
+		}
+		return hb
+	}
+	a := bucket(newPodPool(t, mr), "203.0.113.7")
+	b := bucket(newPodPool(t, mr), "2001:db8::1")
+	if got := a.refillFromRedis(a.capacity); got != a.capacity {
+		t.Fatalf("viewer A: fresh bucket granted %.0f, want %.0f", got, a.capacity)
+	}
+	if got := b.refillFromRedis(b.capacity); got != b.capacity {
+		t.Errorf("viewer B at another address granted %.0f of %.0f after A drained its bucket (keys %v)",
+			got, b.capacity, mr.Keys())
+	}
+}
+
 // The key is what an operator looks up in Redis; it expires 5 min after the
 // session's last write at that rate.
 func TestHybridBucketRedisKey(t *testing.T) {

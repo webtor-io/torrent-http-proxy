@@ -279,6 +279,14 @@ func (s *HybridBucketPool) Get(mc jwt.MapClaims) (Throttler, error) {
 	if !ok {
 		return nil, nil
 	}
+	if sessionID == "" {
+		// web-ui mints sessionID "" for a viewer it has no session for yet
+		// (a first page without its cookie). On that key every such viewer
+		// on every pod drew on one bucket; the address web-ui minted the
+		// token for, signed like the session, keys it instead. An IP and a
+		// sessionID (hex) never spell the same key.
+		sessionID, _ = mc["remoteAddress"].(string)
+	}
 	rate, ok := mc["rate"].(string)
 	if !ok {
 		return nil, nil

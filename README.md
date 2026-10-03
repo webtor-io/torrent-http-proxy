@@ -112,7 +112,11 @@ second>` (`5M` → `bw:limit:<sessionID>:655360`) and expires 5 minutes after
 its last use. Without Redis configured, or while it is unreachable, each
 instance limits on its own. A token without `sessionID` or without `rate` is
 not limited; a `rate` that does not parse (`5X`, empty, a bare number) fails
-every request on the token with 500.
+every request on the token with 500. A `sessionID` of `""` (web-ui's token
+for a viewer it has no session for yet) is limited by its `remoteAddress`
+claim in its place: `bw:limit:<remoteAddress>:<rate in bytes per second>`.
+Without that claim too (a grace token of such a viewer) all such tokens at
+one rate share one bucket, `bw:limit::<rate in bytes per second>`.
 
 ## Internal callers
 
