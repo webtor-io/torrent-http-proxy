@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
+	"golang.org/x/sys/unix"
 )
 
 type SourceType string
@@ -652,8 +653,35 @@ func (s *Web) Listen() error {
 	if err != nil {
 		return errors.Wrap(err, "failed to web listen to tcp connection")
 	}
-	s.ln = ln
+	s.ln = lowatListener{ln}
 	return nil
+}
+
+// notsentLowat caps what a connection may hold queued but not yet sent. A
+// reader that stops (a paused or slow client, or torrent-archiver stalled
+// behind one) otherwise leaves its send queue to grow to the node's
+// tcp_wmem max, 16 MiB, kept that high for clients far away. 2026-10-03 on
+// worker62 such queues held 902 MiB toward torrent-archiver alone, a quarter
+// of the node's TCP memory, which sat at 95% of the pressure threshold.
+// Bytes in flight are not capped, so a fast client keeps its speed.
+const notsentLowat = 1 << 20
+
+// lowatListener sets notsentLowat on every connection it accepts.
+type lowatListener struct{ net.Listener }
+
+func (l lowatListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		if rc, err := tc.SyscallConn(); err == nil {
+			_ = rc.Control(func(fd uintptr) {
+				_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_NOTSENT_LOWAT, notsentLowat)
+			})
+		}
+	}
+	return c, nil
 }
 
 // Serve serves on the port Listen bound, binding it first if Listen was not
