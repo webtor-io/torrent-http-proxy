@@ -1,8 +1,10 @@
 package services
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +65,45 @@ func TestUpstreamRoleIsTheTokens(t *testing.T) {
 		}
 		if got := <-seen; got != c.want {
 			t.Errorf("%s: upstream X-Role %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRetryKeepsUpstreamRole: a stream cut mid-transfer resumes on another
+// pod with a request retryTransport builds afresh, copying only the headers
+// it lists. Without X-Role among them Vault's read resumes as anyone's, and
+// the seeder may serve the rest from the very copy being checked.
+func TestRetryKeepsUpstreamRole(t *testing.T) {
+	const size, cut = 1000, 100
+	seen := make(chan string, 2)
+	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get("X-Role")
+		if r.Header.Get("Range") == "" {
+			// The first pod dies after cut bytes.
+			w.Header().Set("Content-Length", strconv.Itoa(size))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(make([]byte, cut))
+			w.(http.Flusher).Flush()
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", cut, size-1, size))
+		w.Header().Set("Content-Length", strconv.Itoa(size-cut))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(make([]byte, size-cut))
+	})
+	h.web.pr.maxRetries = 1
+	tok := handToken(t, hdrHS256, map[string]any{"role": "vault", "exp": time.Now().Add(time.Hour).Unix()}, h.secret)
+	rec := h.serveToken(t, tok, "")
+	if rec.Body.Len() != size {
+		t.Fatalf("client got %d bytes, want %d: the stream did not resume", rec.Body.Len(), size)
+	}
+	for _, req := range []string{"first", "retry"} {
+		if got := <-seen; got != "vault" {
+			t.Errorf("%s request: upstream X-Role %q, want vault", req, got)
 		}
 	}
 }
