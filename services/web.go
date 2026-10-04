@@ -526,6 +526,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 	}()
 
+	// The verified token's role, "" when it has none ("nobody" above is a
+	// metric label, not the token's). Set like every header here, so a
+	// client's own X-Role never reaches a service: the seeder takes role
+	// vault as Vault checking its copy and reads the torrent, not that copy.
+	tokenRole, _ := claims["role"].(string)
+
 	headers := map[string]string{
 		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + escapePathSegments(src.Path) + "?" + src.Query,
 		"X-Proxy-Url":   s.baseURL,
@@ -536,6 +542,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Token":       src.Token,
 		"X-Api-Key":     apiKey,
 		"X-Session-ID":  sessionID,
+		"X-Role":        tokenRole,
 	}
 
 	// Set unconditionally, like every other X-* header above: the mod
