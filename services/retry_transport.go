@@ -22,8 +22,8 @@ import (
 var (
 	promRetryAttempts = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_retry_attempts_total",
-		Help: "Total number of upstream retry attempts",
-	}, []string{"outcome"})
+		Help: "Total number of upstream retry attempts; same_pod: the attempt went back to the pod that cut the stream (empty for exhausted, which is no attempt)",
+	}, []string{"outcome", "same_pod"})
 )
 
 func init() {
@@ -51,8 +51,9 @@ func WithRetryContext(r *http.Request, rc *RetryContext) *http.Request {
 }
 
 // retryTransport wraps a RoundTripper. On successful 200/206 responses it replaces
-// resp.Body with a retryingReadCloser that transparently reconnects to another pod
-// on the same node if the upstream connection breaks mid-transfer.
+// resp.Body with a retryingReadCloser that transparently reconnects if the
+// upstream connection breaks mid-transfer: first to the same pod, then to
+// another pod on the same node.
 type retryTransport struct {
 	http.RoundTripper
 }
@@ -89,10 +90,21 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	// Capture the failed pod's IP from the request host.
+	// The host of the attempt that failed last.
 	failedHost := req.URL.Host
+	// A pod that answered 200/206 is alive: the stream mostly ends because
+	// the seeder cut it (its stall guard, its write deadline; 81% unexpected
+	// EOF, 18% connection reset on 2026-10-06), and another pod would load
+	// the whole torrent a second time on the node. So the first retry goes
+	// back to the same pod while it is still a ready endpoint; after that,
+	// and when it is gone, to another pod. A pod given up on is left out of
+	// this request's later attempts only (tried). The shared ignore list,
+	// which turns a pod off for every torrent for 30 s, is for a pod that
+	// could not be reached: a dial error.
+	samePodTried := false
+	var tried []string
 
-	reconnectFn := func(offset int64) (io.ReadCloser, error) {
+	reconnectFn := func(offset int64) (io.ReadCloser, bool, error) {
 		newStart := origStart + offset
 
 		// Extract the failed IP (strip port).
@@ -109,20 +121,28 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			cfg = rc.Cfg.GetMod(edgeType)
 		}
 		if cfg == nil {
-			return nil, errors.New("no service config found")
+			return nil, false, errors.New("no service config found")
 		}
 
-		// Resolve fallback target (same-node pod for K8s, same host for env).
-		loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, net.ParseIP(failedIP), rc.Claims)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to resolve fallback")
+		samePod := !samePodTried && rc.SvcLoc.Serves(cfg, failedIP)
+		targetHost := failedHost
+		if samePod {
+			samePodTried = true
+		} else {
+			tried = append(tried, failedIP)
+			// Resolve fallback target (same-node pod for K8s, same host for env).
+			loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, tried, rc.Claims)
+			if err != nil {
+				return nil, false, errors.Wrap(err, "failed to resolve fallback")
+			}
+			targetHost = fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
 		}
-		targetHost := fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
+		failedHost = targetHost
 
 		// Build a new request to the target.
 		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, fmt.Sprintf("http://%s%s?%s", targetHost, req.URL.Path, req.URL.RawQuery), nil)
 		if err != nil {
-			return nil, err
+			return nil, samePod, err
 		}
 		// Copy relevant headers from original request.
 		for _, h := range []string{"X-Source-Url", "X-Proxy-Url", "X-Info-Hash", "X-Path", "X-Origin-Path", "X-Full-Path", "X-Token", "X-Api-Key", "X-Session-ID", "X-Download-Rate", "X-Mod-Type", "X-Mod-Extra", "X-Role"} {
@@ -136,7 +156,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		innerTransport := &redirectFollowingTransport{rc.Transport, rc.ExternalTransport}
 		newResp, err := innerTransport.RoundTrip(newReq)
 		if err != nil {
-			return nil, errors.Wrap(err, "retry request failed")
+			if isDialError(err) {
+				ip, _, _ := net.SplitHostPort(targetHost)
+				rc.SvcLoc.Ignore(ip)
+			}
+			return nil, samePod, errors.Wrap(err, "retry request failed")
 		}
 		if newResp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			// A 416 whose Content-Range total equals our resume offset means
@@ -145,19 +169,16 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			totalStr := strings.TrimPrefix(newResp.Header.Get("Content-Range"), "bytes */")
 			_ = newResp.Body.Close()
 			if total, perr := strconv.ParseInt(totalStr, 10, 64); perr == nil && total == newStart {
-				return nil, errUpstreamEOF
+				return nil, samePod, errUpstreamEOF
 			}
-			return nil, errors.Errorf("expected 206 on retry, got 416 (Content-Range %q, resume offset %d)", newResp.Header.Get("Content-Range"), newStart)
+			return nil, samePod, errors.Errorf("expected 206 on retry, got 416 (Content-Range %q, resume offset %d)", newResp.Header.Get("Content-Range"), newStart)
 		}
 		if newResp.StatusCode != http.StatusPartialContent {
 			_ = newResp.Body.Close()
-			return nil, errors.Errorf("expected 206 on retry, got %d", newResp.StatusCode)
+			return nil, samePod, errors.Errorf("expected 206 on retry, got %d", newResp.StatusCode)
 		}
 
-		// Update failedHost for potential subsequent retries.
-		failedHost = targetHost
-
-		return newResp.Body, nil
+		return newResp.Body, samePod, nil
 	}
 
 	resp.Body = &retryingReadCloser{
@@ -182,9 +203,11 @@ var errUpstreamEOF = errors.New("upstream stream already fully delivered")
 // retryingReadCloser wraps an io.ReadCloser and transparently reconnects
 // on retryable errors, resuming from the byte offset where the error occurred.
 type retryingReadCloser struct {
-	mu          sync.Mutex
-	body        io.ReadCloser
-	reconnectFn func(offset int64) (io.ReadCloser, error)
+	mu   sync.Mutex
+	body io.ReadCloser
+	// reconnectFn resumes at offset; samePod: it went back to the pod that
+	// cut the stream.
+	reconnectFn func(offset int64) (body io.ReadCloser, samePod bool, err error)
 	bytesRead   int64
 	expected    int64 // Content-Length of the original response, -1 if unknown
 	maxRetries  int
@@ -228,36 +251,45 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 	}
 
 	if r.retries >= r.maxRetries {
-		r.logger.WithError(err).Warnf("upstream failed, retries exhausted (%d/%d)", r.retries, r.maxRetries)
-		promRetryAttempts.WithLabelValues("exhausted").Inc()
+		r.logger.WithError(err).WithField("outcome", "exhausted").Warnf("upstream failed, retries exhausted (%d/%d)", r.retries, r.maxRetries)
+		promRetryAttempts.WithLabelValues("exhausted", "").Inc()
 		return 0, err
 	}
 
-	r.logger.WithError(err).WithField("bytesRead", r.bytesRead).WithField("retry", r.retries+1).Warn("upstream connection lost, retrying on another pod")
+	r.logger.WithError(err).WithField("bytesRead", r.bytesRead).WithField("retry", r.retries+1).Warn("upstream connection lost, retrying")
 
 	// Close the broken body.
 	_ = r.body.Close()
 
-	// Wait before retry.
-	time.Sleep(r.retryDelay)
+	for {
+		// Wait before retry.
+		time.Sleep(r.retryDelay)
 
-	// Reconnect.
-	newBody, reconnErr := r.reconnectFn(r.bytesRead)
-	r.retries++
-	if reconnErr != nil {
+		// Reconnect.
+		newBody, samePod, reconnErr := r.reconnectFn(r.bytesRead)
+		r.retries++
+		label := strconv.FormatBool(samePod)
+		logger := r.logger.WithField("retry", r.retries).WithField("same_pod", samePod)
+		if reconnErr == nil {
+			r.body = newBody
+			logger.WithField("outcome", "success").Info("retry reconnection successful")
+			promRetryAttempts.WithLabelValues("success", label).Inc()
+			break
+		}
 		if errors.Is(reconnErr, errUpstreamEOF) {
-			r.logger.WithField("bytesRead", r.bytesRead).Info("retry found stream fully delivered, treating as EOF")
-			promRetryAttempts.WithLabelValues("eof").Inc()
+			logger.WithField("bytesRead", r.bytesRead).WithField("outcome", "eof").Info("retry found stream fully delivered, treating as EOF")
+			promRetryAttempts.WithLabelValues("eof", label).Inc()
 			return 0, io.EOF
 		}
-		r.logger.WithError(reconnErr).WithField("originalError", err.Error()).Warn("retry reconnection failed")
-		promRetryAttempts.WithLabelValues("failure").Inc()
-		return 0, err // return original error
+		logger.WithError(reconnErr).WithField("originalError", err.Error()).WithField("outcome", "failure").Warn("retry reconnection failed")
+		promRetryAttempts.WithLabelValues("failure", label).Inc()
+		// The pod that cut the stream did not take it back: the next
+		// attempt, within the same budget, goes to another pod. Any other
+		// failed attempt ends the stream, as does the client leaving.
+		if !samePod || r.retries >= r.maxRetries || errors.Is(reconnErr, context.Canceled) {
+			return 0, err // return original error
+		}
 	}
-
-	r.body = newBody
-	r.logger.WithField("retry", r.retries).Info("retry reconnection successful")
-	promRetryAttempts.WithLabelValues("success").Inc()
 
 	// Read from the new body.
 	n, err = r.body.Read(p)
@@ -302,6 +334,14 @@ func isRetryableError(err error) bool {
 		return true
 	}
 	return false
+}
+
+// isDialError: the attempt got no connection — the pod is gone or not
+// listening (refused, unreachable, connect timeout). Not a dial the client
+// cut short by leaving: the pod may be fine.
+func isDialError(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial" && !errors.Is(err, context.Canceled)
 }
 
 // parseRange parses "bytes=start-end" or "bytes=start-" into start and end

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,7 +131,7 @@ func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *S
 				Unavailable: true,
 			}, nil
 		}
-		l, err := s.getKubernetes(cfg, src, claims)
+		l, err := s.getKubernetes(cfg, src, claims, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -148,14 +149,16 @@ func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *S
 	}
 }
 
-func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
+// getKubernetes picks cfg's pod for src among its ready addresses, leaving
+// out those on the shared ignore list and those in exclude.
+func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims jwt.MapClaims, exclude []string) (*Location, error) {
 	endpoints, err := s.ep.Get(cfg.Name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get endpoints")
 	}
 	subset := endpoints.Subsets[0]
 	as := subset.Addresses
-	as = s.filterAddressesByIgnore(as)
+	as = s.filterAddresses(as, exclude)
 	if len(as) == 0 {
 		return &Location{
 			Unavailable: true,
@@ -347,34 +350,64 @@ func (s *ServiceLocation) getEnvironment(cfg *ServiceConfig) (*Location, error) 
 }
 
 // GetFallback resolves a fallback location for retry.
-// For Kubernetes: adds excludeIP to ignore list and re-runs the same resolution
-// logic as getKubernetes. NodeHash distribution guarantees the same infohash
-// lands on the same node, so no extra node validation is needed.
+// For Kubernetes: re-runs the same resolution logic as getKubernetes without
+// the pods in exclude, which only this request leaves out. NodeHash
+// distribution guarantees the same infohash lands on the same node, so no
+// extra node validation is needed.
 // For Environment: returns the same static location (retry to same host).
-func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, excludeIP net.IP, claims jwt.MapClaims) (*Location, error) {
+//
+// It does not touch the shared ignore list. Until 2026-10 it put the failed
+// pod there for 30 s, which moved every torrent of a pod that had just cut
+// one stream to its runner-up on the node: a second pod loading the same
+// torrent, ~2,600 times a day, 98% of them from such a retry.
+func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, exclude []string, claims jwt.MapClaims) (*Location, error) {
 	if cfg.EndpointsProvider == Environment {
 		return s.getEnvironment(cfg)
 	}
 
-	// Temporarily ignore the failed IP.
-	s.ignore.Ignore(excludeIP.String())
-
 	// Run the same resolution logic (without cache).
-	loc, err := s.getKubernetes(cfg, src, claims)
+	loc, err := s.getKubernetes(cfg, src, claims, exclude)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to resolve fallback")
 	}
 	if loc.Unavailable {
-		return nil, errors.Errorf("no available pods after excluding %s", excludeIP)
+		return nil, errors.Errorf("no available pods after excluding %v", exclude)
 	}
 
 	return loc, nil
 }
 
-func (s *ServiceLocation) filterAddressesByIgnore(as []corev1.EndpointAddress) []corev1.EndpointAddress {
+// Serves reports whether ip is one of cfg's ready pods, as of the endpoints
+// cache (60 s), and not on the shared ignore list. A pod being terminated
+// leaves the ready addresses. Kubernetes only: an Environment location is
+// one fixed host that no list confirms.
+func (s *ServiceLocation) Serves(cfg *ServiceConfig, ip string) bool {
+	if cfg.EndpointsProvider != Kubernetes {
+		return false
+	}
+	endpoints, err := s.ep.Get(cfg.Name)
+	if err != nil || len(endpoints.Subsets) == 0 {
+		return false
+	}
+	for _, a := range s.filterAddresses(endpoints.Subsets[0].Addresses, nil) {
+		if net.ParseIP(a.IP).String() == ip {
+			return true
+		}
+	}
+	return false
+}
+
+// Ignore turns ip off for every request for the ignore list's 30 s: for a
+// pod that could not be reached, not for one that answered.
+func (s *ServiceLocation) Ignore(ip string) {
+	s.ignore.Ignore(ip)
+}
+
+func (s *ServiceLocation) filterAddresses(as []corev1.EndpointAddress, exclude []string) []corev1.EndpointAddress {
 	var res []corev1.EndpointAddress
 	for _, a := range as {
-		if s.ignore.IsIgnored(net.ParseIP(a.IP).String()) {
+		ip := net.ParseIP(a.IP).String()
+		if s.ignore.IsIgnored(ip) || slices.Contains(exclude, ip) {
 			continue
 		}
 		res = append(res, a)

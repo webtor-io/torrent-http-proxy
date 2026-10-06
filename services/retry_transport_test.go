@@ -24,13 +24,17 @@ func (d *dirtyReader) Read(p []byte) (int, error) {
 
 func (d *dirtyReader) Close() error { return nil }
 
+// newTestRRC: every reconnect counts as one to another pod.
 func newTestRRC(body io.ReadCloser, expected int64, reconnectFn func(int64) (io.ReadCloser, error)) *retryingReadCloser {
 	return &retryingReadCloser{
-		body:        body,
-		reconnectFn: reconnectFn,
-		expected:    expected,
-		maxRetries:  2,
-		logger:      logrus.WithField("test", true),
+		body: body,
+		reconnectFn: func(offset int64) (io.ReadCloser, bool, error) {
+			b, err := reconnectFn(offset)
+			return b, false, err
+		},
+		expected:   expected,
+		maxRetries: 2,
+		logger:     logrus.WithField("test", true),
 	}
 }
 
