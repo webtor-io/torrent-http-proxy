@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/juju/ratelimit"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"github.com/webtor-io/lazymap"
@@ -24,57 +26,94 @@ type Throttler interface {
 // Verify that *ratelimit.Bucket satisfies Throttler at compile time.
 var _ Throttler = (*ratelimit.Bucket)(nil)
 
-// luaTokenBucket is an atomic Redis token-bucket implemented as a Lua script.
-// Key layout: KEYS[1] is a Redis Hash with fields "tokens" and "last_tick".
-// ARGV: [1] capacity, [2] rate (tokens/sec), [3] requested, [4] now_ms, [5] ttl_sec.
-// Returns: number of tokens actually granted (may be 0).
-var luaTokenBucket = redis.NewScript(`
-local key   = KEYS[1]
-local cap   = tonumber(ARGV[1])
-local rate  = tonumber(ARGV[2])
-local req   = tonumber(ARGV[3])
-local now   = tonumber(ARGV[4])
-local ttl   = tonumber(ARGV[5])
-
-local vals = redis.call("HMGET", key, "tokens", "last_tick")
-local tokens   = tonumber(vals[1]) or cap
-local lastTick = tonumber(vals[2]) or now
-
--- accrue tokens since last tick
-local elapsed = (now - lastTick) / 1000  -- seconds
-if elapsed > 0 then
-    tokens = tokens + elapsed * rate
-    if tokens > cap then tokens = cap end
+// luaReserve debits a reservation from a session's balance in Redis, and
+// returns how long the caller must wait before spending it: the seconds the
+// balance takes to accrue back to zero, as a string ("0" when it stays
+// non-negative). A string because Dragonfly returns a Lua number as a
+// double and Redis truncates it to an integer.
+//
+// KEYS[1] is a Hash {tokens, last_tick}, the layout and units of the
+// grant-only script this replaced, so old and new pods draw on one balance
+// during a rollout: the old script grants nothing while tokens is negative.
+// ARGV: [1] capacity, [2] rate (bytes/sec), [3] bytes to reserve, [4] now
+// (ms, the caller's clock), [5] ttl (sec), [6] "1" to drop what accrued
+// while the caller could not reach Redis.
+//
+// The balance may go negative: a debt that accrual repays at rate, so the
+// reservations of all callers are spaced at rate whatever their number.
+// last_tick only moves forward: a pod whose clock lags accrues nothing
+// until the clock catches up, instead of accruing the lag again.
+var luaReserve = redis.NewScript(`
+local cap  = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local now  = tonumber(ARGV[4])
+local vals = redis.call("HMGET", KEYS[1], "tokens", "last_tick")
+local tokens = tonumber(vals[1]) or cap
+local last   = tonumber(vals[2]) or now
+if now > last then
+    tokens = math.min(cap, tokens + (now - last) / 1000 * rate)
+    last = now
 end
-
--- grant up to what is available
-local granted = 0
-if tokens >= req then
-    granted = req
-    tokens  = tokens - req
-elseif tokens > 0 then
-    granted = tokens
-    tokens  = 0
-end
-
-redis.call("HMSET", key, "tokens", tostring(tokens), "last_tick", tostring(now))
-redis.call("EXPIRE", key, ttl)
-return tostring(granted)
+if ARGV[6] == "1" and tokens > 0 then tokens = 0 end
+tokens = tokens - tonumber(ARGV[3])
+redis.call("HSET", KEYS[1], "tokens", tostring(tokens), "last_tick", tostring(last))
+redis.call("EXPIRE", KEYS[1], tonumber(ARGV[5]))
+if tokens >= 0 then return "0" end
+return tostring(-tokens / rate)
 `)
 
-// HybridBucket implements Throttler with a two-tier token bucket:
-// a fast local tier and a global Redis tier that acts as the source of truth.
+// leaseSeconds is how much of its rate a bucket reserves in one Redis call.
+// The bucket spends it locally over the following writes: one call per a
+// quarter second of a session's traffic, whatever the write size or the
+// number of its streams. It also bounds what a stream that stops leaves
+// unspent on its pod.
+const leaseSeconds = 0.25
+
+// probeInterval is how often a bucket that fell back to local pings Redis.
+var probeInterval = 5 * time.Second
+
+var (
+	promLimiterRedisCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_limiter_redis_calls_total",
+		Help: "HTTP Proxy bandwidth limiter reservations made in Redis, by result",
+	}, []string{"result"})
+	promLimiterWaiting = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_limiter_waiting",
+		Help: "HTTP Proxy writes asleep in the bandwidth limiter",
+	})
+	promLimiterLocalFallbacks = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_limiter_local_fallbacks_total",
+		Help: "HTTP Proxy bandwidth limiter buckets that fell back to a local balance after a failed Redis call",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(promLimiterRedisCalls, promLimiterWaiting, promLimiterLocalFallbacks)
+}
+
+// HybridBucket limits one session at one rate. Its balance is in Redis,
+// shared by every pod; this pod reserves a lease from it and spends that
+// locally. While Redis is unreachable it limits on a local balance instead,
+// shared by the session's streams on this pod.
 type HybridBucket struct {
-	mu         sync.Mutex
-	local      float64   // current local token balance (bytes)
-	rate       float64   // bytes per second
-	capacity   float64   // max burst (bytes)
-	lastRefill time.Time // for local accrual when Redis is unavailable
+	mu       sync.Mutex
+	rate     float64 // bytes per second
+	capacity float64 // max burst (bytes)
+
+	// lease is bytes reserved in Redis and already waited for.
+	lease float64
+
+	// The local balance (may go negative) and when it last accrued.
+	tokens     float64
+	lastRefill time.Time
 
 	rc       redis.UniversalClient
 	redisKey string
 	redisOK  bool
 	probing  bool
+	// resync makes the next reservation drop the Redis balance's surplus:
+	// it accrued while this pod paced the session locally.
+	resync bool
 }
 
 // NewHybridBucket returns sessionID's bucket at rate. Its Redis balance is
@@ -82,7 +121,6 @@ type HybridBucket struct {
 // with no other: see bucketKey.
 func NewHybridBucket(rate float64, capacity float64, rc redis.UniversalClient, sessionID string) *HybridBucket {
 	return &HybridBucket{
-		local:      0, // start empty — first write goes to Redis for coordination
 		rate:       rate,
 		capacity:   capacity,
 		lastRefill: time.Now(),
@@ -105,143 +143,132 @@ func bucketKey(sessionID string, bytesPerSec float64) string {
 	return sessionID + ":" + strconv.FormatInt(int64(bytesPerSec), 10)
 }
 
-// Wait blocks until count tokens are available, satisfying the Throttler interface.
-// Design: at most one Redis call per Write(); sleep for any deficit. No retry loop.
+// Wait blocks until count bytes may be sent. It spends the lease first;
+// past it, one Redis call reserves at least leaseSeconds of the rate and
+// Wait sleeps once for whatever that reservation is ahead of the balance.
 func (hb *HybridBucket) Wait(count int64) {
 	if count <= 0 {
 		return
 	}
 	need := float64(count)
-
 	hb.mu.Lock()
-	canRedis := hb.redisOK && hb.rc != nil
-
-	// When Redis is unavailable, accrue tokens locally by elapsed time
-	// (graceful degradation — same behavior as the old ratelimit.Bucket).
-	if !canRedis {
-		now := time.Now()
-		elapsed := now.Sub(hb.lastRefill).Seconds()
-		if elapsed > 0 {
-			hb.local += elapsed * hb.rate
-			if hb.local > hb.capacity {
-				hb.local = hb.capacity
-			}
-			hb.lastRefill = now
-		}
-	}
-
-	// Fast path: serve entirely from local tokens.
-	if hb.local >= need {
-		hb.local -= need
+	if hb.lease >= need {
+		hb.lease -= need
 		hb.mu.Unlock()
 		return
 	}
-
-	// Consume whatever local tokens are available.
-	need -= hb.local
-	hb.local = 0
+	need -= hb.lease
+	hb.lease = 0
+	if !hb.redisOK {
+		d := hb.reserveLocal(need)
+		hb.mu.Unlock()
+		limiterSleep(d)
+		return
+	}
+	resync := hb.resync
 	hb.mu.Unlock()
 
-	if !canRedis {
-		// Local-only degraded mode: single sleep is the best we can do.
-		// N parallel waiters here each advance independently, so total
-		// throughput scales with concurrency — acceptable trade-off
-		// when Redis is unavailable.
-		if hb.rate > 0 {
-			sleepDur := time.Duration(need / hb.rate * float64(time.Second))
-			if sleepDur > 0 {
-				time.Sleep(sleepDur)
-			}
-		}
+	lease := max(need, hb.rate*leaseSeconds)
+	d, err := hb.reserve(lease, resync)
+	hb.mu.Lock()
+	if err != nil {
+		hb.fallBack()
+		d = hb.reserveLocal(need)
+		hb.mu.Unlock()
+		limiterSleep(d)
 		return
 	}
+	if resync && hb.redisOK {
+		hb.resync = false
+	}
+	hb.mu.Unlock()
+	limiterSleep(d)
+	hb.mu.Lock()
+	hb.lease += lease - need
+	hb.mu.Unlock()
+}
 
-	// Slow path: poll Redis until satisfied. A single-shot Redis call
-	// followed by a local sleep would let N parallel waiters each
-	// independently sleep need/rate and then write, yielding N×rate total
-	// throughput regardless of the configured limit. Looping back to Redis
-	// on each partial/empty grant pins total throughput to Redis's accrual
-	// rate (hb.rate) regardless of waiter count.
-	for need > 0 {
-		// Prefetch up to 1 second's worth on a single Redis call to
-		// amortize round-trips when contention is low.
-		batch := need
-		if hb.rate > batch {
-			batch = hb.rate
-		}
-		granted := hb.refillFromRedis(batch)
-		if granted >= need {
-			hb.mu.Lock()
-			hb.local += granted - need
-			hb.mu.Unlock()
-			return
-		}
-		if granted > 0 {
-			need -= granted
-		}
-		// If Redis flipped to unavailable mid-loop, degrade and exit.
-		hb.mu.Lock()
-		stillRedisOK := hb.redisOK
-		hb.mu.Unlock()
-		if !stillRedisOK {
-			if hb.rate > 0 {
-				sleepDur := time.Duration(need / hb.rate * float64(time.Second))
-				if sleepDur > 0 {
-					time.Sleep(sleepDur)
-				}
-			}
-			return
-		}
-		// Sleep for the time Redis needs to refill the deficit, capped
-		// so we re-poll often and share fairly with other waiters; floored
-		// at 1ms to avoid busy-waiting on sub-ms grants.
-		sleepDur := time.Duration(need / hb.rate * float64(time.Second))
-		if sleepDur > 100*time.Millisecond {
-			sleepDur = 100 * time.Millisecond
-		}
-		if sleepDur < time.Millisecond {
-			sleepDur = time.Millisecond
-		}
-		time.Sleep(sleepDur)
+// reserveLocal debits n from the local balance and returns how long to
+// wait for it. One balance for all of the session's streams on this pod:
+// N of them get the rate between them, not N times it. Caller holds mu.
+func (hb *HybridBucket) reserveLocal(n float64) time.Duration {
+	now := time.Now()
+	if el := now.Sub(hb.lastRefill).Seconds(); el > 0 {
+		hb.tokens = min(hb.capacity, hb.tokens+el*hb.rate)
+		hb.lastRefill = now
+	}
+	hb.tokens -= n
+	if hb.tokens >= 0 || hb.rate <= 0 {
+		return 0
+	}
+	return time.Duration(-hb.tokens / hb.rate * float64(time.Second))
+}
+
+// fallBack switches to the local balance, starting empty now: what the
+// session drew from Redis until a moment ago is not known here, and a full
+// one would hand it a burst on every failed call. Caller holds mu.
+func (hb *HybridBucket) fallBack() {
+	if !hb.redisOK {
+		return
+	}
+	hb.redisOK = false
+	hb.resync = true
+	hb.tokens = 0
+	hb.lastRefill = time.Now()
+	promLimiterLocalFallbacks.Inc()
+	if !hb.probing {
+		hb.probing = true
+		go hb.probeRedis(probeInterval)
 	}
 }
 
-// refillFromRedis executes the Lua token-bucket script against Redis.
-// Returns number of tokens granted. On error, marks Redis as unavailable
-// and starts a probe goroutine.
-func (hb *HybridBucket) refillFromRedis(requested float64) float64 {
+func limiterSleep(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	promLimiterWaiting.Inc()
+	time.Sleep(d)
+	promLimiterWaiting.Dec()
+}
+
+// reserve runs luaReserve for n bytes and returns how long to wait for
+// them.
+func (hb *HybridBucket) reserve(n float64, resync bool) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	nowMs := time.Now().UnixMilli()
-	result, err := luaTokenBucket.Run(ctx, hb.rc, []string{hb.redisKey},
-		int64(hb.capacity),  // ARGV[1] cap
-		int64(hb.rate),      // ARGV[2] rate (bytes/sec)
-		int64(requested),    // ARGV[3] requested
-		nowMs,               // ARGV[4] now_ms
-		300,                 // ARGV[5] ttl 5min
-	).Text()
-
-	if err != nil {
-		logrus.WithError(err).Warn("Redis token-bucket call failed, falling back to local")
-		hb.mu.Lock()
-		hb.redisOK = false
-		shouldProbe := !hb.probing
-		hb.probing = true
-		hb.mu.Unlock()
-		if shouldProbe {
-			go hb.probeRedis()
-		}
-		return 0
+	flag := "0"
+	if resync {
+		flag = "1"
 	}
-
-	granted, _ := strconv.ParseFloat(result, 64)
-	return granted
+	res, err := luaReserve.Run(ctx, hb.rc, []string{hb.redisKey},
+		int64(hb.capacity),     // ARGV[1] cap
+		int64(hb.rate),         // ARGV[2] rate (bytes/sec)
+		int64(math.Ceil(n)),    // ARGV[3] reserved
+		time.Now().UnixMilli(), // ARGV[4] now_ms
+		300,                    // ARGV[5] ttl 5min
+		flag,                   // ARGV[6] resync
+	).Text()
+	var sec float64
+	if err == nil {
+		sec, err = strconv.ParseFloat(res, 64)
+	}
+	if err == nil && (math.IsNaN(sec) || math.IsInf(sec, 0) || sec < 0) {
+		err = errors.Errorf("reservation returned %q", res)
+	}
+	if err != nil {
+		promLimiterRedisCalls.WithLabelValues("error").Inc()
+		logrus.WithError(err).Warn("Redis token-bucket call failed, falling back to local")
+		return 0, err
+	}
+	promLimiterRedisCalls.WithLabelValues("ok").Inc()
+	return time.Duration(sec * float64(time.Second)), nil
 }
 
-// probeRedis pings Redis every 5 seconds until it responds, then re-enables it.
-func (hb *HybridBucket) probeRedis() {
-	ticker := time.NewTicker(5 * time.Second)
+// probeRedis pings Redis every interval until it responds, then re-enables
+// it.
+func (hb *HybridBucket) probeRedis(interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -303,10 +330,12 @@ func (s *HybridBucketPool) Get(mc jwt.MapClaims) (Throttler, error) {
 }
 
 // rateBytesPerSec converts a token's rate claim, bits per second in bytefmt
-// units ("5M", "50M"), to bytes per second.
+// units ("5M", "50M"), to bytes per second. Under 1 byte per second ("0M")
+// is refused: the script is told whole bytes per second and would divide
+// by zero.
 func rateBytesPerSec(rate string) (float64, error) {
 	r, err := bytefmt.ToBytes(rate)
-	if err != nil {
+	if err != nil || r < 8 {
 		return 0, errors.Errorf("failed to parse rate %v", rate)
 	}
 	return float64(r) / 8, nil

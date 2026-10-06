@@ -542,7 +542,7 @@ func TestThrottleMetricsWithoutLimiter(t *testing.T) {
 // 500: it is not "no limiter", which is what a token without rate or
 // sessionID gets (TestThrottleMetricsWithoutLimiter).
 func TestWebUnparsableRateFailsRequest(t *testing.T) {
-	for _, rate := range []string{"5X", "", "5"} {
+	for _, rate := range []string{"5X", "", "5", "0M"} {
 		t.Run(strconv.Quote(rate), func(t *testing.T) {
 			h := newThrottleHarness(t, fixedBody(http.StatusOK, 1000))
 			r := h.request(t, tierClaims("t-badrate", "s-badrate", rate), true, "")
