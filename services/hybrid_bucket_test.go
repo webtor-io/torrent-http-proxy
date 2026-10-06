@@ -533,9 +533,10 @@ func stream(hb *HybridBucket, deadline time.Time) int64 {
 
 // N streams of one session over 3 pods, after its burst is spent, get the
 // rate between them: not N times it (each sleeping its own reservation),
-// and not much under it. A reservation is waited for before it is spent,
-// so the bytes out never run ahead of the accrual; the one being accrued
-// at the deadline (a lease, 0.25 s) is what they may run behind.
+// and not under it. A write waits until the balance has accrued its own
+// bytes, so the bytes out never run ahead of the accrual, and every byte
+// accrued by the deadline is out by then (waiting for a whole lease left
+// up to 0.25 s of it unsent: 0.92 for 16 streams).
 func TestLimiterAggregateRate(t *testing.T) {
 	const d = 3 * time.Second
 	for _, b := range limiterBackends(t) {
@@ -557,8 +558,8 @@ func TestLimiterAggregateRate(t *testing.T) {
 				wg.Wait()
 				got := float64(total.Load()) / d.Seconds() / freeRate
 				t.Logf("%d streams: %.3f of the rate", n, got)
-				if got > 1.03 || got < 0.88 {
-					t.Errorf("%d streams of one session got %.3f of its rate together, want within [0.88, 1.03]", n, got)
+				if got > 1.03 || got < 0.95 {
+					t.Errorf("%d streams of one session got %.3f of its rate together, want within [0.95, 1.03]", n, got)
 				}
 			})
 		}
@@ -568,8 +569,8 @@ func TestLimiterAggregateRate(t *testing.T) {
 // A single stream reaches the rate: each lease is spent whole before the
 // next reservation, and time spent writing (or oversleeping) accrues in the
 // balance, up to capacity, so the next reservation waits that much less.
-// Measured between writes that waited, which fall where a reservation was
-// paid off, so the lease granularity drops out.
+// Measured between writes that waited, which fall where their bytes were
+// paid, so the burst at the start drops out.
 func TestLimiterSingleStreamReachesRate(t *testing.T) {
 	for _, b := range limiterBackends(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -593,11 +594,11 @@ func TestLimiterSingleStreamReachesRate(t *testing.T) {
 				time.Sleep(5 * time.Millisecond) // downstream: 6.5 MB/s, 10x the rate
 			}
 			if len(marks) < 5 {
-				t.Fatalf("%d waits in 3 s, want a reservation every 0.25 s", len(marks))
+				t.Fatalf("%d waits in 3 s, want one per write past the burst", len(marks))
 			}
 			first, last := marks[0], marks[len(marks)-1]
 			got := float64(last.bytes-first.bytes) / last.at.Sub(first.at).Seconds() / freeRate
-			t.Logf("single stream: %.3f of the rate over %d reservations", got, len(marks)-1)
+			t.Logf("single stream: %.3f of the rate over %d waits", got, len(marks)-1)
 			if got < 0.95 || got > 1.02 {
 				t.Errorf("single stream at %.3f of its rate, want within [0.95, 1.02]", got)
 			}
@@ -855,8 +856,9 @@ func TestLimiterAbandonedReservationsDecay(t *testing.T) {
 			// another's leftover lease instead of reserving its own.
 			hbs := pods(t, b.addr, session, freeRate, 17, nil)
 			// 16 streams reserve a lease each on a fresh key, then stop:
-			// 16 leases (4 s) against a 1 s burst, 3 s of debt; 12 of them
-			// asleep for it.
+			// 16 leases (4 s) against a 1 s burst, 3 s of debt. A write's
+			// bytes are paid 0.2 s before its lease (the first chunk of
+			// 5), so 11 of them are still asleep 0.2 s in.
 			var wg sync.WaitGroup
 			for i := 0; i < 16; i++ {
 				wg.Add(1)
@@ -866,8 +868,8 @@ func TestLimiterAbandonedReservationsDecay(t *testing.T) {
 				}(hbs[i])
 			}
 			time.Sleep(200 * time.Millisecond) // all 16 have reserved
-			if w := gaugeValue(t, promLimiterWaiting); w < 12 {
-				t.Errorf("waiting gauge %.0f with 12 streams asleep behind the burst, want >= 12", w)
+			if w := gaugeValue(t, promLimiterWaiting); w < 11 {
+				t.Errorf("waiting gauge %.0f with 11 streams asleep behind the burst, want >= 11", w)
 			}
 			s := time.Now()
 			hbs[16].Wait(writeChunk)
@@ -914,6 +916,130 @@ func TestLimiterScriptClockSkew(t *testing.T) {
 			}
 			if got := v / freeRate; got > -8.9 {
 				t.Errorf("balance %.2f s of the rate after 1 s from -10 s, want ~-8.95 (1 s and the skew once)", got)
+			}
+		})
+	}
+}
+
+// The first write of a session's request at the cap waits for its own
+// bytes, a chunk, and not for the whole lease reserved with them: the
+// lease is paid in order and its bytes are spent as they are paid.
+func TestLimiterFirstWriteWaitsForItsBytesNotTheLease(t *testing.T) {
+	for _, b := range limiterBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			hb := pods(t, b.addr, uniqueSession(t), freeRate, 1, nil)[0]
+			drain(t, hb) // at the cap: the balance at zero
+			s := time.Now()
+			hb.Wait(writeChunk)
+			waited := time.Since(s)
+			t.Logf("first write at the cap waited %v", waited)
+			// A chunk is 0.05 s of 5M; the lease, 0.25 s.
+			if waited > 120*time.Millisecond {
+				t.Errorf("first write of %d bytes at the cap waited %v, want ~%v (its bytes), not the lease's %v",
+					writeChunk, waited, secondsDur(writeChunk/freeRate), secondsDur(leaseSeconds))
+			}
+		})
+	}
+}
+
+// A seek while the session streams on the pod: the new request's first
+// write waits behind the bytes of the 4 writes asleep before it (4 chunks),
+// not behind a lease of each of them.
+func TestLimiterNewRequestWaitsBehindChunksNotLeases(t *testing.T) {
+	for _, b := range limiterBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			hb := pods(t, b.addr, uniqueSession(t), freeRate, 1, nil)[0]
+			drain(t, hb)
+			deadline := time.Now().Add(2 * time.Second)
+			var wg sync.WaitGroup
+			for i := 0; i < 4; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					stream(hb, deadline)
+				}()
+			}
+			time.Sleep(time.Second)
+			s := time.Now()
+			hb.Wait(writeChunk)
+			waited := time.Since(s)
+			wg.Wait()
+			t.Logf("new request behind 4 streams waited %v", waited)
+			// 5 chunks are 0.25 s; 5 leases (a lease per stream) 1.25 s.
+			if waited > 400*time.Millisecond {
+				t.Errorf("new request's first write behind 4 streams of the session waited %v, want <= ~0.25 s (5 chunks)", waited)
+			}
+		})
+	}
+}
+
+// Streams that stop leave their pod at most one lease unspent: the
+// session's next request there gets the balance's capacity and that lease
+// at once, 1.25 s of the rate, not a lease left by each stream.
+func TestLimiterStoppedStreamsLeaveOneLease(t *testing.T) {
+	for _, b := range limiterBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			hb := pods(t, b.addr, uniqueSession(t), freeRate, 1, nil)[0]
+			drain(t, hb)
+			deadline := time.Now().Add(2 * time.Second)
+			var wg sync.WaitGroup
+			for i := 0; i < 16; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					stream(hb, deadline)
+				}()
+			}
+			wg.Wait()
+			// Idle: the debt repaid and the balance back at capacity.
+			time.Sleep(2500 * time.Millisecond)
+			var burst int64
+			for burst < 10*int64(freeRate) {
+				s := time.Now()
+				hb.Wait(writeChunk)
+				if time.Since(s) > 5*time.Millisecond {
+					break
+				}
+				burst += writeChunk
+			}
+			got := float64(burst) / freeRate
+			t.Logf("burst after 16 streams stopped: %.2f s of the rate", got)
+			if got > 1+leaseSeconds+0.05 {
+				t.Errorf("after 16 streams of the session stopped on the pod, its next request got %.2f s of the rate at once, want <= %.2f (capacity and one lease)",
+					got, 1+leaseSeconds)
+			}
+		})
+	}
+}
+
+// The script clamps the balance to capacity: a session idle for 10 s has a
+// second of burst, not 10.
+func TestLimiterScriptCapsBalance(t *testing.T) {
+	for _, b := range limiterBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			rc := redis.NewClient(&redis.Options{Addr: b.addr})
+			t.Cleanup(func() { _ = rc.Close() })
+			key := "bw:limit:" + uniqueSession(t)
+			call := func(nowMs int64, n float64) float64 {
+				t.Helper()
+				res, err := luaReserve.Run(context.Background(), rc, []string{key},
+					int64(freeRate), int64(freeRate), int64(n), nowMs, 300, "0").Text()
+				if err != nil {
+					t.Fatal(err)
+				}
+				w, err := strconv.ParseFloat(res, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return w
+			}
+			t0 := time.Now().UnixMilli()
+			call(t0, 0)
+			if w := call(t0+10000, 3*freeRate); w < 1.99 || w > 2.01 {
+				t.Errorf("3 s reserved after 10 s idle waits %.3f s, want 2 (a balance capped at 1 s)", w)
 			}
 		})
 	}

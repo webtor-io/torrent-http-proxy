@@ -100,8 +100,12 @@ type HybridBucket struct {
 	rate     float64 // bytes per second
 	capacity float64 // max burst (bytes)
 
-	// lease is bytes reserved in Redis and already waited for.
-	lease float64
+	// lease is bytes reserved in Redis and not yet allotted to a write;
+	// paidAt is when the balance has accrued the last of them. They are
+	// paid in order, the next one first: the first n of them by
+	// paidAt - (lease-n)/rate.
+	lease  float64
+	paidAt time.Time
 
 	// The local balance (may go negative) and when it last accrued.
 	tokens     float64
@@ -143,49 +147,49 @@ func bucketKey(sessionID string, bytesPerSec float64) string {
 	return sessionID + ":" + strconv.FormatInt(int64(bytesPerSec), 10)
 }
 
-// Wait blocks until count bytes may be sent. It spends the lease first;
-// past it, one Redis call reserves at least leaseSeconds of the rate and
-// Wait sleeps once for whatever that reservation is ahead of the balance.
+// Wait blocks until count bytes may be sent: until the session's balance
+// has accrued them, after the bytes allotted to the writes before it.
 func (hb *HybridBucket) Wait(count int64) {
 	if count <= 0 {
 		return
 	}
-	need := float64(count)
 	hb.mu.Lock()
-	if hb.lease >= need {
-		hb.lease -= need
-		hb.mu.Unlock()
-		return
-	}
-	need -= hb.lease
-	hb.lease = 0
-	if !hb.redisOK {
-		d := hb.reserveLocal(need)
-		hb.mu.Unlock()
-		limiterSleep(d)
-		return
-	}
-	resync := hb.resync
+	at := hb.take(float64(count))
 	hb.mu.Unlock()
+	limiterSleep(time.Until(at))
+}
 
-	lease := max(need, hb.rate*leaseSeconds)
-	d, err := hb.reserve(lease, resync)
-	hb.mu.Lock()
-	if err != nil {
+// take allots the next n bytes and returns when they are paid. It spends
+// the lease first; past it, one Redis call reserves at least leaseSeconds
+// of the rate. Caller holds mu, through the Redis call too: a lease is
+// reserved only when the last one is all allotted, so the pod holds at
+// most one lease unallotted, and a write waits for its own bytes, not for
+// a lease of its own behind those of the session's other streams.
+func (hb *HybridBucket) take(n float64) time.Time {
+	if hb.lease >= n {
+		hb.lease -= n
+		return hb.paidAt.Add(-secondsDur(hb.lease / hb.rate))
+	}
+	// The rest of the lease is paid before the next one.
+	n -= hb.lease
+	hb.lease = 0
+	if hb.redisOK {
+		lease := max(n, hb.rate*leaseSeconds)
+		now := time.Now()
+		d, err := hb.reserve(lease, hb.resync)
+		if err == nil {
+			hb.resync = false
+			hb.lease = lease - n
+			hb.paidAt = now.Add(d)
+			return hb.paidAt.Add(-secondsDur(hb.lease / hb.rate))
+		}
 		hb.fallBack()
-		d = hb.reserveLocal(need)
-		hb.mu.Unlock()
-		limiterSleep(d)
-		return
 	}
-	if resync && hb.redisOK {
-		hb.resync = false
-	}
-	hb.mu.Unlock()
-	limiterSleep(d)
-	hb.mu.Lock()
-	hb.lease += lease - need
-	hb.mu.Unlock()
+	return time.Now().Add(hb.reserveLocal(n))
+}
+
+func secondsDur(s float64) time.Duration {
+	return time.Duration(s * float64(time.Second))
 }
 
 // reserveLocal debits n from the local balance and returns how long to
