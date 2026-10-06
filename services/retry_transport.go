@@ -152,15 +152,20 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		newReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", newStart))
 
-		// Use the same inner transport chain (redirect-following).
-		innerTransport := &redirectFollowingTransport{rc.Transport, rc.ExternalTransport}
-		newResp, err := innerTransport.RoundTrip(newReq)
+		// The same chain as the first request, the pod's hop apart from its
+		// redirects: a target the pod redirects to (vault's presigned URL,
+		// s3-cache) that cannot be dialed says nothing about the pod.
+		inner := &redirectFollowingTransport{rc.Transport, rc.ExternalTransport}
+		newResp, err := inner.RoundTripper.RoundTrip(newReq)
 		if err != nil {
 			if isDialError(err) {
 				ip, _, _ := net.SplitHostPort(targetHost)
 				rc.SvcLoc.Ignore(ip)
 			}
 			return nil, samePod, errors.Wrap(err, "retry request failed")
+		}
+		if newResp, err = inner.follow(newReq, newResp); err != nil {
+			return nil, samePod, errors.Wrap(err, "retry redirect failed")
 		}
 		if newResp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 			// A 416 whose Content-Range total equals our resume offset means

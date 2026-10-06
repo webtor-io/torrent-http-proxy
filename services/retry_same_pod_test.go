@@ -211,20 +211,53 @@ func TestRetryFallsBackAndIgnoresAPodThatRefuses(t *testing.T) {
 	}
 }
 
-// The pod answers the same-pod attempt and cuts it again: the stream
-// moves to the other pod, and podA, alive, is left out of this request
-// only. On the shared list it would be off for every torrent for 30 s.
+// The pod answers the same-pod attempt, but not with the rest of the file:
+// the stream moves to the other pod, and podA, alive, is left out of this
+// request only. On the shared list it would be off for every torrent for
+// 30 s. Only a pod that cannot be dialed goes there: not one that answers
+// an error, drops the connection before answering, or redirects (vault's
+// presigned URL) to a target that refuses.
 func TestRetryKeepsALivePodOffTheSharedIgnoreList(t *testing.T) {
-	g := newRetryRig(t, []string{podA, podB})
-	g.serve(podA, seederHandler(g.pods[podA], true, nil))
-	g.serve(podB, seederHandler(g.pods[podB], false, nil))
-	got, err := g.get(t, 3)
-	wantWhole(t, got, err)
-	if a, b := g.hits(); a != 2 || b != 1 {
-		t.Fatalf("requests: podA %d, podB %d; want 2 (first, same-pod retry) and 1", a, b)
-	}
-	if g.sl.ignore.IsIgnored(podA) || g.sl.ignore.IsIgnored(podB) {
-		t.Fatal("a pod that answered is on the shared ignore list")
+	for _, c := range []struct {
+		name string
+		// resume answers podA's same-pod attempt; nil: the seeder cuts it.
+		resume http.HandlerFunc
+	}{
+		{"cuts again", nil},
+		{"answers 503", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}},
+		{"closes before answering", func(w http.ResponseWriter, _ *http.Request) {
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		}},
+		{"redirects to a target that refuses", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://10.233.99.9:9000/file", http.StatusFound)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newRetryRig(t, []string{podA, podB})
+			a := g.pods[podA]
+			seeder := seederHandler(a, true, nil)
+			g.serve(podA, func(w http.ResponseWriter, r *http.Request) {
+				if c.resume == nil || r.Header.Get("Range") == "" {
+					seeder(w, r)
+					return
+				}
+				a.hits.Add(1)
+				c.resume(w, r)
+			})
+			g.serve(podB, seederHandler(g.pods[podB], false, nil))
+			got, err := g.get(t, 3)
+			wantWhole(t, got, err)
+			if ha, hb := g.hits(); ha != 2 || hb != 1 {
+				t.Fatalf("requests: podA %d, podB %d; want 2 (first, same-pod retry) and 1", ha, hb)
+			}
+			if g.sl.ignore.IsIgnored(podA) || g.sl.ignore.IsIgnored(podB) {
+				t.Fatal("a pod that answered is on the shared ignore list")
+			}
+		})
 	}
 }
 

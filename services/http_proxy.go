@@ -219,6 +219,11 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 	if err != nil {
 		return nil, err
 	}
+	return t.follow(req, resp)
+}
+
+// follow takes resp, the first hop's answer to req, along its redirects.
+func (t *redirectFollowingTransport) follow(req *http.Request, resp *http.Response) (*http.Response, error) {
 	for i := 0; i < 10; i++ {
 		if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusTemporaryRedirect {
 			break
