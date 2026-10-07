@@ -190,6 +190,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		body:        resp.Body,
 		reconnectFn: reconnectFn,
 		expected:    resp.ContentLength,
+		lastRead:    time.Now(),
 		maxRetries:  rc.MaxRetries,
 		retryDelay:  rc.RetryDelay,
 		logger: logrus.WithFields(logrus.Fields{
@@ -220,6 +221,11 @@ type retryingReadCloser struct {
 	retries     int
 	logger      *logrus.Entry
 	closed      bool
+	// lastRead: when a read last returned bytes (at first, when the
+	// response arrived). The retry's log line has the time since as idle:
+	// a peer that vanished without a FIN or RST shows as the keepalive
+	// bound, ~20 s with upstreamDialer's defaults.
+	lastRead time.Time
 }
 
 func (r *retryingReadCloser) Read(p []byte) (int, error) {
@@ -233,6 +239,7 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 	n, err := r.body.Read(p)
 	if n > 0 {
 		r.bytesRead += int64(n)
+		r.lastRead = time.Now()
 	}
 	if err == nil || err == io.EOF {
 		return n, err
@@ -261,7 +268,8 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	r.logger.WithError(err).WithField("bytesRead", r.bytesRead).WithField("retry", r.retries+1).Warn("upstream connection lost, retrying")
+	r.logger.WithError(err).WithField("bytesRead", r.bytesRead).WithField("retry", r.retries+1).
+		WithField("idle", time.Since(r.lastRead).Seconds()).Warn("upstream connection lost, retrying")
 
 	// Close the broken body.
 	_ = r.body.Close()
@@ -300,6 +308,7 @@ func (r *retryingReadCloser) Read(p []byte) (int, error) {
 	n, err = r.body.Read(p)
 	if n > 0 {
 		r.bytesRead += int64(n)
+		r.lastRead = time.Now()
 	}
 	return n, err
 }

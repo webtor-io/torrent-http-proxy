@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -39,9 +41,15 @@ type HTTPProxy struct {
 func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration, fsc *FileSizeCache) *HTTPProxy {
 	readBuf := c.Int(proxyReadBufferSizeFlag)
 	writeBuf := c.Int(proxyWriteBufferSizeFlag)
+	ut := c.Duration(upstreamTCPUserTimeoutFlag)
+	if ut > 0 && !tcpUserTimeoutSupported {
+		logrus.Warnf("TCP_USER_TIMEOUT is Linux-only, %s=%v ignored on this OS", upstreamTCPUserTimeoutFlag, ut)
+	}
+	dial := upstreamDialer(c.Duration(upstreamKeepAliveFlag), ut)
 	p := &HTTPProxy{
 		r: r,
 		transport: &http.Transport{
+			DialContext:         dial,
 			MaxIdleConns:        200,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
@@ -56,6 +64,10 @@ func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration, fsc *Fi
 		}),
 	}
 	p.externalTransport = &http.Transport{
+		DialContext: dial,
+		// net/http turns HTTP/2 on by itself only for a Transport without a
+		// custom dialer; this keeps it for TLS redirect targets as before.
+		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 20,
 		IdleConnTimeout:     90 * time.Second,
@@ -63,6 +75,59 @@ func NewHTTPProxy(c *cli.Context, r *Resolver, retryDelay time.Duration, fsc *Fi
 		ReadBufferSize:      readBuf,
 	}
 	return p
+}
+
+const (
+	upstreamKeepAliveFlag      = "upstream-keepalive"
+	upstreamTCPUserTimeoutFlag = "upstream-tcp-user-timeout"
+	// upstreamKeepAliveCount unanswered probes, keepalive apart, end a
+	// connection: with 5 s, 20 s after the last thing received, the same
+	// bound TCP_USER_TIMEOUT sets on Linux, where it takes the count's place.
+	upstreamKeepAliveCount = 3
+)
+
+// upstreamDialer dials thp's upstreams, pods and redirect targets alike, so
+// that one which vanished without a FIN or RST is noticed in ~20 s instead
+// of 150.
+//
+// A pod deleted mid-stream can lose its network before its kernel has sent
+// the FIN, while unsent data is still queued: thp then receives nothing at
+// all, and the read waits for keepalive to give up, which with Go's default
+// (15 s idle, 9 probes 15 s apart) takes 150 s. On 2026-10-07 the streams
+// the seeder's rollout cut (353) and s3-cache's (23) failed with "read:
+// connection timed out" 150-200 s after their pod went away.
+//
+//   - keepAlive is the idle time and the probe interval. The peer's kernel
+//     answers a probe, not its process, so an upstream that sends nothing
+//     for minutes (a seeder waiting on a slow swarm, its stall guard up to
+//     10 min) stays connected; only a peer whose kernel is gone goes
+//     unanswered. Neither does thp's own closed receive window (a slow
+//     client, the limiter) stop the answer: it carries no data.
+//   - userTimeout sets TCP_USER_TIMEOUT (Linux): the kernel drops the
+//     connection once data thp sent stays unacknowledged that long. Keepalive
+//     does not probe while data is in flight, so without it a request
+//     written into a pooled connection to a pod that has just gone waits for
+//     tcp_retries2 (~15 min). With it set, Linux drops an idle connection
+//     once nothing has been received for userTimeout and a probe went
+//     unanswered, in place of the probe count.
+//
+// Both 0: Go's default dialer, as before.
+func upstreamDialer(keepAlive, userTimeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{}
+	if keepAlive > 0 {
+		d.KeepAliveConfig = net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     keepAlive,
+			Interval: keepAlive,
+			Count:    upstreamKeepAliveCount,
+		}
+	}
+	if userTimeout > 0 {
+		d.Control = func(_, _ string, rc syscall.RawConn) error {
+			return setTCPUserTimeout(rc, userTimeout)
+		}
+	}
+	return d.DialContext
 }
 
 func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
@@ -90,6 +155,18 @@ func RegisterHTTPProxyFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "delay between retry attempts in milliseconds",
 			Value:  1000,
 			EnvVar: "RETRY_DELAY_MS",
+		},
+		cli.DurationFlag{
+			Name:   upstreamKeepAliveFlag,
+			Usage:  "upstream TCP keepalive idle time and probe interval, 3 probes (0 = Go's default, 15s and 9)",
+			Value:  5 * time.Second,
+			EnvVar: "UPSTREAM_KEEPALIVE",
+		},
+		cli.DurationFlag{
+			Name:   upstreamTCPUserTimeoutFlag,
+			Usage:  "drop an upstream connection whose sent data or keepalive probe stays unacknowledged this long (TCP_USER_TIMEOUT, Linux; 0 = kernel default)",
+			Value:  20 * time.Second,
+			EnvVar: "UPSTREAM_TCP_USER_TIMEOUT",
 		},
 	)
 }
