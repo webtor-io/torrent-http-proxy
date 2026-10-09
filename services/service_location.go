@@ -111,7 +111,7 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 	if ok {
 		key += role
 	}
-	return s.LazyMap.Get(key, func() (*Location, error) {
+	f := func() (*Location, error) {
 		if cfg.EndpointsProvider == Kubernetes {
 			return s.getKubernetesWithProbeCheck(cfg, src, claims)
 		} else if cfg.EndpointsProvider == Environment {
@@ -119,7 +119,16 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 		} else {
 			return nil, errors.Errorf("unknown endpoints provider: %s", cfg.EndpointsProvider)
 		}
-	})
+	}
+	l, err := s.LazyMap.Get(key, f)
+	// The pick is cached for 15 s; the pod may have left the endpoints since
+	// (it is terminating) or gone on the ignore list. Pick again rather than
+	// send it new requests for the rest of the 15 s.
+	if err == nil && cfg.EndpointsProvider == Kubernetes && !l.Unavailable && !s.Serves(cfg, l.IP.String()) {
+		s.LazyMap.Drop(key)
+		l, err = s.LazyMap.Get(key, f)
+	}
+	return l, err
 }
 
 func (s *ServiceLocation) getKubernetesWithProbeCheck(cfg *ServiceConfig, src *Source, claims jwt.MapClaims) (*Location, error) {
@@ -155,6 +164,11 @@ func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims 
 	endpoints, err := s.ep.Get(cfg.Name)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get endpoints")
+	}
+	if len(endpoints.Subsets) == 0 {
+		return &Location{
+			Unavailable: true,
+		}, nil
 	}
 	subset := endpoints.Subsets[0]
 	as := subset.Addresses
@@ -378,7 +392,7 @@ func (s *ServiceLocation) GetFallback(cfg *ServiceConfig, src *Source, exclude [
 }
 
 // Serves reports whether ip is one of cfg's ready pods, as of the endpoints
-// cache (60 s), and not on the shared ignore list. A pod being terminated
+// watch, and not on the shared ignore list. A pod being terminated
 // leaves the ready addresses. Kubernetes only: an Environment location is
 // one fixed host that no list confirms.
 func (s *ServiceLocation) Serves(cfg *ServiceConfig, ip string) bool {

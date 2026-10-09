@@ -21,10 +21,9 @@ const (
 	internalCallerAddrsFlag = "internal-caller-addrs"
 
 	// internalCallersInterval is how often the set is rebuilt from the
-	// endpoints cache routing reads (k8s.Endpoints, 60 s): a pod routing has
+	// endpoints routing reads (k8s.Endpoints, a watch): a pod routing has
 	// just started sending to is a known caller within about a second.
-	// Reading the cache costs nothing; the API is asked once a minute per
-	// service, when an entry expires.
+	// Reading the watch cache costs nothing.
 	internalCallersInterval = time.Second
 
 	// internalCallerLinger is how long an address stays internal after the
