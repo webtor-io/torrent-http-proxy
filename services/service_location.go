@@ -123,10 +123,14 @@ func (s *ServiceLocation) Get(cfg *ServiceConfig, src *Source, claims jwt.MapCla
 	l, err := s.LazyMap.Get(key, f)
 	// The pick is cached for 15 s; the pod may have left the endpoints since
 	// (it is terminating) or gone on the ignore list. Pick again rather than
-	// send it new requests for the rest of the 15 s.
-	if err == nil && cfg.EndpointsProvider == Kubernetes && !l.Unavailable && !s.Serves(cfg, l.IP.String()) {
-		s.LazyMap.Drop(key)
-		l, err = s.LazyMap.Get(key, f)
+	// send it new requests for the rest of the 15 s: uncached, as Drop would
+	// evict a concurrent Get of the key (a 500 "Evicted"), and the stale entry
+	// expires on its own. Endpoints that cannot be read (an API error on the
+	// fallback cache) say nothing about the pod: keep the pick.
+	if err == nil && cfg.EndpointsProvider == Kubernetes && !l.Unavailable {
+		if _, eerr := s.ep.Get(cfg.Name); eerr == nil && !s.Serves(cfg, l.IP.String()) {
+			return f()
+		}
 	}
 	return l, err
 }
