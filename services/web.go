@@ -178,8 +178,10 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 // something else.
 const missingSourceTTL = time.Minute
 
+// No Capacity: lazymap's eviction stops an entry's expiry timer, and the
+// goroutine waiting on it never returns. The TTL alone bounds the map.
 func newMissingSources() *lazymap.LazyMap[bool] {
-	return lazymap.New[bool](&lazymap.Config{Expire: missingSourceTTL, Capacity: 10000})
+	return lazymap.New[bool](&lazymap.Config{Expire: missingSourceTTL})
 }
 
 // missingKey names the source src as the service svc read it for a session.
@@ -449,7 +451,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			// client still reads it); from here on, what thp records.
 			wi.statusCode = StatusClientClosedRequest
 		}
-		if internal && src.Mod == nil && sessionID != "" && wi.statusCode == http.StatusNotFound {
+		if internal && src.Type == "default" && src.Mod == nil && sessionID != "" && wi.statusCode == http.StatusNotFound {
 			// The seeder has no such file for caller's read: see the check
 			// after this defer.
 			_, _ = s.missing.Get(missingKey(caller, sessionID, src), func() (bool, error) { return true, nil })
@@ -551,9 +553,13 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		}
 	}()
 
-	// The service this request goes to read the source for this session a
-	// moment ago and the seeder answered 404: it will not find the file now
-	// either, so the answer is 404 without asking it. nginx-vod in remote
+	// Kept for missingSourceTTL, under (caller, session, infohash, path): the
+	// seeder's 404 to an internal caller's mod-less read of a torrent's file,
+	// for a token with a session. Nothing else: not an external 404 (rest-api's
+	// ?done probe: "not cached"), not an /ext/<url> source's (external-proxy's
+	// 404 can be the remote's passing state). A request of that session to the
+	// service of that name for that file is answered 404 without asking it: it
+	// would not find the file now either. nginx-vod in remote
 	// mode answers a source's 404 with 502, or, once its metadata cache let
 	// it send a segment's headers, by closing the connection: EOF here, 502
 	// on the wire. Downloaders that encode a playlist's URL twice (a literal
