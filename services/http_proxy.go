@@ -283,7 +283,8 @@ func (t *stubTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 }
 
 // redirectFollowingTransport wraps an http.RoundTripper and follows 302/307
-// redirects transparently, preserving the Range header across hops.
+// redirects transparently, preserving the Range header across hops (every
+// header, to the same host).
 // This allows httputil.ReverseProxy to proxy the final response (e.g. from S3)
 // instead of passing the redirect back to the client.
 type redirectFollowingTransport struct {
@@ -310,17 +311,30 @@ func (t *redirectFollowingTransport) follow(req *http.Request, resp *http.Respon
 			break
 		}
 		_ = resp.Body.Close()
-		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, loc, nil)
+		// Relative to the hop that answered: the seeder's ServeMux sends
+		// "Name//file" to "/Name/file" (a torrent may have an empty path
+		// component), which taken raw has no scheme to dial.
+		u, err := req.URL.Parse(loc)
 		if err != nil {
 			return nil, err
 		}
-		if rng := req.Header.Get("Range"); rng != "" {
+		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		if u.Host == req.URL.Host {
+			// The same upstream still needs what thp told it: the seeder
+			// finds the torrent by X-Info-Hash, and without it lists every
+			// torrent it has.
+			newReq.Header = req.Header.Clone()
+		} else if rng := req.Header.Get("Range"); rng != "" {
 			newReq.Header.Set("Range", rng)
 		}
 		resp, err = t.external.RoundTrip(newReq)
 		if err != nil {
 			return nil, err
 		}
+		req = newReq
 	}
 	return resp, nil
 }
