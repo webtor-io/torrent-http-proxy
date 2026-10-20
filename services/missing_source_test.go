@@ -4,9 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // After nginx-vod's own read of a source was answered 404, the same session's
@@ -38,8 +41,8 @@ func TestMissingSourceAnswered404(t *testing.T) {
 		return r
 	}
 	// replace swaps part of r's path: another file, torrent or source type.
-	replace := func(r *http.Request, old, new string) *http.Request {
-		r.URL.Path = strings.Replace(r.URL.Path, old, new, 1)
+	replace := func(r *http.Request, old, repl string) *http.Request {
+		r.URL.Path = strings.Replace(r.URL.Path, old, repl, 1)
 		return r
 	}
 	try := func(name string, r *http.Request, wantStatus int, wantProxied bool) {
@@ -92,4 +95,23 @@ func TestMissingSourceAnswered404(t *testing.T) {
 	// A token without a session is shared by whoever holds it.
 	try("nginx-vod's read without a session", req("", false, "", ""), 404, true)
 	try("segment without a session", req("", true, segment, ""), 404, true)
+}
+
+// Every kept 404 is gone with its TTL, and so is the goroutine lazymap
+// waits on its timer with: an eviction (a Capacity on the map) stops the
+// timer and leaves that goroutine blocked for good.
+func TestMissingSourcesLeaveNoGoroutines(t *testing.T) {
+	const ttl = 50 * time.Millisecond
+	m := newMissingSources(ttl)
+	before := runtime.NumGoroutine()
+	for i := 0; i < 2000; i++ {
+		_, _ = m.Get(strconv.Itoa(i), func() (bool, error) { return true, nil })
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() > before+50 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := runtime.NumGoroutine(); n > before+50 {
+		t.Fatalf("%d goroutines after the TTL, %d before", n, before)
+	}
 }

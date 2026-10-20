@@ -166,7 +166,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 		stats:            NewSessionStats(),
 		callers:          callers,
-		missing:          newMissingSources(),
+		missing:          newMissingSources(missingSourceTTL),
 		closing:          make(chan struct{}),
 		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
@@ -174,14 +174,17 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 
 // missingSourceTTL is how long a session's request to a service is answered
 // 404 after that service's own read of the source was. A file the torrent
-// does not have stays missing; the TTL bounds the map, and a 404 that meant
-// something else.
-const missingSourceTTL = time.Minute
+// does not have stays missing; the TTL bounds the map, and a 404 that was
+// passing: torrent-store's NotFound for a hash it missed 10 times in a minute,
+// or a 404 from S3 behind the seeder's redirect. hls.js does not retry a 4xx
+// as it does a 502, so such a 404 holds for the whole TTL; 15 s still cuts a
+// downloader's loop (0.84 req/s on 2026-10-19) to one read per TTL.
+const missingSourceTTL = 15 * time.Second
 
 // No Capacity: lazymap's eviction stops an entry's expiry timer, and the
 // goroutine waiting on it never returns. The TTL alone bounds the map.
-func newMissingSources() *lazymap.LazyMap[bool] {
-	return lazymap.New[bool](&lazymap.Config{Expire: missingSourceTTL})
+func newMissingSources(ttl time.Duration) *lazymap.LazyMap[bool] {
+	return lazymap.New[bool](&lazymap.Config{Expire: ttl})
 }
 
 // missingKey names the source src as the service svc read it for a session.
@@ -323,6 +326,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// Taken here, before anything derives r's context: errorHandler tells a
 	// client that left from thp's own cancellations by this one.
 	outcome := &proxyOutcome{client: r.Context()}
+	// Set when the request is answered from a kept 404 (see s.missing).
+	missingSource := false
 	apiKey := r.URL.Query().Get("api-key")
 	claims, err := s.claims.Get(r.URL.Query().Get("token"), apiKey)
 	if err != nil {
@@ -513,6 +518,10 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			// The service whose pod made the request.
 			fields["caller"] = caller
 		}
+		if missingSource {
+			// thp answered from a kept 404; the edge never saw the request.
+			fields["missing_source"] = true
+		}
 		if tw != nil {
 			waited := tw.Waited()
 			fields["throttled"] = waited.Seconds()
@@ -555,7 +564,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	// Kept for missingSourceTTL, under (caller, session, infohash, path): the
 	// seeder's 404 to an internal caller's mod-less read of a torrent's file,
-	// for a token with a session. Nothing else: not an external 404 (rest-api's
+	// for a token with a session (a 404 from where the seeder redirected the
+	// read, S3, counts too). Nothing else: not an external 404 (rest-api's
 	// ?done probe: "not cached"), not an /ext/<url> source's (external-proxy's
 	// 404 can be the remote's passing state). A request of that session to the
 	// service of that name for that file is answered 404 without asking it: it
@@ -571,6 +581,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// internalTrafficPolicy Local). Where they do not, nothing is found here
 	// and the request goes on as it did.
 	if st, _ := s.missing.Status(missingKey(src.GetEdgeName(), sessionID, src)); st == lazymap.Done {
+		missingSource = true
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

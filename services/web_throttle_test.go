@@ -74,7 +74,7 @@ func newThrottleHarness(t *testing.T, upstream http.HandlerFunc) *throttleHarnes
 			bandwidthLimit: true,
 			stats:          stats,
 			callers:        harnessCallers(t),
-			missing:        newMissingSources(),
+			missing:        newMissingSources(missingSourceTTL),
 			closing:        make(chan struct{}),
 			gs:             cs.NewGracefulServer(time.Second),
 		},
