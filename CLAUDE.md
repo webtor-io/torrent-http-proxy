@@ -184,6 +184,12 @@ See `web-ui/docs/grace_token.md` for the full grace-token design (token shape, a
 - Blind spot: at the shutdown drain timeout `GracefulServer` closes the connections still open, which cancels their contexts like a client leaving; a request still waiting for headers then reads 499. The ingress gets a closed connection either way
 - Mid-body failures are unchanged: headers are out, the status stays the upstream's (ReverseProxy aborts the response)
 
+#### A source a service found missing: 404, not nginx-vod's 502
+
+- nginx-vod (remote mode) answers a source its read got 404 for with 502; when its metadata cache already holds the file (cache key: Host + `/hls/<id>`, not X-Full-Path), it has sent a segment's headers before the read and closes the connection instead: `EOF`, `bytes=0`, 502 on the wire, while its own access log says 200. Clients that encode a playlist's URL twice (a literal `%20` in the path) or replace characters (U+FFFD) retry it without end: 30,648 such `EOF`s on `%2520` paths 2026-10-12..19 (1,505 in 30 min from one session on 10-19), and 2,872 explicit 502s on U+FFFD paths on 10-12
+- An internal caller's mod-less read answered 404, with a session, is kept 1 min under (caller, session, infohash, path). That session's requests to the service of that name for that source then get 404 from thp, not proxied (`TestMissingSourceAnswered404`, each condition red when reverted). The first request still gets the 502
+- Per pod: works because the viewer's request goes to the node's nginx-vod (`preferLocalNode`) and its reads come back to the node's thp (Service `internalTrafficPolicy: Local`). Elsewhere (a `configured` caller in the self-hosted image) nothing matches and requests are proxied as before
+
 #### Tier-bound vs upstream-bound (throttle metrics)
 
 - Population: responses a limiter was installed on (external, `--use-bandwidth-limit`, token with `rate` + `sessionID`), minus `text/event-stream` (seeder `?stats`, warmup)

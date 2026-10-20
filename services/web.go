@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
+	"github.com/webtor-io/lazymap"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,6 +50,9 @@ type Web struct {
 	// everyone else by the connection's peer: only the rest is limited and
 	// accounted to the viewer. nil knows none: everything is external.
 	callers *InternalCallers
+	// missing holds the sources a service of ours was just told by the
+	// seeder are not there, per session: see missingKey.
+	missing *lazymap.LazyMap[bool]
 	// gs drains in-flight requests on Close, up to the shutdown timeout
 	// (WEB_SHUTDOWN_TIMEOUT), instead of dropping them with the listener.
 	gs *cs.GracefulServer
@@ -162,9 +166,25 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 		stats:            NewSessionStats(),
 		callers:          callers,
+		missing:          newMissingSources(),
 		closing:          make(chan struct{}),
 		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
+}
+
+// missingSourceTTL is how long a session's request to a service is answered
+// 404 after that service's own read of the source was. A file the torrent
+// does not have stays missing; the TTL bounds the map, and a 404 that meant
+// something else.
+const missingSourceTTL = time.Minute
+
+func newMissingSources() *lazymap.LazyMap[bool] {
+	return lazymap.New[bool](&lazymap.Config{Expire: missingSourceTTL, Capacity: 10000})
+}
+
+// missingKey names the source src as the service svc read it for a session.
+func missingKey(svc, sessionID string, src *Source) string {
+	return svc + "|" + sessionID + "|" + src.InfoHash + "|" + src.Path
 }
 
 func RegisterWebFlags(f []cli.Flag) []cli.Flag {
@@ -429,6 +449,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			// client still reads it); from here on, what thp records.
 			wi.statusCode = StatusClientClosedRequest
 		}
+		if internal && src.Mod == nil && sessionID != "" && wi.statusCode == http.StatusNotFound {
+			// The seeder has no such file for caller's read: see the check
+			// after this defer.
+			_, _ = s.missing.Get(missingKey(caller, sessionID, src), func() (bool, error) { return true, nil })
+		}
 		duration := time.Since(wi.start)
 		blocked := wi.Blocked()
 		if s.clickHouse != nil && wi.bytesWritten > 0 && wi.GroupedStatusCode() == 200 {
@@ -525,6 +550,24 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			l.Warn("bad request")
 		}
 	}()
+
+	// The service this request goes to read the source for this session a
+	// moment ago and the seeder answered 404: it will not find the file now
+	// either, so the answer is 404 without asking it. nginx-vod in remote
+	// mode answers a source's 404 with 502, or, once its metadata cache let
+	// it send a segment's headers, by closing the connection: EOF here, 502
+	// on the wire. Downloaders that encode a playlist's URL twice (a literal
+	// %20 the seeder rightly does not find) retry such a 502 without end:
+	// 1,505 times in 30 minutes from one session on 2026-10-19. Per session,
+	// so one viewer's mangled URL never answers another's request. Per pod:
+	// the viewer's request goes to the node's own nginx-vod (preferLocalNode)
+	// and its reads come back to the node's thp (the Service's
+	// internalTrafficPolicy Local). Where they do not, nothing is found here
+	// and the request goes on as it did.
+	if st, _ := s.missing.Status(missingKey(src.GetEdgeName(), sessionID, src)); st == lazymap.Done {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 
 	// The verified token's role, "" when it has none ("nobody" above is a
 	// metric label, not the token's). Set like every header here, so a
