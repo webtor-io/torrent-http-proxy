@@ -23,7 +23,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/redis/go-redis/v9 v9.16.0
-	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4
+	github.com/webtor-io/lazymap v0.0.0-20261021184726-55fd9cba3e7a
 	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )

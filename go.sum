@@ -246,8 +246,8 @@ github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAh
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
 github.com/webtor-io/common-services v0.0.0-20261007162356-7960c21dad8f h1:nOpm1uKoCvX+mvUkIiX4j0E1olGfwEI6QTihhHbkwHc=
 github.com/webtor-io/common-services v0.0.0-20261007162356-7960c21dad8f/go.mod h1:r6jdz43RU9T68jBhxLMIAlkEXGMw5BWTkTiWa0PtaZc=
-github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4 h1:IzqyT2MZFfDc4Dat89c3BV8vmIbiMl5sDg84uSIyQGA=
-github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4/go.mod h1:noIeMCqd9BmJsPsyDt/fYcyvFpdQ+7LnvQKtISl7kMk=
+github.com/webtor-io/lazymap v0.0.0-20261021184726-55fd9cba3e7a h1:LmYfSO3oVs630vYUK3TurHR/an1VjPXGPuc3LJG6VoI=
+github.com/webtor-io/lazymap v0.0.0-20261021184726-55fd9cba3e7a/go.mod h1:noIeMCqd9BmJsPsyDt/fYcyvFpdQ+7LnvQKtISl7kMk=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/xdg-go/pbkdf2 v1.0.0/go.mod h1:jrpuAogTd400dnrH08LKmI/xc1MbPOebTwRqcT5RDeI=
