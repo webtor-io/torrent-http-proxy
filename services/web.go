@@ -638,7 +638,14 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	pr, err := s.pr.Get(src, claims, logger)
 
 	if err != nil {
-		logger.WithError(err).Errorf("failed to get proxy")
+		// A panic in a lookup's loader is this error, one line without its
+		// site: lazymap keeps the stack aside, and net/http no longer sees it.
+		l := logger
+		var pe *lazymap.PanicError
+		if errors.As(err, &pe) {
+			l = l.WithField("stack", string(pe.Stack))
+		}
+		l.WithError(err).Errorf("failed to get proxy")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

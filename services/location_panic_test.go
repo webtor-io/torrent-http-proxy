@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/urfave/cli"
 	"github.com/webtor-io/lazymap"
 	corev1 "k8s.io/api/core/v1"
@@ -111,4 +115,45 @@ func TestPanickingProbeIsAFailedProbe(t *testing.T) {
 	if n := probesOfA.Load(); n != 1 {
 		t.Errorf("%s probed %d times, want 1 (the error is stored)", a, n)
 	}
+}
+
+// A panicking lookup answers 500 with an empty body, so PanicError's text
+// stays in the log, and the log line carries the panic's stack: while the
+// panic escaped, net/http logged it, and the one-line error names no site.
+func TestPanickingLookupLogsItsStack(t *testing.T) {
+	h := newThrottleHarness(t, fixedBody(http.StatusOK, 0))
+	cfg := (*h.web.r.cfg)["default"]
+	cfg.EndpointsProvider, cfg.Distribution = Kubernetes, NodeHash
+	sl := h.web.r.svcLoc
+	sl.ep = &k8s.Endpoints{LazyMap: lazymap.New[*corev1.Endpoints](&lazymap.Config{Expire: time.Hour})}
+	// No NodeName, which NodeHash dereferences.
+	if _, err := sl.ep.LazyMap.Get(throttleTestSvc, repickListing("10.0.0.1", "10.0.0.2")); err != nil {
+		t.Fatal(err)
+	}
+	sl.ignore = &EndpointIgnoreList{lazymap.New[bool](&lazymap.Config{Expire: time.Minute})}
+
+	tok := handToken(t, hdrHS256, map[string]any{"exp": time.Now().Add(time.Hour).Unix()}, h.secret)
+	r := httptest.NewRequest(http.MethodGet, "/"+harnessHash+"/Sintel/Sintel.mkv?token="+tok+"&api-key=k", nil)
+	src, err := h.web.parser.Parse(r.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.URL.Path = src.Path
+	rec := httptest.NewRecorder()
+	logger, hook := logtest.NewNullLogger()
+	h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
+
+	if rec.Code != http.StatusInternalServerError || rec.Body.Len() != 0 {
+		t.Errorf("answer %d %q, want 500 with no body", rec.Code, rec.Body.String())
+	}
+	for _, e := range hook.AllEntries() {
+		if e.Message != "failed to get proxy" {
+			continue
+		}
+		if st, _ := e.Data["stack"].(string); !strings.Contains(st, "distributeByNodeHash") {
+			t.Errorf("stack field %q, want the panic site", st)
+		}
+		return
+	}
+	t.Fatal("no \"failed to get proxy\" line")
 }

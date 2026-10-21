@@ -105,7 +105,7 @@ The `~` delimiter triggers service chaining — each modification maps to a diff
 
 The project uses `github.com/webtor-io/lazymap` extensively for TTL-based lazy-loading caches (service locations, HTTP proxies, K8s endpoints, buckets). This is the primary caching abstraction throughout the codebase.
 
-- A panic in a loader is that `Get`'s error, `*lazymap.PanicError` (one line, no stack; the stack is in its `Stack` field and nothing here logs it). Without `StoreErrors` the key is not cached and the next `Get` runs the loader again; the probe cache (`StoreErrors`, 30 s) keeps it like any failed probe: the pod is ignored 30 s and the pick moves on (`TestPanickingLocationLoaderIsAnError`, `TestPanickingProbeIsAFailedProbe`). Until lazymap 7a6c260 a panic wedged the key for good and kept a concurrency slot
+- A panic in a loader is that `Get`'s error, `*lazymap.PanicError` (one line, no stack; the stack is in its `Stack` field). The request gets a bodiless 500, and "failed to get proxy" carries `stack` (`TestPanickingLookupLogsItsStack`); the probe's warning does not. Without `StoreErrors` the key is not cached and the next `Get` runs the loader again; the probe cache (`StoreErrors`, 30 s) keeps it like any failed probe: the pod is ignored 30 s and the pick moves on (`TestPanickingLocationLoaderIsAnError`, `TestPanickingProbeIsAFailedProbe`). Until lazymap 7a6c260 a panic wedged the key for good and kept a concurrency slot
 - A loader must not `Get` a key of its own map: singleflight waits on itself, a deadlock. None does today
 
 ### Internal vs external: who is calling (`internal_callers.go`)
