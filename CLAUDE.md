@@ -105,6 +105,9 @@ The `~` delimiter triggers service chaining — each modification maps to a diff
 
 The project uses `github.com/webtor-io/lazymap` extensively for TTL-based lazy-loading caches (service locations, HTTP proxies, K8s endpoints, buckets). This is the primary caching abstraction throughout the codebase.
 
+- A panic in a loader is that `Get`'s error, `*lazymap.PanicError` (one line, no stack; the stack is in its `Stack` field and nothing here logs it). Without `StoreErrors` the key is not cached and the next `Get` runs the loader again; the probe cache (`StoreErrors`, 30 s) keeps it like any failed probe: the pod is ignored 30 s and the pick moves on (`TestPanickingLocationLoaderIsAnError`, `TestPanickingProbeIsAFailedProbe`). Until lazymap 7a6c260 a panic wedged the key for good and kept a concurrency slot
+- A loader must not `Get` a key of its own map: singleflight waits on itself, a deadlock. None does today
+
 ### Internal vs external: who is calling (`internal_callers.go`)
 
 - The owner's rule (2026-09-27): limiters apply to external connections only, and "internal" is decided by the transport, never by anything the client writes
@@ -189,7 +192,7 @@ See `web-ui/docs/grace_token.md` for the full grace-token design (token shape, a
 - nginx-vod (remote mode) answers a source its read got 404 for with 502; when its metadata cache already holds the file (cache key: Host + `/hls/<id>`, not X-Full-Path), it has sent a segment's headers before the read and closes the connection instead: `EOF`, `bytes=0`, 502 on the wire, while its own access log says 200. Clients that encode a playlist's URL twice (a literal `%20` in the path) or replace characters (U+FFFD) retry it without end: 30,648 such `EOF`s on `%2520` paths 2026-10-12..19 (1,505 in 30 min from one session on 10-19), and 2,872 explicit 502s on U+FFFD paths on 10-12
 - The seeder's 404 to an internal caller's mod-less read of a torrent's file (not an `/ext/<url>` source: external-proxy's 404 can pass), with a session, is kept 15 s under (caller, session, infohash, path). That session's requests to the service of that name for that file then get 404 from thp, not proxied (`TestMissingSourceAnswered404`, each condition and each part of the key red when reverted), and log `missing_source=true`. The first request still gets the 502
 - 15 s, not longer: a seeder 404 can be passing (torrent-store's NotFound for a hash missed 10 times in a minute, even after a push; S3's 404 behind the seeder's redirect is kept too), and hls.js does not retry a 4xx as it does a 502. 15 s still cuts a 0.84 req/s loop to one read per TTL
-- No `Capacity` on that lazymap (nor on any other here): its eviction stops the entry's expiry timer and leaks the goroutine waiting on it (`TestMissingSourcesLeaveNoGoroutines`: 1,912 of 2,000 left with `Capacity: 100`)
+- No `Capacity` on that lazymap: the TTL alone bounds it. Until lazymap 0f5abde an eviction leaked the goroutine waiting on the entry's timer (`TestMissingSourcesLeaveNoGoroutines`: 1,912 of 2,000 left with `Capacity: 100`); since then a Capacity is safe, just not needed
 - Per pod: works because the viewer's request goes to the node's nginx-vod (`preferLocalNode`) and its reads come back to the node's thp (Service `internalTrafficPolicy: Local`). Elsewhere (a `configured` caller in the self-hosted image) nothing matches and requests are proxied as before
 
 #### Tier-bound vs upstream-bound (throttle metrics)

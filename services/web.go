@@ -181,8 +181,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 // downloader's loop (0.84 req/s on 2026-10-19) to one read per TTL.
 const missingSourceTTL = 15 * time.Second
 
-// No Capacity: lazymap's eviction stops an entry's expiry timer, and the
-// goroutine waiting on it never returns. The TTL alone bounds the map.
+// No Capacity: the TTL alone bounds the map.
 func newMissingSources(ttl time.Duration) *lazymap.LazyMap[bool] {
 	return lazymap.New[bool](&lazymap.Config{Expire: ttl})
 }

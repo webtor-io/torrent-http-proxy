@@ -97,9 +97,10 @@ func TestMissingSourceAnswered404(t *testing.T) {
 	try("segment without a session", req("", true, segment, ""), 404, true)
 }
 
-// Every kept 404 is gone with its TTL, and so is the goroutine lazymap
-// waits on its timer with: an eviction (a Capacity on the map) stops the
-// timer and leaves that goroutine blocked for good.
+// Every kept 404 is gone with its TTL and leaves no goroutine behind. Before
+// lazymap 0f5abde each entry parked one on its timer, and an eviction (a
+// Capacity on the map) left it blocked for good: 1,912 of 2,000 with
+// Capacity 100.
 func TestMissingSourcesLeaveNoGoroutines(t *testing.T) {
 	const ttl = 50 * time.Millisecond
 	m := newMissingSources(ttl)
