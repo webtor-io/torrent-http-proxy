@@ -210,13 +210,16 @@ func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims 
 // node, and a transcoder session lives on exactly one pod — the rendezvous
 // one the viewer's own requests reached. Overriding sent the 2026-09-16
 // live-subtitle poll to a pod that had never seen the session: 404.
+//
+// An address without a NodeName (Endpoints not backed by a pod) is on no
+// node: never local, so a pick of one is swapped like any remote pick.
 func (s *ServiceLocation) preferLocal(cfg *ServiceConfig, src *Source, a *corev1.EndpointAddress, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
-	if a == nil || s.nn == "" || *a.NodeName == s.nn || !cfg.PreferLocalNode || src.Internal {
+	if a == nil || s.nn == "" || nodeName(*a) == s.nn || !cfg.PreferLocalNode || src.Internal {
 		return a, nil
 	}
 	var las []corev1.EndpointAddress
 	for _, c := range as {
-		if *c.NodeName == s.nn {
+		if nodeName(c) == s.nn {
 			las = append(las, c)
 		}
 	}
@@ -228,6 +231,14 @@ func (s *ServiceLocation) preferLocal(cfg *ServiceConfig, src *Source, a *corev1
 		return nil, errors.Wrap(err, "failed to distribute locally")
 	}
 	return la, nil
+}
+
+// nodeName is a's node, "" for an address not backed by a pod.
+func nodeName(a corev1.EndpointAddress) string {
+	if a.NodeName == nil {
+		return ""
+	}
+	return *a.NodeName
 }
 
 func (s *ServiceLocation) getPort(sub *corev1.EndpointSubset, name string) int {
@@ -289,10 +300,19 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 	sort.Slice(as, func(i, j int) bool {
 		return as[i].IP < as[j].IP
 	})
+	// Addresses without a NodeName (Endpoints not backed by a pod) take no
+	// part in the node step: a node set they added to would no longer be the
+	// one rest-api ranks. Only when no address names a node is there no node
+	// step to take, and the infohash goes by IP, as with Hash.
 	nodesM := map[string]bool{}
 	var nodes []string
 	for _, a := range as {
-		nodesM[*a.NodeName] = true
+		if n := nodeName(a); n != "" {
+			nodesM[n] = true
+		}
+	}
+	if len(nodesM) == 0 {
+		return pickByRendezvous(src.InfoHash, as), nil
 	}
 	for n := range nodesM {
 		nodes = append(nodes, n)
@@ -314,7 +334,7 @@ func (s *ServiceLocation) distributeByNodeHash(src *Source, as []corev1.Endpoint
 	node := rendezvousPick(src.InfoHash, nodes)
 	var nas []corev1.EndpointAddress
 	for _, a := range as {
-		if *a.NodeName == node {
+		if nodeName(a) == node {
 			nas = append(nas, a)
 		}
 	}

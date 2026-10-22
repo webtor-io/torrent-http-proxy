@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/urfave/cli"
@@ -52,22 +53,31 @@ func getWithin(t *testing.T, get func() (*Location, error)) (*Location, error) {
 	}
 }
 
+// panicOnRole makes NodeHash's lookup panic: a role sends the node step to
+// the pool's NodesStat, and a pool built without one, as only a test builds
+// it, dereferences nil there. The pods carry NodeNames, so the node step runs.
+const panicOnRole = "panic"
+
+func nodePodListing() (*corev1.Endpoints, error) {
+	return &corev1.Endpoints{Subsets: []corev1.EndpointSubset{{Addresses: fakePods("worker1", 2, 0)}}}, nil
+}
+
 func TestPanickingLocationLoaderIsAnError(t *testing.T) {
-	sl, ep, _, src, a, b := repickRig(t)
-	// repickListing's addresses have no NodeName, which NodeHash dereferences.
+	sl, ep, _, src, _, _ := repickRig(t)
 	const svc = "nodehash"
-	if _, err := ep.LazyMap.Get(svc, repickListing(a, b)); err != nil {
+	if _, err := ep.LazyMap.Get(svc, nodePodListing); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &ServiceConfig{Name: svc, EndpointsProvider: Kubernetes, Distribution: NodeHash}
+	claims := jwt.MapClaims{"role": panicOnRole}
 	for i := 1; i <= 2; i++ {
-		_, err := getWithin(t, func() (*Location, error) { return sl.Get(cfg, src, nil) })
+		_, err := getWithin(t, func() (*Location, error) { return sl.Get(cfg, src, claims) })
 		var pe *lazymap.PanicError
 		if !errors.As(err, &pe) {
 			t.Errorf("request %d: %v, want a *lazymap.PanicError", i, err)
 		}
 	}
-	if st, _ := sl.LazyMap.Status(svc + src.InfoHash); st != lazymap.None {
+	if st, _ := sl.LazyMap.Status(svc + src.InfoHash + panicOnRole); st != lazymap.None {
 		t.Errorf("location cache holds the failed lookup: %v", st)
 	}
 }
@@ -126,13 +136,12 @@ func TestPanickingLookupLogsItsStack(t *testing.T) {
 	cfg.EndpointsProvider, cfg.Distribution = Kubernetes, NodeHash
 	sl := h.web.r.svcLoc
 	sl.ep = &k8s.Endpoints{LazyMap: lazymap.New[*corev1.Endpoints](&lazymap.Config{Expire: time.Hour})}
-	// No NodeName, which NodeHash dereferences.
-	if _, err := sl.ep.LazyMap.Get(throttleTestSvc, repickListing("10.0.0.1", "10.0.0.2")); err != nil {
+	if _, err := sl.ep.LazyMap.Get(throttleTestSvc, nodePodListing); err != nil {
 		t.Fatal(err)
 	}
 	sl.ignore = &EndpointIgnoreList{lazymap.New[bool](&lazymap.Config{Expire: time.Minute})}
 
-	tok := handToken(t, hdrHS256, map[string]any{"exp": time.Now().Add(time.Hour).Unix()}, h.secret)
+	tok := handToken(t, hdrHS256, map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "role": panicOnRole}, h.secret)
 	r := httptest.NewRequest(http.MethodGet, "/"+harnessHash+"/Sintel/Sintel.mkv?token="+tok+"&api-key=k", nil)
 	src, err := h.web.parser.Parse(r.URL)
 	if err != nil {
@@ -156,4 +165,53 @@ func TestPanickingLookupLogsItsStack(t *testing.T) {
 		return
 	}
 	t.Fatal("no \"failed to get proxy\" line")
+}
+
+// Endpoints not backed by a pod list addresses without a NodeName. Every path
+// to a pick routes them instead of dereferencing the nil: the cached lookup,
+// where lazymap turns a panic into a 500, and the two that call getKubernetes
+// directly, the re-pick of a cached pod that has left and GetFallback, where
+// the panic reached net/http and closed the connection. With no node to rank,
+// NodeHash picks by IP, as Hash does.
+func TestNodelessEndpointsRoute(t *testing.T) {
+	sl, ep, _, src, a, b := repickRig(t)
+	sl.nn = "worker1" // and PreferLocalNode below: preferLocal reads NodeName too
+	const svc = "nodeless"
+	list := func(ips ...string) {
+		ep.LazyMap.Drop(svc)
+		if _, err := ep.LazyMap.Get(svc, repickListing(ips...)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &ServiceConfig{Name: svc, EndpointsProvider: Kubernetes, Distribution: NodeHash, PreferLocalNode: true}
+	pick := func(path string, get func() (*Location, error), want string) {
+		t.Helper()
+		if l, err := getWithin(t, get); err != nil || l == nil || l.IP.String() != want {
+			t.Errorf("%s: %v %v, want %s", path, l, err, want)
+		}
+	}
+	list(a, b)
+	// a owns repickHash by IP (repickRig).
+	pick("lookup", func() (*Location, error) { return sl.Get(cfg, src, nil) }, a)
+	pick("GetFallback", func() (*Location, error) { return sl.GetFallback(cfg, src, []string{a}, nil) }, b)
+	list(b) // a leaves; the location cache still holds it
+	pick("re-pick", func() (*Location, error) { return sl.Get(cfg, src, nil) }, b)
+}
+
+// Beside pods, nodeless addresses (nil or empty NodeName) take no part in the
+// node step, so the node set stays the one rest-api ranks; a nodeless pick is
+// not local, and preferLocal swaps it for the local pod.
+func TestNodelessAddressesBesidePods(t *testing.T) {
+	node := "worker2"
+	as := []corev1.EndpointAddress{{IP: "10.0.0.1"}, {IP: "10.0.0.2", NodeName: &node}, {IP: "10.0.0.3", NodeName: new(string)}}
+	s := &ServiceLocation{nn: node}
+	for _, h := range hashes(50) {
+		if p, err := s.distributeByNodeHash(&Source{InfoHash: h}, as, nil); err != nil || p == nil || p.IP != "10.0.0.2" {
+			t.Fatalf("%s: %v %v, want the one pod on a node", h[:8], p, err)
+		}
+	}
+	l, err := s.preferLocal(&ServiceConfig{PreferLocalNode: true}, &Source{InfoHash: repickHash}, &as[0], as)
+	if err != nil || l == nil || l.IP != "10.0.0.2" {
+		t.Fatalf("nodeless pick: %v %v, want the local pod", l, err)
+	}
 }
