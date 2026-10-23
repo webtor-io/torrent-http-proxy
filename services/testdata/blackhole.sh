@@ -5,10 +5,10 @@
 #
 #   services/testdata/blackhole.sh [go test -run regex]
 #
-# GO_TAG  golang image tag (default 1.26)
+# GO_TAG  golang image tag (default latest)
 set -eu
 src=$(cd "$(dirname "$0")/../.." && pwd)
-tag=${GO_TAG:-1.26}
+tag=${GO_TAG:-latest}
 img=thp-blackhole:$tag
 docker build -q -t "$img" - >/dev/null <<DOCKERFILE
 FROM golang:$tag
