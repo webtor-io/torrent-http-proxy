@@ -672,6 +672,13 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		InfoHash:     src.InfoHash,
 	})
 	r = WithFileKey(r, src.InfoHash, src.Path)
+	// The file the client sees is the mod's output, when there is a mod.
+	filePath := src.Path
+	if src.Mod != nil {
+		filePath = src.Mod.Path
+	}
+	_, download := r.URL.Query()["download"]
+	r = withAttachmentRequest(r, filePath, download)
 	r = withProxyOutcome(r, outcome)
 	// A session's own content feeds GET /session-stats. Internal requests
 	// are our services fetching on a viewer's behalf (web-ui's own fetches

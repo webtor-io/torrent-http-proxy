@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -242,7 +244,92 @@ func errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 func (s *HTTPProxy) modifyResponse(r *http.Response) error {
 	delCORSHeaders(r.Header)
 	s.captureFileSize(r)
+	setAttachment(r)
 	return applyResponseRules(r)
+}
+
+type attachmentCtxKey struct{}
+
+// attachmentRequest is what the client's request says about saving the file,
+// kept in the request's context for modifyResponse: by then r.Request is the
+// upstream's request, or a redirect hop's (seeder → Vault → s3-cache), which
+// has none of the client's path or query.
+type attachmentRequest struct {
+	// name is the base name of the file the client asked for, "" for none.
+	name string
+	// download: the client asked to save the file (?download, the key as
+	// the seeder reads it; rest-api spells it download=true).
+	download bool
+}
+
+func withAttachmentRequest(r *http.Request, filePath string, download bool) *http.Request {
+	name := path.Base(filePath)
+	if name == "/" || name == "." {
+		name = ""
+	}
+	return r.WithContext(context.WithValue(r.Context(), attachmentCtxKey{}, &attachmentRequest{name, download}))
+}
+
+// setAttachment sets Content-Disposition: attachment on a 2xx that a browser
+// navigating to it should save rather than open:
+//
+//   - a type a browser renders as a page, scripts and all: an HTML or XML
+//     MIME type (WHATWG's: text/html, text/xml, application/xml, any +xml,
+//     SVG and XHTML among them), or a type it sniffs, which is none, an
+//     unparsable one, or one taken for none (net/http's server sniffs too,
+//     when the upstream sent none). These are a torrent's .html, .svg, .xml,
+//     .rdf (Go's table: neither the seeder's image nor Vault's has
+//     /etc/mime.types), a file without an extension that sniffs as HTML,
+//     and whatever external-proxy relays (a remote's type, a data: URL's).
+//     Opened, they are pages of api.cosmic-crab.buzz, and a phishing page
+//     there is a Safe Browsing verdict on the whole domain. An inline set
+//     upstream is replaced.
+//   - ?download without a Content-Disposition: the seeder sets attachment
+//     itself, but a file Vault has it redirects, and the client gets
+//     s3-cache's (or S3's) headers. web-ui's <a download> does not make up
+//     for it: browsers ignore the attribute on a link to another origin.
+//
+// An attachment set upstream is kept. A subresource (<img>, <video>,
+// <track>, fetch) ignores the header, so players, previews and subtitles are
+// unaffected. No nosniff: for a navigation this leaves nothing to sniff into
+// a page, and on no-cors media served as application/octet-stream it is an
+// ORB risk.
+func setAttachment(r *http.Response) {
+	if r.StatusCode/100 != 2 || r.Request == nil {
+		return
+	}
+	cd := r.Header.Get("Content-Disposition")
+	if t, _, _ := mime.ParseMediaType(cd); t == "attachment" {
+		return
+	}
+	ar, _ := r.Request.Context().Value(attachmentCtxKey{}).(*attachmentRequest)
+	if ar == nil {
+		ar = &attachmentRequest{}
+	}
+	if !opensAsPage(r.Header.Get("Content-Type")) && !(ar.download && cd == "") {
+		return
+	}
+	var params map[string]string
+	if ar.name != "" {
+		// A name that is not ASCII goes as RFC 2231 filename*=utf-8''…,
+		// which every current browser reads.
+		params = map[string]string{"filename": ar.name}
+	}
+	r.Header.Set("Content-Disposition", mime.FormatMediaType("attachment", params))
+}
+
+// opensAsPage reports whether a browser navigating to a response of
+// Content-Type ct renders it as a document that runs scripts, or sniffs it
+// and may (WHATWG MIME Sniffing: no type, an invalid one, unknown/unknown,
+// application/unknown and */* are sniffed).
+func opensAsPage(ct string) bool {
+	t, _, _ := mime.ParseMediaType(ct)
+	switch t {
+	case "", "unknown/unknown", "application/unknown", "*/*",
+		"text/html", "text/xml", "application/xml":
+		return true
+	}
+	return strings.HasSuffix(t, "+xml")
 }
 
 // captureFileSize extracts the underlying upstream file size from response
