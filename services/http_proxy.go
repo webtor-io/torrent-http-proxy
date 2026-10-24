@@ -270,8 +270,8 @@ func withAttachmentRequest(r *http.Request, filePath string, download bool) *htt
 	return r.WithContext(context.WithValue(r.Context(), attachmentCtxKey{}, &attachmentRequest{name, download}))
 }
 
-// setAttachment sets Content-Disposition: attachment on a 2xx that a browser
-// navigating to it should save rather than open:
+// setAttachment sets Content-Disposition: attachment on a response that a
+// browser navigating to it should save rather than open:
 //
 //   - a type a browser renders as a page, scripts and all: an HTML or XML
 //     MIME type (WHATWG's: text/html, text/xml, application/xml, any +xml,
@@ -284,8 +284,10 @@ func withAttachmentRequest(r *http.Request, filePath string, download bool) *htt
 //     and whatever external-proxy relays (a remote's type, a data: URL's).
 //     Opened, they are pages of api.cosmic-crab.buzz, and a phishing page
 //     there is a Safe Browsing verdict on the whole domain. An inline set
-//     upstream is replaced.
-//   - ?download without a Content-Disposition: the seeder sets attachment
+//     upstream is replaced. So is a response with more than one
+//     Content-Type: which one a browser goes by is not ours to guess. A
+//     page is a page at any status, an error answer's included.
+//   - ?download on a 2xx without a Content-Disposition: the seeder sets attachment
 //     itself, but a file Vault has it redirects, and the client gets
 //     s3-cache's (or S3's) headers. web-ui's <a download> does not make up
 //     for it: browsers ignore the attribute on a link to another origin.
@@ -296,7 +298,7 @@ func withAttachmentRequest(r *http.Request, filePath string, download bool) *htt
 // a page, and on no-cors media served as application/octet-stream it is an
 // ORB risk.
 func setAttachment(r *http.Response) {
-	if r.StatusCode/100 != 2 || r.Request == nil {
+	if r.Request == nil || r.StatusCode < 200 {
 		return
 	}
 	cd := r.Header.Get("Content-Disposition")
@@ -307,7 +309,11 @@ func setAttachment(r *http.Response) {
 	if ar == nil {
 		ar = &attachmentRequest{}
 	}
-	if !opensAsPage(r.Header.Get("Content-Type")) && !(ar.download && cd == "") {
+	// Without a body there is nothing to open: an empty error answer, a 304
+	// (which would also write the header into the cached response), a 204.
+	page := r.ContentLength != 0 &&
+		(opensAsPage(r.Header.Get("Content-Type")) || len(r.Header.Values("Content-Type")) > 1)
+	if !page && !(r.StatusCode/100 == 2 && ar.download && cd == "") {
 		return
 	}
 	var params map[string]string

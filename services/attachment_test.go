@@ -21,6 +21,8 @@ func TestSetAttachment(t *testing.T) {
 		name     string
 		status   int
 		ct       string // "-" for no Content-Type at all
+		ct2      string // a second Content-Type header
+		empty    bool   // Content-Length: 0 (else unknown)
 		cd       string
 		file     string
 		download bool
@@ -45,13 +47,24 @@ func TestSetAttachment(t *testing.T) {
 		{name: "download, upstream inline kept", status: 200, ct: "video/mp4", cd: "inline", file: "/a.mp4", download: true, want: "inline"},
 		{name: "upstream attachment kept", status: 200, ct: "text/html", cd: `attachment; filename="a"b.html"`, file: "/a.html", download: true,
 			want: `attachment; filename="a"b.html"`},
-		{name: "404 page untouched", status: 404, ct: "text/html", file: "/a.html", download: true},
+		{name: "two types: either may be taken", status: 200, ct: "text/plain", ct2: "text/html", file: "/a.txt", want: "attachment; filename=a.txt"},
+		{name: "404 page is a page too", status: 404, ct: "text/html", file: "/a.html", download: true, want: "attachment; filename=a.html"},
+		{name: "404 without a body untouched", status: 404, ct: "-", empty: true, file: "/a.mkv", download: true},
+		{name: "404 text untouched", status: 404, ct: "text/plain; charset=utf-8", file: "/a.mkv", download: true},
+		{name: "304 untouched", status: 304, ct: "-", empty: true, file: "/a.html"},
+		{name: "empty download still saved", status: 200, ct: "-", empty: true, file: "/a.bin", download: true, want: "attachment; filename=a.bin"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			req := withAttachmentRequest(httptest.NewRequest(http.MethodGet, "http://seeder/", nil), c.file, c.download)
-			resp := &http.Response{StatusCode: c.status, Header: http.Header{}, Request: req}
+			resp := &http.Response{StatusCode: c.status, Header: http.Header{}, Request: req, ContentLength: -1}
+			if c.empty {
+				resp.ContentLength = 0
+			}
 			if c.ct != "-" {
 				resp.Header.Set("Content-Type", c.ct)
+			}
+			if c.ct2 != "" {
+				resp.Header.Add("Content-Type", c.ct2)
 			}
 			if c.cd != "" {
 				resp.Header.Set("Content-Disposition", c.cd)
