@@ -275,9 +275,10 @@ func withAttachmentRequest(r *http.Request, filePath string, download bool) *htt
 //
 //   - a type a browser renders as a page, scripts and all: an HTML or XML
 //     MIME type (WHATWG's: text/html, text/xml, application/xml, any +xml,
-//     SVG and XHTML among them), or a type it sniffs, which is none, an
-//     unparsable one, or one taken for none (net/http's server sniffs too,
-//     when the upstream sent none). These are a torrent's .html, .svg, .xml,
+//     SVG and XHTML among them; plus text/xsl, which Blink and WebKit also
+//     open as XML), or a type it sniffs, which is none, an unparsable one,
+//     or one taken for none (net/http's server sniffs too, when the
+//     upstream sent none). These are a torrent's .html, .svg, .xml,
 //     .rdf (Go's table: neither the seeder's image nor Vault's has
 //     /etc/mime.types), a file without an extension that sniffs as HTML,
 //     and whatever external-proxy relays (a remote's type, a data: URL's).
@@ -326,7 +327,7 @@ func opensAsPage(ct string) bool {
 	t, _, _ := mime.ParseMediaType(ct)
 	switch t {
 	case "", "unknown/unknown", "application/unknown", "*/*",
-		"text/html", "text/xml", "application/xml":
+		"text/html", "text/xml", "application/xml", "text/xsl":
 		return true
 	}
 	return strings.HasSuffix(t, "+xml")

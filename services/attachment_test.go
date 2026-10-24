@@ -30,6 +30,7 @@ func TestSetAttachment(t *testing.T) {
 		{name: "svg, a range", status: 206, ct: "image/svg+xml", file: "/Pack/logo.svg", want: "attachment; filename=logo.svg"},
 		{name: "xhtml", status: 200, ct: "application/xhtml+xml", file: "/a.xhtml", want: "attachment; filename=a.xhtml"},
 		{name: "xml", status: 200, ct: "text/xml; charset=utf-8", file: "/a.xml", want: "attachment; filename=a.xml"},
+		{name: "xsl: Blink and WebKit open it as XML", status: 200, ct: "TEXT/XSL; charset=utf-8", file: "/ext/a", want: "attachment; filename=a"},
 		{name: "no type: sniffed", status: 200, ct: "-", file: "/Pack/README", want: "attachment; filename=README"},
 		{name: "unknown/unknown: sniffed", status: 200, ct: "unknown/unknown", file: "/x", want: "attachment; filename=x"},
 		{name: "inline html is replaced", status: 200, ct: "text/html", cd: `inline; filename="a.html"`, file: "/a.html", want: "attachment; filename=a.html"},
