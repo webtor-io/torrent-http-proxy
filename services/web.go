@@ -678,7 +678,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		filePath = src.Mod.Path
 	}
 	_, download := r.URL.Query()["download"]
-	r = withAttachmentRequest(r, filePath, download)
+	r = withAttachmentRequest(r, filePath, download, src.GetEdgeType() == "ext")
 	r = withProxyOutcome(r, outcome)
 	// A session's own content feeds GET /session-stats. Internal requests
 	// are our services fetching on a viewer's behalf (web-ui's own fetches

@@ -47,7 +47,10 @@ func newThrottleHarness(t *testing.T, upstream http.HandlerFunc) *throttleHarnes
 	}
 	t.Setenv("THP_THROTTLE_TEST_SERVICE_HOST", u.Hostname())
 	t.Setenv("THP_THROTTLE_TEST_SERVICE_PORT", u.Port())
-	cfg := &ServicesConfig{"default": {Name: throttleTestSvc, EndpointsProvider: Environment}}
+	cfg := &ServicesConfig{
+		"default": {Name: throttleTestSvc, EndpointsProvider: Environment},
+		"ext":     {Name: throttleTestSvc, EndpointsProvider: Environment},
+	}
 	res := NewResolver(cfg, &ServiceLocation{
 		LazyMap: lazymap.New[*Location](&lazymap.Config{Expire: time.Minute}),
 	})

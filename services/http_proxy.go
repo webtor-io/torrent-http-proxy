@@ -260,14 +260,17 @@ type attachmentRequest struct {
 	// download: the client asked to save the file (?download, the key as
 	// the seeder reads it; rest-api spells it download=true).
 	download bool
+	// external: the edge is external-proxy, whose response type is whatever
+	// the URL's author made it (a remote's header, a data: URL's).
+	external bool
 }
 
-func withAttachmentRequest(r *http.Request, filePath string, download bool) *http.Request {
+func withAttachmentRequest(r *http.Request, filePath string, download, external bool) *http.Request {
 	name := path.Base(filePath)
 	if name == "/" || name == "." {
 		name = ""
 	}
-	return r.WithContext(context.WithValue(r.Context(), attachmentCtxKey{}, &attachmentRequest{name, download}))
+	return r.WithContext(context.WithValue(r.Context(), attachmentCtxKey{}, &attachmentRequest{name, download, external}))
 }
 
 // setAttachment sets Content-Disposition: attachment on a response that a
@@ -287,6 +290,10 @@ func withAttachmentRequest(r *http.Request, filePath string, download bool) *htt
 //     upstream is replaced. So is a response with more than one
 //     Content-Type: which one a browser goes by is not ours to guess. A
 //     page is a page at any status, an error answer's included.
+//   - anything with a body from external-proxy (/ext/, ~ext): the type is
+//     the URL author's to pick, and a deny-list of types is a guess at what
+//     a browser renders (a PDF viewer, multipart/x-mixed-replace). Its only
+//     callers are <img>, <track> and server-side fetches.
 //   - ?download on a 2xx without a Content-Disposition: the seeder sets attachment
 //     itself, but a file Vault has it redirects, and the client gets
 //     s3-cache's (or S3's) headers. web-ui's <a download> does not make up
@@ -312,7 +319,7 @@ func setAttachment(r *http.Response) {
 	// Without a body there is nothing to open: an empty error answer, a 304
 	// (which would also write the header into the cached response), a 204.
 	page := r.ContentLength != 0 &&
-		(opensAsPage(r.Header.Get("Content-Type")) || len(r.Header.Values("Content-Type")) > 1)
+		(ar.external || opensAsPage(r.Header.Get("Content-Type")) || len(r.Header.Values("Content-Type")) > 1)
 	if !page && !(r.StatusCode/100 == 2 && ar.download && cd == "") {
 		return
 	}
@@ -330,7 +337,13 @@ func setAttachment(r *http.Response) {
 // and may (WHATWG MIME Sniffing: no type, an invalid one, unknown/unknown,
 // application/unknown and */* are sniffed).
 func opensAsPage(ct string) bool {
-	t, _, _ := mime.ParseMediaType(ct)
+	t, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		// A browser splits Content-Type on commas and takes the last valid
+		// type ("text/plain;charset=utf-8,text/html" is text/html); Go
+		// returns the first and an error for the rest.
+		return true
+	}
 	switch t {
 	case "", "unknown/unknown", "application/unknown", "*/*",
 		"text/html", "text/xml", "application/xml", "text/xsl":
