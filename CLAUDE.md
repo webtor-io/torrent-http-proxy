@@ -164,7 +164,10 @@ Currently registered handlers:
 
 Request-side rule check (runs before the response pipeline):
 
-- **Hash binding** (`web.go` `proxyHTTP`): if the token carries a `hash` claim, the request is rejected (403) unless `hash` equals the request's infohash. Prevents replay across content for any hash-bound token kind. Applied early — before resolver, bucket, etc.
+- **Hash binding** (`web.go` `proxyHTTP`): if the token carries a `hash` claim, a request that names a torrent is rejected (403, Warn `token hash mismatch`) unless `hash` equals its infohash. Prevents replay across content for any hash-bound token kind. Applied early — before resolver, bucket, etc.
+  - Its scope is torrents (`Source.addressesTorrent`): an `/ext/<url>` source (`Type` ext, InfoHash `ext`) names none and is not checked. web-ui binds a free viewer's primary token whenever grace is on, and the subtitles a viewer uploads (and an embed's tracks and poster) come through `/ext/` on that token, srt2vtt's read of the `.srt` back through thp (`/ext/<url>/x.srt`, the same token) included: until this, every one a free viewer loaded was 403. Everything else stays bound: `~ext` on a torrent's file, and a first segment that is another service's name (`/vtt/<hash>/…`; prod's config has vod, arch, hls, vtt, cp, vi, tr besides ext), whose services read torrents (`TestHashBindingCoversTorrentsOnly`, red for an exemption by edge type or by "not 40 hex")
+  - Not closed by this: a grace token (`kind` grace, 50M) is hash-bound like the primary, so it passes on `/ext/` too, and external-proxy relays any URL at its rate rather than the tier's. web-ui never sends one there (ext URLs carry the export's primary token); a viewer can lift it from a rewritten playlist. The binding already let it read every file of its torrent at 50M, not only the window's segments
+  - No metric: thp's one refusal counter by reason is the session limiter's 429s. Count `token hash mismatch` in the log
 
 Gating of rule emission lives upstream — web-ui only issues grace rules when its `GRACE_RULES_ENABLED` flag is on. THP has no flag; absence of the rule short-circuits.
 

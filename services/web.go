@@ -349,7 +349,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	// If the token carries a `hash` claim, it's bound to that specific torrent
 	// and any mismatch is treated as forgery (prevents replay across content).
-	if boundHash, _ := claims["hash"].(string); boundHash != "" && boundHash != src.InfoHash {
+	// A request that names no torrent (/ext/<url>) is outside the binding:
+	// web-ui binds a free viewer's primary token whenever grace is on, and
+	// the subtitles a viewer uploads come through /ext/ on it, so every one
+	// a free viewer loaded was refused here.
+	if boundHash, _ := claims["hash"].(string); boundHash != "" && src.addressesTorrent() && boundHash != src.InfoHash {
 		logger.WithFields(logrus.Fields{
 			"infohash":   src.InfoHash,
 			"bound_hash": boundHash,
