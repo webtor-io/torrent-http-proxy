@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -676,6 +677,74 @@ func TestProxyHTTP_FMP4PlaylistGrace(t *testing.T) {
 			}
 			if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
 				t.Errorf("Content-Length %q for %d bytes", cl, rec.Body.Len())
+			}
+		})
+	}
+}
+
+// TestRewriteManifestAllocatesAboutItsBody: the walks over a playlist's
+// lines, the rewrite's and the strip's past the window, cost about the
+// playlist, not a slice header per line. bytes.SplitAfter cost 24 B a line:
+// a body of newlines, one line a byte, took 24 times its size on top of
+// itself (~500 MiB for external-proxy's 20 MiB, measured in review of
+// cc8846b).
+func TestRewriteManifestAllocatesAboutItsBody(t *testing.T) {
+	for _, c := range []struct {
+		name, head, want string
+	}{
+		{"rewrite", "#EXTM3U\n#EXTINF:4.0,\nseg0.ts?token=" + primaryJWT + "\n", "token=" + graceJWT},
+		{"strip past the window", "#EXTM3U\n" + tagSessionOffset + "5000\n", "#EXTM3U\n\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			body := append([]byte(c.head), bytes.Repeat([]byte("\n"), 4<<20)...)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			out := RewriteManifest(body, claimsWithGrace(1200), primaryJWT)
+			runtime.ReadMemStats(&after)
+			if !bytes.Contains(out, []byte(c.want)) || bytes.Contains(out, []byte(tagSessionOffset)) {
+				t.Fatalf("not rewritten: the walk never ran\n%.80q", out)
+			}
+			if got := after.TotalAlloc - before.TotalAlloc; got > 3*uint64(len(body)) {
+				t.Errorf("allocated %d B for a %d B playlist", got, len(body))
+			}
+		})
+	}
+}
+
+// TestRewriteManifestForGraceCapsTheBody: a playlist over
+// maxGraceManifestBytes is passed on as it came, read once and not held
+// whole. Nothing else bounds it: a torrent's file named *.m3u8 comes from
+// the seeder whole. One at the limit is rewritten.
+func TestRewriteManifestForGraceCapsTheBody(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		size      int
+		rewritten bool
+	}{
+		{"at the limit", maxGraceManifestBytes, true},
+		{"one byte over", maxGraceManifestBytes + 1, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			head := "#EXTM3U\n#EXTINF:4.0,\nseg0.ts?token=" + primaryJWT + "\n#"
+			in := head + strings.Repeat("x", c.size-len(head)-1) + "\n"
+			req := httptest.NewRequest(http.MethodGet, "/Sintel/x.m3u8", nil)
+			r := &http.Response{Request: req, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(in)), ContentLength: int64(len(in))}
+			if err := rewriteManifestForGrace(r, &RulesContext{Claims: claimsWithGrace(1200), PrimaryToken: primaryJWT}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rw := bytes.Contains(got, []byte("token="+graceJWT)); rw != c.rewritten {
+				t.Fatalf("rewritten %v, want %v", rw, c.rewritten)
+			}
+			if !c.rewritten && string(got) != in {
+				t.Errorf("passed on %d B, not the %d B that came", len(got), len(in))
+			}
+			if r.ContentLength != int64(len(got)) {
+				t.Errorf("ContentLength %d for %d B", r.ContentLength, len(got))
 			}
 		})
 	}

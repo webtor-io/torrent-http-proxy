@@ -9,12 +9,20 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	tagSessionOffset = "#EXT-X-SESSION-OFFSET:"
 	tagExtinf        = "#EXTINF:"
 )
+
+// maxGraceManifestBytes bounds the playlist rewriteManifestForGrace holds in
+// memory, 4 times the largest through thp in an hour (2.0 MB, see
+// HTTPProxy.get). Nothing else bounds it: a torrent's file named *.m3u8 comes
+// from the seeder whole, on the primary token that carries the grace rule. A
+// larger playlist is passed on as it came, its segments on the primary token.
+const maxGraceManifestBytes = 8 << 20
 
 // rewriteManifestForGrace is the response-rule handler registered in rules.go
 // for `kind=grace, scope=manifest`. It intercepts .m3u8 responses and applies
@@ -30,11 +38,23 @@ func rewriteManifestForGrace(r *http.Response, rc *RulesContext) error {
 	if r.Body == nil {
 		return nil
 	}
-	body, err := io.ReadAll(r.Body)
-	_ = r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxGraceManifestBytes+1))
 	if err != nil {
+		_ = r.Body.Close()
 		return errors.Wrap(err, "failed to read manifest body")
 	}
+	if len(body) > maxGraceManifestBytes {
+		logrus.WithFields(logrus.Fields{
+			"path":  redactURL(r.Request.URL.Path),
+			"limit": maxGraceManifestBytes,
+		}).Warn("manifest too large for grace, passed on unrewritten")
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+		return nil
+	}
+	_ = r.Body.Close()
 	rewritten := RewriteManifest(body, rc.Claims, rc.PrimaryToken)
 	r.Body = io.NopCloser(bytes.NewReader(rewritten))
 	r.ContentLength = int64(len(rewritten))
@@ -78,7 +98,7 @@ func parseSessionOffset(body []byte) float64 {
 // unknown X- tags but downstream consumers (CDN logs, etc.) needn't see it.
 func stripSessionOffsetLine(body []byte) []byte {
 	out := make([]byte, 0, len(body))
-	for _, line := range bytes.SplitAfter(body, []byte("\n")) {
+	for line := range bytes.Lines(body) {
 		if bytes.HasPrefix(bytes.TrimLeft(line, " \t"), []byte(tagSessionOffset)) {
 			continue
 		}
@@ -118,9 +138,9 @@ func RewriteManifest(body []byte, claims jwt.MapClaims, primaryToken string) []b
 	movieTime := sessionOffset
 	pendingExtinf := 0.0 // duration of the next segment, set by EXTINF, consumed by following URL line
 
-	scanner := bytes.SplitAfter(body, []byte("\n"))
-	for _, raw := range scanner {
-		line := raw
+	// bytes.Lines, not SplitAfter: a slice header a line (24 B) would cost
+	// a body of empty lines 24 times its size.
+	for line := range bytes.Lines(body) {
 		// Drop trailing newline for inspection but emit raw at end.
 		trimmed := bytes.TrimRight(line, "\r\n")
 		stripped := bytes.TrimLeft(trimmed, " \t")
