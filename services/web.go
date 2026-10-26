@@ -352,8 +352,10 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// A request that names no torrent (/ext/<url>) is outside the binding:
 	// web-ui binds a free viewer's primary token whenever grace is on, and
 	// the subtitles a viewer uploads come through /ext/ on it, so every one
-	// a free viewer loaded was refused here.
-	if boundHash, _ := claims["hash"].(string); boundHash != "" && src.addressesTorrent() && boundHash != src.InfoHash {
+	// a free viewer loaded was refused here. A grace token stays bound
+	// there: web-ui never sends one to /ext/, and on it external-proxy would
+	// relay any URL at the grace rate.
+	if boundHash, _ := claims["hash"].(string); boundHash != "" && (src.addressesTorrent() || isGraceToken(claims)) && boundHash != src.InfoHash {
 		logger.WithFields(logrus.Fields{
 			"infohash":   src.InfoHash,
 			"bound_hash": boundHash,
@@ -670,11 +672,17 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			RetryDelay:        s.pr.retryDelay,
 		})
 	}
-	r = WithRulesContext(r, &RulesContext{
-		Claims:       claims,
-		PrimaryToken: r.URL.Query().Get("token"),
-		InfoHash:     src.InfoHash,
-	})
+	// Rules are a torrent's: grace rewrites its playlists. An /ext/ source
+	// passes the hash binding on a free viewer's primary, which carries the
+	// grace rule, and is a body of any URL's choosing: the rewrite must not
+	// read it.
+	if src.addressesTorrent() {
+		r = WithRulesContext(r, &RulesContext{
+			Claims:       claims,
+			PrimaryToken: r.URL.Query().Get("token"),
+			InfoHash:     src.InfoHash,
+		})
+	}
 	r = WithFileKey(r, src.InfoHash, src.Path)
 	// The file the client sees is the mod's output, when there is a mod.
 	filePath := src.Path

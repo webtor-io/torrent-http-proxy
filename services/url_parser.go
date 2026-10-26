@@ -64,11 +64,12 @@ func (s *Source) GetEdgeType() string {
 }
 
 // addressesTorrent reports whether the request names a torrent's content,
-// the scope of a token's hash claim. An /ext/<url> source names a URL
-// external-proxy fetches (a subtitle the viewer uploaded, an embed's poster
-// or track), and its InfoHash is "ext". Every other source is taken to name
-// a torrent: ~ext on a torrent's file, and a first segment that is another
-// service's name (/vtt/<hash>/...), whose services read torrents.
+// the scope of a token's hash claim and of its rules. An /ext/<url> source
+// names a URL external-proxy fetches (a subtitle the viewer uploaded, an
+// embed's poster or track), and its InfoHash is "ext". Every other source is
+// taken to name a torrent: ~ext on a torrent's file is the torrent's. A first
+// segment that is another service's name (/vtt/...) is the InfoHash itself,
+// so a bound token is refused there whatever follows, its own hash included.
 func (s *Source) addressesTorrent() bool {
 	return s.Type != "ext"
 }
