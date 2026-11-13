@@ -70,21 +70,22 @@ func TestPrivacyLookupClassification(t *testing.T) {
 		status     int
 		body       string
 		wantPriv   bool
-		wantStatus int // 0: not an error
+		wantStatus int    // 0: not an error
+		wantCause  string // what G1 reads in private_gate_cause
 	}{
-		{"public", 200, `{"id":"x","private":false}`, false, 0},
-		{"private", 200, `{"private":true}`, true, 0},
-		{"refused private", 403, `{"error":"…","code":"private_torrent","reason":"sign_in"}`, true, 0},
-		{"store without key", 403, `{"code":"private_unavailable"}`, true, 0},
-		{"ban", 403, `{"error":"forbidden"}`, false, 403},
-		{"other code", 403, `{"code":"private_torrent_file"}`, false, 403},
-		{"not found", 404, `{"error":"not found"}`, false, 404},
-		{"server error", 500, `{}`, false, 503},
-		{"store outdated", 503, `{"code":"store_outdated"}`, false, 503},
-		{"no field", 200, `{"id":"x"}`, false, 503},
-		{"null field", 200, `{"private":null}`, false, 503},
-		{"garbage", 200, `not json`, false, 503},
-		{"huge body", 200, huge, false, 503},
+		{"public", 200, `{"id":"x","private":false}`, false, 0, ""},
+		{"private", 200, `{"private":true}`, true, 0, ""},
+		{"refused private", 403, `{"error":"…","code":"private_torrent","reason":"sign_in"}`, true, 0, ""},
+		{"store without key", 403, `{"code":"private_unavailable"}`, true, 0, ""},
+		{"ban", 403, `{"error":"forbidden"}`, false, 403, "rest-api 403"},
+		{"other code", 403, `{"code":"private_torrent_file"}`, false, 403, "rest-api 403"},
+		{"not found", 404, `{"error":"not found"}`, false, 404, "rest-api 404"},
+		{"server error", 500, `{}`, false, 503, "rest-api 500"},
+		{"store outdated", 503, `{"code":"store_outdated"}`, false, 503, "rest-api 503"},
+		{"no field", 200, `{"id":"x"}`, false, 503, "rest-api 200 without private"},
+		{"null field", 200, `{"private":null}`, false, 503, "rest-api 200 without private"},
+		{"garbage", 200, `not json`, false, 503, "rest-api bad body"},
+		{"huge body", 200, huge, false, 503, "rest-api bad body"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFakeRestAPI(t, restAnswer(c.status, c.body))
@@ -94,7 +95,7 @@ func TestPrivacyLookupClassification(t *testing.T) {
 					t.Errorf("got (%v, %v), want (%v, nil)", got, err, c.wantPriv)
 				}
 			} else {
-				checkLookupError(t, err, c.wantStatus, "")
+				checkLookupError(t, err, c.wantStatus, c.wantCause)
 			}
 			if uri, token := f.last(); uri != "/resource/"+h || token != "" {
 				t.Errorf("request %q with X-Token %q, want /resource/%s without a token", uri, token, h)
@@ -191,7 +192,11 @@ func TestPrivacyLookupOncePerHash(t *testing.T) {
 			results <- result{p, err}
 		}()
 	}
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lookup never reached rest-api")
+	}
 	// The lookup is in flight; let the rest of the burst reach isPrivate. Were
 	// each one to ask, its request would wait here too and count.
 	time.Sleep(50 * time.Millisecond)
@@ -210,7 +215,7 @@ func TestPrivacyLookupOncePerHash(t *testing.T) {
 func gateCounts(t *testing.T) map[string]float64 {
 	t.Helper()
 	m := map[string]float64{}
-	for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+	for _, o := range gateOutcomes {
 		m[o] = counterValue(t, promPrivateGate.WithLabelValues(o))
 	}
 	return m
@@ -395,7 +400,7 @@ func TestNewPrivateGateFromFlags(t *testing.T) {
 				}
 			}
 		}
-		for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+		for _, o := range gateOutcomes {
 			if n, ok := series[o]; !ok || n != 0 {
 				t.Errorf("private_gate_total{outcome=%q}: %v present %v, want present at 0", o, n, ok)
 			}
@@ -405,7 +410,8 @@ func TestNewPrivateGateFromFlags(t *testing.T) {
 		t.Setenv("REST_API_SERVICE_HOST", "rest-api.invalid")
 		t.Setenv("REST_API_SERVICE_PORT", "8096")
 		t.Setenv("PRIVATE_ACCESS_ENFORCE", "true")
-		gate, err := newGate(t)
+		// With an API secret, as on prod: a host set, the secret refuses nothing.
+		gate, err := newGate(t, "--api-secret", "s")
 		if err != nil || gate == nil {
 			t.Fatalf("got (%v, %v), want a gate", gate, err)
 		}

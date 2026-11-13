@@ -14,6 +14,7 @@ import (
 // withVodEdge routes h's vod edge to the harness's caller service on the
 // harness's upstream.
 func withVodEdge(t *testing.T, h *throttleHarness) {
+	t.Helper()
 	(*h.web.parser.configs)["vod"] = &ServiceConfig{Name: harnessCallerSvc, EndpointsProvider: Environment}
 	t.Setenv("NGINX_VOD_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
 	t.Setenv("NGINX_VOD_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))

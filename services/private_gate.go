@@ -64,7 +64,7 @@ func NewPrivateGate(c *cli.Context) (*PrivateGate, error) {
 	}
 	enforce := c.Bool(privateAccessEnforceFlag)
 	g := newPrivateGate("http://"+net.JoinHostPort(host, strconv.Itoa(c.Int(restAPIPortFlag))), enforce, privateLookupTimeout, privateLookupErrorTTL)
-	for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+	for _, o := range gateOutcomes {
 		promPrivateGate.WithLabelValues(o)
 	}
 	promPrivateEnforce.Set(0)
@@ -84,6 +84,9 @@ const (
 	gateLookupError   = "lookup_error"
 	gateMalformedHash = "malformed_hash"
 )
+
+// gateOutcomes lists them all: their series are created at start.
+var gateOutcomes = []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash}
 
 var (
 	promPrivateGate = prometheus.NewCounterVec(prometheus.CounterOpts{
