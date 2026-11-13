@@ -152,7 +152,7 @@ func init() {
 	prometheus.MustRegister(promSessionLimiterRejected)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers, gate *PrivateGate) *Web {
 	return &Web{
 		host:             c.String(webHostFlag),
 		port:             c.Int(webPortFlag),
@@ -169,6 +169,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 		stats:            NewSessionStats(),
 		callers:          callers,
+		gate:             gate,
 		missing:          newMissingSources(missingSourceTTL),
 		closing:          make(chan struct{}),
 		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),

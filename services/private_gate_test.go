@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/urfave/cli"
 )
 
 // fakeRestAPI is rest-api's GET /resource/<h> as the gate sees it. URL has no
@@ -325,4 +328,92 @@ func TestGateLookupPanic(t *testing.T) {
 	if v != (gateVerdict{gateLookupError, "lookup failed", http.StatusServiceUnavailable}) {
 		t.Errorf("%+v, want {lookup_error \"lookup failed\" 503}", v)
 	}
+}
+
+// TestNewPrivateGateFromFlags: the gate is on wherever REST_API_SERVICE_HOST
+// is set and asks rest-api there, port 80 unless given; off without it. An
+// API secret without it refuses to start: tokens would be checked and a
+// private torrent served on any of them. enforce reads PRIVATE_ACCESS_ENFORCE
+// and shows on the gauge; the outcome series exist from the start.
+func TestNewPrivateGateFromFlags(t *testing.T) {
+	for _, k := range []string{"REST_API_SERVICE_HOST", "REST_API_SERVICE_PORT", "PRIVATE_ACCESS_ENFORCE", "API_SECRET"} {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
+	newGate := func(t *testing.T, args ...string) (*PrivateGate, error) {
+		t.Helper()
+		var gate *PrivateGate
+		var gateErr error
+		app := cli.NewApp()
+		app.Flags = RegisterPrivateGateFlags(RegisterAPIFlags(nil))
+		app.Action = func(c *cli.Context) error {
+			gate, gateErr = NewPrivateGate(c)
+			return nil
+		}
+		if err := app.Run(append([]string{"torrent-http-proxy"}, args...)); err != nil {
+			t.Fatal(err)
+		}
+		return gate, gateErr
+	}
+
+	t.Run("off", func(t *testing.T) {
+		if gate, err := newGate(t); gate != nil || err != nil {
+			t.Errorf("got (%v, %v), want (nil, nil)", gate, err)
+		}
+	})
+	t.Run("secret without rest-api", func(t *testing.T) {
+		gate, err := newGate(t, "--api-secret", "s")
+		if gate != nil || err == nil || !strings.Contains(err.Error(), "REST_API_SERVICE_HOST") {
+			t.Errorf("got (%v, %v), want an error naming REST_API_SERVICE_HOST", gate, err)
+		}
+	})
+	t.Run("observe", func(t *testing.T) {
+		t.Setenv("REST_API_SERVICE_HOST", "rest-api.invalid")
+		promPrivateGate.Reset()
+		gate, err := newGate(t)
+		if err != nil || gate == nil {
+			t.Fatalf("got (%v, %v), want a gate", gate, err)
+		}
+		if gate.url != "http://rest-api.invalid:80" || gate.enforce {
+			t.Errorf("gate on %q, enforce %v; want http://rest-api.invalid:80, false", gate.url, gate.enforce)
+		}
+		if g := gaugeValue(t, promPrivateEnforce); g != 0 {
+			t.Errorf("private_enforce %v, want 0", g)
+		}
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		series := map[string]float64{}
+		for _, mf := range mfs {
+			if mf.GetName() != "webtor_http_proxy_private_gate_total" {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				for _, l := range m.GetLabel() {
+					series[l.GetValue()] = m.GetCounter().GetValue()
+				}
+			}
+		}
+		for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+			if n, ok := series[o]; !ok || n != 0 {
+				t.Errorf("private_gate_total{outcome=%q}: %v present %v, want present at 0", o, n, ok)
+			}
+		}
+	})
+	t.Run("enforce", func(t *testing.T) {
+		t.Setenv("REST_API_SERVICE_HOST", "rest-api.invalid")
+		t.Setenv("REST_API_SERVICE_PORT", "8096")
+		t.Setenv("PRIVATE_ACCESS_ENFORCE", "true")
+		gate, err := newGate(t)
+		if err != nil || gate == nil {
+			t.Fatalf("got (%v, %v), want a gate", gate, err)
+		}
+		if gate.url != "http://rest-api.invalid:8096" || !gate.enforce {
+			t.Errorf("gate on %q, enforce %v; want http://rest-api.invalid:8096, true", gate.url, gate.enforce)
+		}
+		if g := gaugeValue(t, promPrivateEnforce); g != 1 {
+			t.Errorf("private_enforce %v, want 1", g)
+		}
+	})
 }

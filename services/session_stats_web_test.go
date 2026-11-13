@@ -1211,7 +1211,7 @@ func TestNewWebWiresSessionStats(t *testing.T) {
 	for _, f := range RegisterWebFlags(nil) {
 		f.Apply(set)
 	}
-	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), nil, nil, nil, &Claims{apiKey: "k", apiSecret: statsSecret}, nil, nil, nil, nil, nil)
+	web := NewWeb(cli.NewContext(cli.NewApp(), set, nil), nil, nil, nil, &Claims{apiKey: "k", apiSecret: statsSecret}, nil, nil, nil, nil, nil, nil)
 	srv := newStatsServer(t, web)
 	s := openStats(t, statsURL(srv.URL, harnessHash, statsToken(t, statsSecret, "s1")))
 	if s.resp.StatusCode != http.StatusOK {

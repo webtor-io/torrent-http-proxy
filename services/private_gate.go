@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 	"github.com/webtor-io/lazymap"
 )
 
@@ -18,6 +22,58 @@ const (
 	privateLookupTimeout  = 3 * time.Second
 	privateLookupErrorTTL = 30 * time.Second
 )
+
+const (
+	restAPIHostFlag          = "rest-api-host"
+	restAPIPortFlag          = "rest-api-port"
+	privateAccessEnforceFlag = "private-access-enforce"
+)
+
+func RegisterPrivateGateFlags(f []cli.Flag) []cli.Flag {
+	return append(f,
+		cli.StringFlag{
+			Name:   restAPIHostFlag,
+			Usage:  "rest-api host the private torrent gate asks whether a torrent is private; empty turns the gate off",
+			EnvVar: "REST_API_SERVICE_HOST",
+		},
+		cli.IntFlag{
+			Name:   restAPIPortFlag,
+			Usage:  "rest-api port",
+			Value:  80,
+			EnvVar: "REST_API_SERVICE_PORT",
+		},
+		cli.BoolFlag{
+			Name:   privateAccessEnforceFlag,
+			Usage:  "refuse what the private torrent gate does not let through; off only counts it",
+			EnvVar: "PRIVATE_ACCESS_ENFORCE",
+		},
+	)
+}
+
+// NewPrivateGate is the gate on rest-api at REST_API_SERVICE_HOST, nil without
+// it. An API secret without it is an error, run() returns it before anything
+// starts: the tokens would be checked, and a private torrent served on any.
+func NewPrivateGate(c *cli.Context) (*PrivateGate, error) {
+	host := c.String(restAPIHostFlag)
+	if host == "" {
+		if c.String(apiSecretFlag) != "" {
+			return nil, errors.New("private torrents: API_SECRET is set but REST_API_SERVICE_HOST is not; the private torrent gate asks rest-api whether a torrent is private: set REST_API_SERVICE_HOST and REST_API_SERVICE_PORT")
+		}
+		log.Info("private torrents gate: off, REST_API_SERVICE_HOST is not set")
+		return nil, nil
+	}
+	enforce := c.Bool(privateAccessEnforceFlag)
+	g := newPrivateGate("http://"+net.JoinHostPort(host, strconv.Itoa(c.Int(restAPIPortFlag))), enforce, privateLookupTimeout, privateLookupErrorTTL)
+	for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+		promPrivateGate.WithLabelValues(o)
+	}
+	promPrivateEnforce.Set(0)
+	if enforce {
+		promPrivateEnforce.Set(1)
+	}
+	log.Infof("private torrents gate: on, enforce=%v", enforce)
+	return g, nil
+}
 
 // The outcomes of PrivateGate.check, the values of the outcome label.
 const (
