@@ -1,11 +1,9 @@
 package services
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,61 +32,37 @@ func TestUpstreamUidFromVerifiedToken(t *testing.T) {
 	withUid, noUid := jwt.MapClaims{"uid": harnessUid, "exp": exp}, jwt.MapClaims{"exp": exp}
 	const segment = "~vod/hls/0a/s-1-v1-a1.ts"
 	for _, c := range []struct {
-		name, suffix, clientUid, want string
-		claims                        jwt.MapClaims
+		name, suffix, edge, clientUid, want string
+		claims                              jwt.MapClaims
 	}{
-		{"seeder, token uid", "", "", harnessUid, withUid},
-		{"seeder, token uid, client evil", "", "evil", harnessUid, withUid},
-		{"seeder, no claim, client evil", "", "evil", "", noUid},
-		{"vod edge, token uid, client evil", segment, "evil", harnessUid, withUid},
-		{"vod edge, no claim, client evil", segment, "evil", "", noUid},
+		{"seeder, token uid", "", throttleTestSvc, "", harnessUid, withUid},
+		{"seeder, token uid, client evil", "", throttleTestSvc, "evil", harnessUid, withUid},
+		{"seeder, no claim, client evil", "", throttleTestSvc, "evil", "", noUid},
+		{"vod edge, token uid, client evil", segment, harnessCallerSvc, "evil", harnessUid, withUid},
+		{"vod edge, no claim, client evil", segment, harnessCallerSvc, "evil", "", noUid},
 	} {
 		r := h.request(t, c.claims, true, "")
 		r.URL.Path += c.suffix
 		if c.clientUid != "" {
 			r.Header.Set("X-Uid", c.clientUid)
 		}
-		h.serve(t, httptest.NewRecorder(), r)
+		rec := httptest.NewRecorder()
+		fields := h.serve(t, rec, r)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", c.name, rec.Code)
+			continue
+		}
+		if fields["edge"] != c.edge {
+			t.Errorf("%s: edge %v, want %s", c.name, fields["edge"], c.edge)
+		}
 		if got := <-seen; got != c.want {
 			t.Errorf("%s: upstream X-Uid %q, want %q", c.name, got, c.want)
 		}
 	}
 }
 
-// TestRetryKeepsUpstreamUid: a stream cut mid-transfer resumes with a request
-// retryTransport builds afresh, copying only the headers it lists. Without
-// X-Uid among them a private torrent's read resumes under no account.
+// TestRetryKeepsUpstreamUid: without X-Uid among the headers the retry
+// copies, a private torrent's read resumes under no account.
 func TestRetryKeepsUpstreamUid(t *testing.T) {
-	const size, cut = 1000, 100
-	seen := make(chan string, 2)
-	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.Header.Get("X-Uid")
-		if r.Header.Get("Range") == "" {
-			// The first pod dies after cut bytes.
-			w.Header().Set("Content-Length", strconv.Itoa(size))
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(make([]byte, cut))
-			w.(http.Flusher).Flush()
-			conn, _, err := w.(http.Hijacker).Hijack()
-			if err == nil {
-				_ = conn.Close()
-			}
-			return
-		}
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", cut, size-1, size))
-		w.Header().Set("Content-Length", strconv.Itoa(size-cut))
-		w.WriteHeader(http.StatusPartialContent)
-		_, _ = w.Write(make([]byte, size-cut))
-	})
-	h.web.pr.maxRetries = 1
-	tok := handToken(t, hdrHS256, map[string]any{"uid": harnessUid, "exp": time.Now().Add(time.Hour).Unix()}, h.secret)
-	rec := h.serveToken(t, tok, "")
-	if rec.Body.Len() != size {
-		t.Fatalf("client got %d bytes, want %d: the stream did not resume", rec.Body.Len(), size)
-	}
-	for _, req := range []string{"first", "retry"} {
-		if got := <-seen; got != harnessUid {
-			t.Errorf("%s request: upstream X-Uid %q, want %q", req, got, harnessUid)
-		}
-	}
+	retryKeepsUpstreamHeader(t, map[string]any{"uid": harnessUid, "exp": time.Now().Add(time.Hour).Unix()}, "X-Uid", harnessUid)
 }

@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -69,15 +70,26 @@ func TestUpstreamRoleIsTheTokens(t *testing.T) {
 	}
 }
 
-// TestRetryKeepsUpstreamRole: a stream cut mid-transfer resumes on another
-// pod with a request retryTransport builds afresh, copying only the headers
-// it lists. Without X-Role among them Vault's read resumes as anyone's, and
-// the seeder may serve the rest from the very copy being checked.
+// TestRetryKeepsUpstreamRole: Vault's read must resume as Vault's, or the
+// seeder may serve the rest from the very copy being checked.
 func TestRetryKeepsUpstreamRole(t *testing.T) {
+	retryKeepsUpstreamHeader(t, map[string]any{"role": "vault", "exp": time.Now().Add(time.Hour).Unix()}, "X-Role", "vault")
+}
+
+// retryKeepsUpstreamHeader: a stream cut mid-transfer resumes on another pod
+// with a request retryTransport builds afresh, copying only the headers it
+// lists. A token with payload must reach the upstream as header == want on
+// the first request and on the retry.
+func retryKeepsUpstreamHeader(t *testing.T, payload map[string]any, header, want string) {
+	t.Helper()
+	// The retry transport logs the cut through the standard logger.
+	out := logrus.StandardLogger().Out
+	logrus.SetOutput(io.Discard)
+	t.Cleanup(func() { logrus.SetOutput(out) })
 	const size, cut = 1000, 100
 	seen := make(chan string, 2)
 	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.Header.Get("X-Role")
+		seen <- r.Header.Get(header)
 		if r.Header.Get("Range") == "" {
 			// The first pod dies after cut bytes.
 			w.Header().Set("Content-Length", strconv.Itoa(size))
@@ -96,14 +108,13 @@ func TestRetryKeepsUpstreamRole(t *testing.T) {
 		_, _ = w.Write(make([]byte, size-cut))
 	})
 	h.web.pr.maxRetries = 1
-	tok := handToken(t, hdrHS256, map[string]any{"role": "vault", "exp": time.Now().Add(time.Hour).Unix()}, h.secret)
-	rec := h.serveToken(t, tok, "")
+	rec := h.serveToken(t, handToken(t, hdrHS256, payload, h.secret), "")
 	if rec.Body.Len() != size {
 		t.Fatalf("client got %d bytes, want %d: the stream did not resume", rec.Body.Len(), size)
 	}
 	for _, req := range []string{"first", "retry"} {
-		if got := <-seen; got != "vault" {
-			t.Errorf("%s request: upstream X-Role %q, want vault", req, got)
+		if got := <-seen; got != want {
+			t.Errorf("%s request: upstream %s %q, want %q", req, header, got, want)
 		}
 	}
 }
