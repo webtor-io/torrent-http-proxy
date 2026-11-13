@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,32 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/sirupsen/logrus"
-	logtest "github.com/sirupsen/logrus/hooks/test"
 )
-
-// serveGate is serveRaw that hands back every entry the request logged.
-func serveGate(t *testing.T, h *throttleHarness, r *http.Request) (*httptest.ResponseRecorder, []*logrus.Entry) {
-	t.Helper()
-	src, err := h.web.parser.Parse(r.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.URL.Path = src.Path
-	rec := httptest.NewRecorder()
-	logger, hook := logtest.NewNullLogger()
-	h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
-	return rec, hook.AllEntries()
-}
-
-// closingFields is the closing line's fields among entries, nil without one.
-func closingFields(entries []*logrus.Entry) logrus.Fields {
-	for _, e := range entries {
-		if closingMessages[e.Message] {
-			return e.Data
-		}
-	}
-	return nil
-}
 
 // gateRefusals are the gate's refusal lines among entries.
 func gateRefusals(entries []*logrus.Entry) []*logrus.Entry {
@@ -79,9 +53,7 @@ func countingUpstream(t *testing.T) (*throttleHarness, *atomic.Int32) {
 // as in TestUpstreamUidFromVerifiedToken.
 func TestGateWiring(t *testing.T) {
 	h, upstream := countingUpstream(t)
-	(*h.web.parser.configs)["vod"] = &ServiceConfig{Name: harnessCallerSvc, EndpointsProvider: Environment}
-	t.Setenv("NGINX_VOD_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
-	t.Setenv("NGINX_VOD_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))
+	withVodEdge(t, h)
 	rest := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
 	h.web.gate = newPrivateGate(rest.URL, true, time.Second, time.Minute)
 	bound, boundUid := jwt.MapClaims{"hash": harnessHash}, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}
@@ -95,7 +67,7 @@ func TestGateWiring(t *testing.T) {
 			r.URL.Path = path
 		}
 		before := upstream.Load()
-		rec, entries := serveGate(t, h, r)
+		rec, entries, _ := h.serveLogged(t, r)
 		return rec, entries, r.URL.Query().Get("token"), upstream.Load() - before
 	}
 	// refused checks a refusal: one log line, the gate's Warn, with the hash,
@@ -152,7 +124,8 @@ func TestGateWiring(t *testing.T) {
 // TestGateObservePassesEverything: in observe the gate never changes the
 // answer, whatever the outcome, an outage and a malformed hash included: the
 // request goes to the service, nothing is refused, and the closing line and
-// the counter carry the outcome.
+// the counter carry the outcome. The closing line names no public outcome:
+// that would be almost every request.
 func TestGateObservePassesEverything(t *testing.T) {
 	h, upstream := countingUpstream(t)
 	for _, c := range []struct {
@@ -163,6 +136,7 @@ func TestGateObservePassesEverything(t *testing.T) {
 		{"lookup error", `{}`, "", gateLookupError, "rest-api 500", 500, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}},
 		{"no uid", `{"private":true}`, "", gateNoUid, "", 200, jwt.MapClaims{"hash": harnessHash}},
 		{"malformed hash", `{"private":true}`, "/" + harnessHash[:39] + "/f", gateMalformedHash, "", 200, jwt.MapClaims{}},
+		{"public", `{"private":false}`, "", gatePublic, "", 200, jwt.MapClaims{}},
 	} {
 		rest := newFakeRestAPI(t, restAnswer(c.status, c.body))
 		h.web.gate = newPrivateGate(rest.URL, false, time.Second, time.Minute)
@@ -171,13 +145,17 @@ func TestGateObservePassesEverything(t *testing.T) {
 			r.URL.Path = c.path
 		}
 		before, up := gateCounts(t), upstream.Load()
-		rec, entries := serveGate(t, h, r)
+		rec, entries, _ := h.serveLogged(t, r)
 		if rec.Code != http.StatusOK || upstream.Load() != up+1 || len(gateRefusals(entries)) != 0 {
 			t.Errorf("%s: %d, upstream %d, %d refusals; want 200, 1, 0", c.name, rec.Code, upstream.Load()-up, len(gateRefusals(entries)))
 		}
+		logged := c.outcome
+		if logged == gatePublic {
+			logged = ""
+		}
 		f := closingFields(entries)
-		if f["private_gate"] != c.outcome || !fieldIs(f, "private_gate_cause", c.cause) {
-			t.Errorf("%s: closing line %v, want private_gate=%s, private_gate_cause %q", c.name, f, c.outcome, c.cause)
+		if f == nil || !fieldIs(f, "private_gate", logged) || !fieldIs(f, "private_gate_cause", c.cause) {
+			t.Errorf("%s: closing line %v, want private_gate %q, private_gate_cause %q", c.name, f, logged, c.cause)
 		}
 		checkCounted(t, before, c.outcome)
 	}

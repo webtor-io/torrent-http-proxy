@@ -11,6 +11,14 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
+// withVodEdge routes h's vod edge to the harness's caller service on the
+// harness's upstream.
+func withVodEdge(t *testing.T, h *throttleHarness) {
+	(*h.web.parser.configs)["vod"] = &ServiceConfig{Name: harnessCallerSvc, EndpointsProvider: Environment}
+	t.Setenv("NGINX_VOD_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
+	t.Setenv("NGINX_VOD_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))
+}
+
 // harnessUid is the uid claim of the tests' tokens.
 const harnessUid = "0123456789abcdef0123456789abcdef01234567"
 
@@ -25,9 +33,7 @@ func TestUpstreamUidFromVerifiedToken(t *testing.T) {
 	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		seen <- strings.Join(r.Header.Values("X-Uid"), ",")
 	})
-	(*h.web.parser.configs)["vod"] = &ServiceConfig{Name: harnessCallerSvc, EndpointsProvider: Environment}
-	t.Setenv("NGINX_VOD_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
-	t.Setenv("NGINX_VOD_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))
+	withVodEdge(t, h)
 	exp := time.Now().Add(time.Hour).Unix()
 	withUid, noUid := jwt.MapClaims{"uid": harnessUid, "exp": exp}, jwt.MapClaims{"exp": exp}
 	const segment = "~vod/hls/0a/s-1-v1-a1.ts"

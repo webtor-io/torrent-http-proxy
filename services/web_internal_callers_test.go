@@ -31,10 +31,10 @@ func (h *throttleHarness) subrequest(t *testing.T, claims jwt.MapClaims, peer st
 	return r
 }
 
-// serveRaw is serve for a request that may be refused before the closing
-// line: it returns the recorder, the closing line's fields (nil when there
-// was none) and the Source proxyHTTP routed.
-func (h *throttleHarness) serveRaw(t *testing.T, r *http.Request) (*httptest.ResponseRecorder, logrus.Fields, *Source) {
+// serveLogged is serve for a request that may be refused before the closing
+// line: it returns the recorder, every entry the request logged and the
+// Source proxyHTTP routed.
+func (h *throttleHarness) serveLogged(t *testing.T, r *http.Request) (*httptest.ResponseRecorder, []*logrus.Entry, *Source) {
 	t.Helper()
 	src, err := h.web.parser.Parse(r.URL)
 	if err != nil {
@@ -44,12 +44,25 @@ func (h *throttleHarness) serveRaw(t *testing.T, r *http.Request) (*httptest.Res
 	rec := httptest.NewRecorder()
 	logger, hook := logtest.NewNullLogger()
 	h.web.proxyHTTP(rec, r, src, logrus.NewEntry(logger))
-	for _, e := range hook.AllEntries() {
+	return rec, hook.AllEntries(), src
+}
+
+// serveRaw is serveLogged with the closing line's fields (nil when there was
+// none) in place of the entries.
+func (h *throttleHarness) serveRaw(t *testing.T, r *http.Request) (*httptest.ResponseRecorder, logrus.Fields, *Source) {
+	t.Helper()
+	rec, entries, src := h.serveLogged(t, r)
+	return rec, closingFields(entries), src
+}
+
+// closingFields is the closing line's fields among entries, nil without one.
+func closingFields(entries []*logrus.Entry) logrus.Fields {
+	for _, e := range entries {
 		if closingMessages[e.Message] {
-			return rec, e.Data, src
+			return e.Data
 		}
 	}
-	return rec, nil, src
+	return nil
 }
 
 func sessionTotal(l *SessionLimiter, sid string) int32 {
