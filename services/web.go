@@ -53,6 +53,9 @@ type Web struct {
 	// missing holds the sources a service of ours was just told by the
 	// seeder are not there, per session: see missingKey.
 	missing *lazymap.LazyMap[bool]
+	// gate passes a private torrent's requests only on a token bound to its
+	// hash with a uid. nil is off: REST_API_SERVICE_HOST is not set.
+	gate *PrivateGate
 	// gs drains in-flight requests on Close, up to the shutdown timeout
 	// (WEB_SHUTDOWN_TIMEOUT), instead of dropping them with the listener.
 	gs *cs.GracefulServer
@@ -364,6 +367,29 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
+	// The private torrent gate, before the limiter, the kept 404s and
+	// routing, so on every edge; /ext/ names no torrent. A refusal is one
+	// line without the token; what it lets through and is not public names
+	// its outcome in the closing line.
+	gateOutcome, gateCause := "", ""
+	if s.gate != nil && src.addressesTorrent() {
+		v := s.gate.check(claims, src)
+		gateOutcome, gateCause = v.outcome, v.cause
+		if v.status != 0 {
+			l := logger.WithFields(logrus.Fields{"infohash": src.InfoHash, "outcome": v.outcome})
+			if v.cause != "" {
+				l = l.WithField("cause", v.cause)
+			}
+			l.Warn("private gate refused")
+			if v.outcome == gateLookupError {
+				w.WriteHeader(v.status)
+			} else {
+				http.Error(w, "private_torrent: "+v.outcome, v.status)
+			}
+			return
+		}
+	}
+
 	// How to route: a request without X-Forwarded-For did not come through
 	// the ingress, and its caller does not sit on the node rest-api sent the
 	// viewer to (see preferLocal). Not who is calling: nginx-vod passes the
@@ -526,6 +552,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		if missingSource {
 			// thp answered from a kept 404; the edge never saw the request.
 			fields["missing_source"] = true
+		}
+		if gateOutcome != "" && gateOutcome != gatePublic {
+			fields["private_gate"] = gateOutcome
+			if gateCause != "" {
+				fields["private_gate_cause"] = gateCause
+			}
 		}
 		if tw != nil {
 			waited := tw.Waited()

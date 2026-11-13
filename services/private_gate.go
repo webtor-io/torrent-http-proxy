@@ -2,11 +2,15 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/webtor-io/lazymap"
 )
 
@@ -14,6 +18,32 @@ const (
 	privateLookupTimeout  = 3 * time.Second
 	privateLookupErrorTTL = 30 * time.Second
 )
+
+// The outcomes of PrivateGate.check, the values of the outcome label.
+const (
+	gatePublic        = "public"
+	gateAllowed       = "allowed"
+	gateUnbound       = "unbound"
+	gateNoUid         = "no_uid"
+	gateLookupError   = "lookup_error"
+	gateMalformedHash = "malformed_hash"
+)
+
+var (
+	promPrivateGate = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_private_gate_total",
+		Help: "HTTP Proxy requests for a torrent the private torrent gate checked, by outcome",
+	}, []string{"outcome"})
+	promPrivateEnforce = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "webtor_http_proxy_private_enforce",
+		Help: "HTTP Proxy private torrent gate refuses (1) or only observes (0)",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(promPrivateGate)
+	prometheus.MustRegister(promPrivateEnforce)
+}
 
 // PrivateGate lets a request for a private torrent through only with a token
 // bound to its hash. Whether a hash is private it asks rest-api, without a
@@ -50,15 +80,60 @@ type lookupError struct {
 
 func (e *lookupError) Error() string { return e.cause }
 
+// gateVerdict is check's decision: outcome, cause (a failed lookup's) and the
+// status to refuse with; 0 lets the request through.
+type gateVerdict struct {
+	outcome, cause string
+	status         int
+}
+
+// check decides a request for src's torrent on claims and counts the outcome.
+// In order: a hash that is not 40 hex is malformed_hash; a lookup that failed
+// is lookup_error with its status; a public torrent passes any token. A
+// private one needs a token bound to its hash (unbound) that carries a uid
+// (no_uid): role=vault and internal tokens included. Observe passes all.
+func (g *PrivateGate) check(claims jwt.MapClaims, src *Source) gateVerdict {
+	v := g.decide(claims, strings.ToLower(src.InfoHash))
+	promPrivateGate.WithLabelValues(v.outcome).Inc()
+	if !g.enforce {
+		v.status = 0
+	}
+	return v
+}
+
+func (g *PrivateGate) decide(claims jwt.MapClaims, h string) gateVerdict {
+	if !isInfoHash(h) {
+		return gateVerdict{gateMalformedHash, "", http.StatusForbidden}
+	}
+	private, err := g.isPrivate(h)
+	if err != nil {
+		// Not only rest-api's answers: lazymap returns a panic in the
+		// lookup as a PanicError. Refused as an outage, never public.
+		le := &lookupError{http.StatusServiceUnavailable, "lookup failed"}
+		errors.As(err, &le)
+		return gateVerdict{gateLookupError, le.cause, le.status}
+	}
+	if !private {
+		return gateVerdict{outcome: gatePublic}
+	}
+	if bound, _ := claims["hash"].(string); bound != h {
+		return gateVerdict{gateUnbound, "", http.StatusForbidden}
+	}
+	if uid, _ := claims["uid"].(string); uid == "" {
+		return gateVerdict{gateNoUid, "", http.StatusForbidden}
+	}
+	return gateVerdict{outcome: gateAllowed}
+}
+
 func (g *PrivateGate) isPrivate(h string) (bool, error) {
 	return g.privacy.Get(h, func() (bool, error) { return g.lookup(h) })
 }
 
 // lookup asks rest-api once. 200 with the field gives its value; a 403 with
 // private_torrent (refused without a bound token) or private_unavailable (the
-// store has no key or S3 for private records) is private. Anything else is an error, never
-// "public": a 403 without those codes is a ban or the stoplist, a 200 without
-// the field is an old rest-api.
+// store has no key or S3 for private records) is private. Anything else is an
+// error, never "public": a 403 without those codes is a ban or the stoplist, a
+// 200 without the field is an old rest-api.
 func (g *PrivateGate) lookup(h string) (bool, error) {
 	res, err := g.client.Get(g.url + "/resource/" + h)
 	if err != nil {

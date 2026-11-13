@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v4"
 )
 
 // fakeRestAPI is rest-api's GET /resource/<h> as the gate sees it. URL has no
@@ -198,5 +200,129 @@ func TestPrivacyLookupOncePerHash(t *testing.T) {
 	}
 	if got := f.hits.Load(); got != 1 {
 		t.Errorf("rest-api asked %d times, want 1", got)
+	}
+}
+
+// gateCounts reads webtor_http_proxy_private_gate_total for every outcome.
+func gateCounts(t *testing.T) map[string]float64 {
+	t.Helper()
+	m := map[string]float64{}
+	for _, o := range []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash} {
+		m[o] = counterValue(t, promPrivateGate.WithLabelValues(o))
+	}
+	return m
+}
+
+// checkCounted: since before, the count of outcome rose by one and no other
+// moved: a request counts once, under its own outcome.
+func checkCounted(t *testing.T, before map[string]float64, outcome string) {
+	t.Helper()
+	for o, n := range gateCounts(t) {
+		want := before[o]
+		if o == outcome {
+			want++
+		}
+		if n != want {
+			t.Errorf("private_gate_total{outcome=%q} %v, want %v", o, n, want)
+		}
+	}
+}
+
+// TestGateMatrix: rest-api's three kinds of answer × tokens on an enforce
+// gate. A private torrent needs a token bound to its hash that carries a uid,
+// with no exception for role=vault or internal; a public one passes any
+// token; a failed lookup refuses every token with the lookup's status. The
+// gate is the same on every edge (edges: TestGateWiring); every answer of
+// rest-api: TestPrivacyLookupClassification; observe:
+// TestGateObservePassesEverything.
+func TestGateMatrix(t *testing.T) {
+	const h, uid = harnessHash, harnessUid
+	other := strings.Repeat("ab", 20)
+	tokens := map[string]jwt.MapClaims{
+		"none":        {},
+		"bound":       {"hash": h},
+		"uid only":    {"uid": uid},
+		"bound+uid":   {"hash": h, "uid": uid},
+		"other+uid":   {"hash": other, "uid": uid},
+		"vault bound": {"hash": h, "role": "vault"},
+		"internal":    {"internal": true},
+		"grace":       {"kind": "grace", "hash": h, "uid": uid},
+	}
+	privateOutcome := map[string]string{"none": "unbound", "bound": "no_uid", "uid only": "unbound",
+		"bound+uid": "allowed", "other+uid": "unbound", "vault bound": "no_uid", "internal": "unbound", "grace": "allowed"}
+	responses := []struct {
+		name, body string
+		status     int
+		private    bool
+		errStatus  int
+		cause      string
+	}{
+		{"public", `{"private":false}`, 200, false, 0, ""},
+		{"private", `{"private":true}`, 200, true, 0, ""},
+		{"down", `{}`, 500, false, 503, "rest-api 500"},
+	}
+	for _, resp := range responses {
+		f := newFakeRestAPI(t, restAnswer(resp.status, resp.body))
+		for name, claims := range tokens {
+			want, wantStatus := privateOutcome[name], 0
+			switch {
+			case resp.errStatus != 0:
+				want = gateLookupError
+			case !resp.private:
+				want = gatePublic
+			}
+			switch want {
+			case gatePublic, gateAllowed:
+			case gateLookupError:
+				wantStatus = resp.errStatus
+			default:
+				wantStatus = http.StatusForbidden
+			}
+			before := gateCounts(t)
+			v := newPrivateGate(f.URL, true, time.Second, time.Minute).check(claims, &Source{Type: "default", InfoHash: h})
+			if v != (gateVerdict{want, resp.cause, wantStatus}) {
+				t.Errorf("%s, %s: %+v, want {%s %q %d}", resp.name, name, v, want, resp.cause, wantStatus)
+			}
+			checkCounted(t, before, want)
+		}
+	}
+}
+
+// TestGateHashSpelling: an upper-case hash is asked of rest-api in lower case
+// and shares its cache entry with the lower-case spelling; a short hex, which
+// the URL parser lets through, is malformed_hash without asking rest-api.
+func TestGateHashSpelling(t *testing.T) {
+	f := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
+	g := newPrivateGate(f.URL, true, time.Second, time.Minute)
+	claims := jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}
+	if v := g.check(claims, &Source{InfoHash: strings.ToUpper(harnessHash)}); v.outcome != gateAllowed {
+		t.Errorf("upper-case hash: %+v, want allowed", v)
+	}
+	if uri, _ := f.last(); uri != "/resource/"+harnessHash {
+		t.Errorf("rest-api asked for %q, want /resource/%s", uri, harnessHash)
+	}
+	if v := g.check(claims, &Source{InfoHash: harnessHash}); v.outcome != gateAllowed {
+		t.Errorf("lower-case hash: %+v, want allowed", v)
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Errorf("rest-api asked %d times, want 1: both spellings are one entry", n)
+	}
+	if v := g.check(claims, &Source{InfoHash: harnessHash[:39]}); v.outcome != gateMalformedHash || v.status != http.StatusForbidden {
+		t.Errorf("39 hex: %+v, want malformed_hash 403", v)
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Errorf("rest-api asked %d times, want 1: a malformed hash is not looked up", n)
+	}
+}
+
+// TestGateLookupPanic: an error that is no answer of rest-api's (lazymap's
+// PanicError for a panic in the lookup) refuses as an outage does and never
+// reads as public.
+func TestGateLookupPanic(t *testing.T) {
+	g := newPrivateGate("http://rest-api.invalid", true, time.Second, time.Minute)
+	g.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { panic("lookup bug") })
+	v := g.check(jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}, &Source{InfoHash: harnessHash})
+	if v != (gateVerdict{gateLookupError, "lookup failed", http.StatusServiceUnavailable}) {
+		t.Errorf("%+v, want {lookup_error \"lookup failed\" 503}", v)
 	}
 }
