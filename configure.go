@@ -31,6 +31,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterSessionLimiterFlags(app.Flags)
 	app.Flags = s.RegisterFileSizeCacheFlags(app.Flags)
 	app.Flags = s.RegisterInternalCallersFlags(app.Flags)
+	app.Flags = s.RegisterPrivateGateFlags(app.Flags)
 
 	app.Action = run
 }
@@ -41,6 +42,13 @@ func run(c *cli.Context) error {
 	// Setting Config
 	config, err := s.LoadServicesConfigFromYAML(c)
 
+	if err != nil {
+		return err
+	}
+
+	// Setting PrivateGate: first, so an API secret without rest-api refuses
+	// to start before anything else does
+	gate, err := s.NewPrivateGate(c)
 	if err != nil {
 		return err
 	}
@@ -141,7 +149,7 @@ func run(c *cli.Context) error {
 
 	// Setting WebService
 	web := s.NewWeb(c, urlParser, resolver, httpProxy, claims,
-		bucket, clickHouse, accessHistory, sessionLimiter, internalCallers)
+		bucket, clickHouse, accessHistory, sessionLimiter, internalCallers, gate)
 	// Bound before any servable starts: the probe answers Ready as soon as
 	// it listens, and a pod must not read Ready while its web port is
 	// unbound (maxSurge 1 retires the old pod on it).

@@ -147,10 +147,19 @@ func (g *retryRig) serve(ip string, h http.HandlerFunc) {
 // get streams the file from podA through retryTransport.
 func (g *retryRig) get(t *testing.T, maxRetries int) ([]byte, error) {
 	t.Helper()
+	resp := g.do(t, maxRetries, "")
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
+}
+
+// do asks podA for the file through retryTransport, with X-Uid uid.
+func (g *retryRig) do(t *testing.T, maxRetries int, uid string) *http.Response {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, "http://"+podA+":8080/file", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("X-Uid", uid)
 	req = WithRetryContext(req, &RetryContext{
 		Src:               &Source{Type: "default", InfoHash: retryHash},
 		SvcLoc:            g.sl,
@@ -163,8 +172,79 @@ func (g *retryRig) get(t *testing.T, maxRetries int) ([]byte, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(resp.Body)
+	return resp
+}
+
+// seederRefuses answers as the seeder refuses a swarm request: 503, reason
+// as X-Seeder-Reason, Retry-After 5.
+func seederRefuses(p *retryPod, reason string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		p.hits.Add(1)
+		w.Header().Set("X-Seeder-Reason", reason)
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+}
+
+// TestRetryBusyGoesToAnotherPod: a seeder pod at its cap of account clients
+// answers 503 busy, and the client's retry would reach it again (the pick is
+// by infohash). The request goes once to the torrent's runner-up, with the
+// token's uid. A second busy, store_unavailable, and a busy with no other pod
+// (none left in the endpoints, or an Environment location) reach the client
+// as they are.
+func TestRetryBusyGoesToAnotherPod(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		listed     []string
+		env        bool
+		reasonA    string
+		bBusy      bool
+		wantStatus int
+		wantReason string
+		wantB      int32
+	}{
+		{"runner-up has room", []string{podA, podB}, false, "busy", false, 200, "", 1},
+		{"runner-up busy too", []string{podA, podB}, false, "busy", true, 503, "busy", 1},
+		{"no other pod", []string{podA}, false, "busy", false, 503, "busy", 0},
+		{"environment location", nil, true, "busy", false, 503, "busy", 0},
+		{"store unavailable", []string{podA, podB}, false, "store_unavailable", false, 503, "store_unavailable", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newRetryRig(t, c.listed)
+			if c.env {
+				g.cfg["default"].EndpointsProvider = Environment
+				t.Setenv("TORRENT_WEB_SEEDER_SERVICE_HOST", podA)
+				t.Setenv("TORRENT_WEB_SEEDER_SERVICE_PORT", "8080")
+			}
+			g.serve(podA, seederRefuses(g.pods[podA], c.reasonA))
+			b := g.pods[podB]
+			var uidB atomic.Value
+			g.serve(podB, func(w http.ResponseWriter, r *http.Request) {
+				uidB.Store(r.Header.Get("X-Uid"))
+				if c.bBusy {
+					seederRefuses(b, "busy")(w, r)
+					return
+				}
+				b.hits.Add(1)
+				_, _ = w.Write(retryPayload())
+			})
+			resp := g.do(t, 3, harnessUid)
+			body, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != c.wantStatus || resp.Header.Get("X-Seeder-Reason") != c.wantReason {
+				t.Fatalf("client got %d %q, want %d %q", resp.StatusCode, resp.Header.Get("X-Seeder-Reason"), c.wantStatus, c.wantReason)
+			}
+			if c.wantStatus == http.StatusOK {
+				wantWhole(t, body, err)
+			}
+			if a, hb := g.hits(); a != 1 || hb != c.wantB {
+				t.Fatalf("requests: podA %d, podB %d; want 1 and %d", a, hb, c.wantB)
+			}
+			if got, _ := uidB.Load().(string); c.wantB > 0 && got != harnessUid {
+				t.Errorf("podB got X-Uid %q, want the token's", got)
+			}
+		})
+	}
 }
 
 func (g *retryRig) hits() (int32, int32) { return g.pods[podA].hits.Load(), g.pods[podB].hits.Load() }

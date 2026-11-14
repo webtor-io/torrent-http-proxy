@@ -53,6 +53,9 @@ type Web struct {
 	// missing holds the sources a service of ours was just told by the
 	// seeder are not there, per session: see missingKey.
 	missing *lazymap.LazyMap[bool]
+	// gate passes a private torrent's requests only on a token bound to its
+	// hash with a uid. nil is off: REST_API_SERVICE_HOST is not set.
+	gate *PrivateGate
 	// gs drains in-flight requests on Close, up to the shutdown timeout
 	// (WEB_SHUTDOWN_TIMEOUT), instead of dropping them with the listener.
 	gs *cs.GracefulServer
@@ -149,7 +152,7 @@ func init() {
 	prometheus.MustRegister(promSessionLimiterRejected)
 }
 
-func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers) *Web {
+func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claims *Claims, bp *HybridBucketPool, ch *ClickHouse, ah *AccessHistory, sl *SessionLimiter, callers *InternalCallers, gate *PrivateGate) *Web {
 	return &Web{
 		host:             c.String(webHostFlag),
 		port:             c.Int(webPortFlag),
@@ -166,6 +169,7 @@ func NewWeb(c *cli.Context, parser *URLParser, r *Resolver, pr *HTTPProxy, claim
 		enforceSessionIP: c.Bool(enforceSessionIPFlag),
 		stats:            NewSessionStats(),
 		callers:          callers,
+		gate:             gate,
 		missing:          newMissingSources(missingSourceTTL),
 		closing:          make(chan struct{}),
 		gs:               cs.NewGracefulServer(cs.ShutdownTimeout(c)),
@@ -364,6 +368,29 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		return
 	}
 
+	// The private torrent gate, before the limiter, the kept 404s and
+	// routing, so on every edge; /ext/ names no torrent. A refusal is one
+	// line without the token; what it lets through and is not public names
+	// its outcome in the closing line.
+	gateOutcome, gateCause := "", ""
+	if s.gate != nil && src.addressesTorrent() {
+		v := s.gate.check(claims, src)
+		gateOutcome, gateCause = v.outcome, v.cause
+		if v.status != 0 {
+			l := logger.WithFields(logrus.Fields{"infohash": src.InfoHash, "outcome": v.outcome})
+			if v.cause != "" {
+				l = l.WithField("cause", v.cause)
+			}
+			l.Warn("private gate refused")
+			if v.outcome == gateLookupError {
+				w.WriteHeader(v.status)
+			} else {
+				http.Error(w, "private_torrent: "+v.outcome, v.status)
+			}
+			return
+		}
+	}
+
 	// How to route: a request without X-Forwarded-For did not come through
 	// the ingress, and its caller does not sit on the node rest-api sent the
 	// viewer to (see preferLocal). Not who is calling: nginx-vod passes the
@@ -527,6 +554,12 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			// thp answered from a kept 404; the edge never saw the request.
 			fields["missing_source"] = true
 		}
+		if gateOutcome != "" && gateOutcome != gatePublic {
+			fields["private_gate"] = gateOutcome
+			if gateCause != "" {
+				fields["private_gate_cause"] = gateCause
+			}
+		}
 		if tw != nil {
 			waited := tw.Waited()
 			fields["throttled"] = waited.Seconds()
@@ -596,6 +629,10 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// client's own X-Role never reaches a service: the seeder takes role
 	// vault as Vault checking its copy and reads the torrent, not that copy.
 	tokenRole, _ := claims["role"].(string)
+	// The same for the verified token's uid, on every edge: the seeder picks
+	// the account a private torrent downloads under by it. Named apart from
+	// the unsigned X-User-Id that rest-api copies from its callers.
+	uid, _ := claims["uid"].(string)
 
 	headers := map[string]string{
 		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + escapePathSegments(src.Path) + "?" + src.Query,
@@ -608,6 +645,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Api-Key":     apiKey,
 		"X-Session-ID":  sessionID,
 		"X-Role":        tokenRole,
+		"X-Uid":         uid,
 	}
 
 	// Set unconditionally, like every other X-* header above: the mod

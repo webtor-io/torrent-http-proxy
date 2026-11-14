@@ -53,7 +53,8 @@ func WithRetryContext(r *http.Request, rc *RetryContext) *http.Request {
 // retryTransport wraps a RoundTripper. On successful 200/206 responses it replaces
 // resp.Body with a retryingReadCloser that transparently reconnects if the
 // upstream connection breaks mid-transfer: first to the same pod, then to
-// another pod on the same node.
+// another pod on the same node. A seeder's 503 busy goes once to another pod
+// (retryBusy).
 type retryTransport struct {
 	http.RoundTripper
 }
@@ -67,6 +68,12 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rc, ok := req.Context().Value(retryContextKey{}).(*RetryContext)
 	if !ok || rc == nil || resp.Body == nil || rc.MaxRetries <= 0 {
 		return resp, nil
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("X-Seeder-Reason") == "busy" {
+		if r, re := t.retryBusy(req, rc); re != nil {
+			_ = resp.Body.Close()
+			req, resp = r, re
+		}
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return resp, nil
@@ -106,22 +113,10 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	reconnectFn := func(offset int64) (io.ReadCloser, bool, error) {
 		newStart := origStart + offset
-
-		// Extract the failed IP (strip port).
-		failedIP, _, _ := net.SplitHostPort(failedHost)
-		if failedIP == "" {
-			failedIP = failedHost
-		}
-
-		// Resolve service config for this edge type.
-		edgeType := rc.Src.GetEdgeType()
-		role, _ := rc.Claims["role"].(string)
-		cfg := rc.Cfg.GetMod(fmt.Sprintf("%s-%s", edgeType, role))
-		if cfg == nil {
-			cfg = rc.Cfg.GetMod(edgeType)
-		}
-		if cfg == nil {
-			return nil, false, errors.New("no service config found")
+		failedIP := hostIP(failedHost)
+		cfg, err := rc.serviceConfig()
+		if err != nil {
+			return nil, false, err
 		}
 
 		samePod := !samePodTried && rc.SvcLoc.Serves(cfg, failedIP)
@@ -145,7 +140,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, samePod, err
 		}
 		// Copy relevant headers from original request.
-		for _, h := range []string{"X-Source-Url", "X-Proxy-Url", "X-Info-Hash", "X-Path", "X-Origin-Path", "X-Full-Path", "X-Token", "X-Api-Key", "X-Session-ID", "X-Download-Rate", "X-Mod-Type", "X-Mod-Extra", "X-Role"} {
+		for _, h := range []string{"X-Source-Url", "X-Proxy-Url", "X-Info-Hash", "X-Path", "X-Origin-Path", "X-Full-Path", "X-Token", "X-Api-Key", "X-Session-ID", "X-Download-Rate", "X-Mod-Type", "X-Mod-Extra", "X-Role", "X-Uid"} {
 			if v := req.Header.Get(h); v != "" {
 				newReq.Header.Set(h, v)
 			}
@@ -200,6 +195,60 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}),
 	}
 	return resp, nil
+}
+
+// retryBusy sends req once to another pod of its edge. A seeder pod at its
+// cap of account clients answers a new uid 503 with X-Seeder-Reason busy; the
+// pod is picked by infohash, so the client's own retry would come back to it,
+// while the torrent's runner-up may have room. Nil when there is no other
+// pod (an Environment location is one host) or the attempt got no answer:
+// the client then gets the 503 and its Retry-After. Not for the seeder's
+// store_unavailable: every pod asks the same store.
+func (t *retryTransport) retryBusy(req *http.Request, rc *RetryContext) (*http.Request, *http.Response) {
+	cfg, err := rc.serviceConfig()
+	if err != nil || cfg.EndpointsProvider != Kubernetes {
+		return nil, nil
+	}
+	loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, []string{hostIP(req.URL.Host)}, rc.Claims)
+	if err != nil {
+		return nil, nil
+	}
+	r := req.Clone(req.Context())
+	r.URL.Host = fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
+	resp, err := t.RoundTripper.RoundTrip(r)
+	logger := logrus.WithFields(logrus.Fields{
+		"component": "retry",
+		"infohash":  rc.Src.InfoHash,
+		"path":      redactURL(rc.Src.Path),
+	})
+	if err != nil {
+		logger.WithError(err).Warn("seeder busy, another pod failed")
+		return nil, nil
+	}
+	logger.WithField("status", resp.StatusCode).Info("seeder busy, retried on another pod")
+	return r, resp
+}
+
+// serviceConfig is the config of rc's edge, the token's role's own first.
+func (rc *RetryContext) serviceConfig() (*ServiceConfig, error) {
+	edgeType := rc.Src.GetEdgeType()
+	role, _ := rc.Claims["role"].(string)
+	cfg := rc.Cfg.GetMod(fmt.Sprintf("%s-%s", edgeType, role))
+	if cfg == nil {
+		cfg = rc.Cfg.GetMod(edgeType)
+	}
+	if cfg == nil {
+		return nil, errors.New("no service config found")
+	}
+	return cfg, nil
+}
+
+// hostIP is host without its port.
+func hostIP(host string) string {
+	if ip, _, _ := net.SplitHostPort(host); ip != "" {
+		return ip
+	}
+	return host
 }
 
 // errUpstreamEOF signals that a reconnect attempt discovered the stream was

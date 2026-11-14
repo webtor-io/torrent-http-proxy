@@ -27,12 +27,10 @@ func TestMissingSourceAnswered404(t *testing.T) {
 	})
 	// The vod edge is the harness's caller service, on the same upstream;
 	// so is external-proxy, for /ext/<url> sources.
-	(*h.web.parser.configs)["vod"] = &ServiceConfig{Name: harnessCallerSvc, EndpointsProvider: Environment}
+	withVodEdge(t, h)
 	(*h.web.parser.configs)["ext"] = &ServiceConfig{Name: "external-proxy", EndpointsProvider: Environment}
-	for _, svc := range []string{"NGINX_VOD", "EXTERNAL_PROXY"} {
-		t.Setenv(svc+"_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
-		t.Setenv(svc+"_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))
-	}
+	t.Setenv("EXTERNAL_PROXY_SERVICE_HOST", os.Getenv("THP_THROTTLE_TEST_SERVICE_HOST"))
+	t.Setenv("EXTERNAL_PROXY_SERVICE_PORT", os.Getenv("THP_THROTTLE_TEST_SERVICE_PORT"))
 
 	const segment = "~vod/hls/0a/s-1-v1-a1.ts"
 	req := func(session string, external bool, suffix, query string) *http.Request {
