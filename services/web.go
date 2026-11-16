@@ -347,7 +347,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		} else {
 			logger.WithError(err).Warn("failed to get claims")
 		}
-		w.WriteHeader(http.StatusForbidden)
+		writeRefusal(w, r, http.StatusForbidden, pageLinkInvalid)
 		return
 	}
 
@@ -364,7 +364,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			"infohash":   src.InfoHash,
 			"bound_hash": boundHash,
 		}).Warn("token hash mismatch")
-		w.WriteHeader(http.StatusForbidden)
+		writeRefusal(w, r, http.StatusForbidden, pageLinkInvalid)
 		return
 	}
 
@@ -382,8 +382,10 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 				l = l.WithField("cause", v.cause)
 			}
 			l.Warn("private gate refused")
-			if v.outcome == gateLookupError {
-				w.WriteHeader(v.status)
+			// A navigation gets a page; anything else the reason as text, or
+			// a failed lookup's bare status.
+			if v.outcome == gateLookupError || isNavigation(r) {
+				writeRefusal(w, r, v.status, v.page())
 			} else {
 				http.Error(w, "private_torrent: "+v.outcome, v.status)
 			}
@@ -444,7 +446,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 					"infohash":   src.InfoHash,
 					"path":       redactURL(src.Path),
 				}).Warn("session IP mismatch")
-				w.WriteHeader(http.StatusTooManyRequests)
+				writeRefusal(w, r, http.StatusTooManyRequests, pageOtherNetwork)
 				return
 			}
 		}
@@ -620,7 +622,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// and the request goes on as it did.
 	if st, _ := s.missing.Status(missingKey(src.GetEdgeName(), sessionID, src)); st == lazymap.Done {
 		missingSource = true
-		w.WriteHeader(http.StatusNotFound)
+		writeRefusal(w, r, http.StatusNotFound, pageNotFound)
 		return
 	}
 
@@ -666,7 +668,7 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		b, err := s.bucket.Get(claims)
 		if err != nil {
 			logger.WithError(err).Errorf("failed to get bucket")
-			w.WriteHeader(http.StatusInternalServerError)
+			writeRefusal(w, r, http.StatusInternalServerError, pageServerError)
 			return
 		}
 		if b != nil {
@@ -690,11 +692,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			l = l.WithField("stack", string(pe.Stack))
 		}
 		l.WithError(err).Errorf("failed to get proxy")
-		w.WriteHeader(http.StatusInternalServerError)
+		writeRefusal(w, r, http.StatusInternalServerError, pageServerError)
 		return
 	}
 	if pr == nil {
-		w.WriteHeader(http.StatusNotImplemented)
+		writeRefusal(w, r, http.StatusNotImplemented, pageLinkBroken)
 		return
 	}
 	if s.pr.maxRetries > 0 {
@@ -879,7 +881,7 @@ func (s *Web) newMux() *http.ServeMux {
 			// The URL is the client's input: a bad hash, an empty path or an
 			// invalid mod argument is their error, not ours.
 			logger.WithError(err).Warn("failed to parse url")
-			w.WriteHeader(http.StatusBadRequest)
+			writeRefusal(w, r, http.StatusBadRequest, pageLinkBroken)
 			return
 		}
 
@@ -918,16 +920,16 @@ func (s *Web) newMux() *http.ServeMux {
 const limiterRetryAfter = "5"
 
 // refuseLimited answers a request the session limiter refused: 429 with
-// Retry-After, held for the limiter's rejectDelay first. Download managers
-// that open more connections to one file than the per-path cap admits
-// retry the surplus ones at once and without end: on 2026-09-27 one session
-// made 24 requests a second, half of all refusals, and a handful of such
-// sessions made the rest. Whether they honour Retry-After is not known. A
-// client does wait for the answer before it retries on that connection, so
-// the hold caps such a loop at one try per delay per connection whatever
-// the client makes of the header. A held refusal costs a goroutine and a
-// socket, never a slot; it ends early when the client leaves or thp shuts
-// down.
+// Retry-After (and, to a navigation, a page naming the cap), held for the
+// limiter's rejectDelay first. Download managers that open more connections
+// to one file than the per-path cap admits retry the surplus ones at once
+// and without end: on 2026-09-27 one session made 24 requests a second, half
+// of all refusals, and a handful of such sessions made the rest. Whether they
+// honour Retry-After is not known. A client does wait for the answer before
+// it retries on that connection, so the hold caps such a loop at one try per
+// delay per connection whatever the client makes of the header. A held
+// refusal costs a goroutine and a socket, never a slot; it ends early when
+// the client leaves or thp shuts down.
 func (s *Web) refuseLimited(w http.ResponseWriter, r *http.Request, reason string) {
 	promSessionLimiterRejected.WithLabelValues(reason).Inc()
 	if d := s.sl.rejectDelay; d > 0 {
@@ -940,7 +942,7 @@ func (s *Web) refuseLimited(w http.ResponseWriter, r *http.Request, reason strin
 		t.Stop()
 	}
 	w.Header().Set("Retry-After", limiterRetryAfter)
-	w.WriteHeader(http.StatusTooManyRequests)
+	writeRefusal(w, r, http.StatusTooManyRequests, s.sl.refusalPage(reason))
 }
 
 func (s *Web) Close() {

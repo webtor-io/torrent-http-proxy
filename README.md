@@ -147,6 +147,21 @@ classification) and, on internal requests, `caller` (the service). Routing is
 independent of it: a request without X-Forwarded-For is not steered to the
 proxy's own node, as before.
 
+## Refusals
+
+The proxy's own refusals (an expired or invalid token, a private torrent, the
+session limiter's 429, a file that is not there, a broken link, its own
+failures) are a bare status with no body, so download managers, apps and
+players get nothing they could write into a file; the limiter's 429 carries
+`Retry-After: 5`. The exception is the private torrent gate, which answers
+`text/plain` `private_torrent: <outcome>` (a failed lookup: a bare 403, 404
+or 503). Only a browser's top-level navigation (`Sec-Fetch-Dest:
+document`) gets the same status with a short English page saying what
+happened and what to do, for example "Too many files from this torrent at
+once: up to 5 large files from one torrent can download at the same time".
+The page holds nothing from the request and no brand wording. Responses of
+the services behind the proxy pass through unchanged.
+
 ## Session stats
 
 Contract for web-ui:
