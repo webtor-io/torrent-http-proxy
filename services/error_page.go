@@ -39,8 +39,9 @@ const errorPageHTML = `<!doctype html>
 
 // isNavigation: the request is a browser's top-level navigation, the one
 // case where a body is shown to a person. Browsers send it on navigation
-// only (Safari since 16.4); download managers, apps, players and our own
-// services do not. Accept is no test: JDownloader and yt-dlp send text/html.
+// only (Safari since 16.4); download managers, apps, players, the archiver
+// and FFmpeg do not; nginx-vod passes the viewer's headers on with its
+// reads. Accept is no test: JDownloader and yt-dlp send text/html.
 func isNavigation(r *http.Request) bool {
 	return r.Header.Get("Sec-Fetch-Dest") == "document"
 }

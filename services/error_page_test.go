@@ -310,9 +310,8 @@ func TestRefusalPageHEAD(t *testing.T) {
 	}
 }
 
-// errorHandler answers 502 both ways and a body only to a navigation: our
-// own services (nginx-vod, the archiver) send no Sec-Fetch-Dest. A client
-// that left is recorded as before and nothing panics.
+// errorHandler answers 502 both ways and a body only to a navigation. A
+// client that left is recorded as before and nothing panics.
 func TestErrorHandlerPageOnlyForNavigation(t *testing.T) {
 	for _, nav := range []bool{false, true} {
 		r := httptest.NewRequest(http.MethodGet, "/"+harnessHash+"/Sintel/Sintel.mkv", nil)
