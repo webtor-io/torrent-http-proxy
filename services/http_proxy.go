@@ -230,15 +230,16 @@ func clientGone(client context.Context, err error) bool {
 // errorHandler replaces ReverseProxy's default, which answers 502 whatever
 // the cause, a client that left included, and logs "http: proxy error"
 // through the standard logger with nothing to tell which edge it was.
-// It writes the same 502 whatever the cause, so nothing on the wire changes;
-// it only notes the error and whether it was the client leaving, which
-// proxyHTTP records as 499 and logs in its closing line.
+// It writes the same 502 whatever the cause (a page only to a browser's
+// navigation: our own services send no Sec-Fetch-Dest), and notes the error
+// and whether it was the client leaving, which proxyHTTP records as 499 and
+// logs in its closing line.
 func errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	if o, ok := r.Context().Value(proxyOutcomeKey{}).(*proxyOutcome); ok {
 		o.err = err
 		o.clientGone = clientGone(o.client, err)
 	}
-	w.WriteHeader(http.StatusBadGateway)
+	writeRefusal(w, r, http.StatusBadGateway, pageServerError)
 }
 
 func (s *HTTPProxy) modifyResponse(r *http.Response) error {
