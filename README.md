@@ -67,7 +67,11 @@ that node, over pod IPs. A node or pod that leaves moves only the hashes
 it owned; one that joins takes an even share from each. A stream cut
 mid-transfer is resumed on the same pod first, while it is a ready
 endpoint; a retry that then excludes the failed pod lands on the same
-runner-up from every proxy instance. `distribution: Hash` is the pod step
+runner-up from every proxy instance. A GET or HEAD without a body that a
+pod did not answer at all (refused, or reset or closed before the first
+byte of a response, as a pod being replaced does at the end of its drain)
+goes once more, after `--retry-delay`, to the pod the hash resolves to
+without it. `distribution: Hash` is the pod step
 alone. An endpoint address with no node (not backed by a pod) takes no part
 in the node step; when no address names a node, NodeHash is the pod step
 alone over all of them.

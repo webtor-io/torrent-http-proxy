@@ -5,9 +5,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,19 +56,34 @@ func WithRetryContext(r *http.Request, rc *RetryContext) *http.Request {
 // resp.Body with a retryingReadCloser that transparently reconnects if the
 // upstream connection breaks mid-transfer: first to the same pod, then to
 // another pod on the same node. A seeder's 503 busy goes once to another pod
-// (retryBusy).
+// (retryBusy), and so does a GET or HEAD that got no answer at all
+// (retryUnanswered).
 type retryTransport struct {
 	http.RoundTripper
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rc, _ := req.Context().Value(retryContextKey{}).(*RetryContext)
+	// A GET or HEAD without a body asks the same of any pod, any number of
+	// times. answered: a byte of a response came back, a 1xx included,
+	// which ReverseProxy relays to the client as it arrives.
+	replayable := rc != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) &&
+		(req.Body == nil || req.Body == http.NoBody)
+	var answered atomic.Bool
+	if replayable {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			GotFirstResponseByte: func() { answered.Store(true) },
+		}))
+	}
 	resp, err := t.RoundTripper.RoundTrip(req)
+	if err != nil && replayable && !answered.Load() && (isRetryableError(err) || errors.Is(err, io.EOF)) {
+		req, resp, err = t.retryUnanswered(req, rc, err)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	rc, ok := req.Context().Value(retryContextKey{}).(*RetryContext)
-	if !ok || rc == nil || resp.Body == nil || rc.MaxRetries <= 0 {
+	if rc == nil || resp.Body == nil || rc.MaxRetries <= 0 {
 		return resp, nil
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("X-Seeder-Reason") == "busy" {
@@ -195,6 +212,53 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}),
 	}
 	return resp, nil
+}
+
+// retryUnanswered sends req once more when the upstream sent nothing back:
+// refused, or reset or closed before the first byte of a response. A seeder
+// pod being replaced closes, at the end of its drain, the connections still
+// waiting for headers, and refuses those that come after; on 2026-11-14 that
+// reached clients as 152 502s in three rollout windows, 1.8-3.8% of the
+// seeder's answers in each. The attempt goes to the pod the edge resolves to
+// now, the failed one left out: the replacement or the torrent's runner-up
+// (an Environment location: the same host, which the pause gives a moment
+// to come back). One attempt, after RetryDelay, the pause body retries take
+// (1 s by default): an upstream that is down for good costs the client one
+// pause and one dial more, not a series, and a longer pause would not pick
+// a better pod, the failed one being left out of the pick whenever it is
+// made. Next to the 20 s drain the reset requests had already waited out,
+// the pause is small. It returns the attempt's request and response; err
+// when no attempt was made, the attempt's error when it failed too.
+func (t *retryTransport) retryUnanswered(req *http.Request, rc *RetryContext, err error) (*http.Request, *http.Response, error) {
+	logger := logrus.WithFields(logrus.Fields{
+		"component": "retry",
+		"infohash":  rc.Src.InfoHash,
+		"path":      redactURL(rc.Src.Path),
+		"req_id":    req.Header.Get("X-Request-ID"),
+	}).WithError(err)
+	select {
+	case <-time.After(rc.RetryDelay):
+	case <-req.Context().Done():
+		return nil, nil, req.Context().Err()
+	}
+	cfg, cerr := rc.serviceConfig()
+	if cerr != nil {
+		return nil, nil, err
+	}
+	loc, lerr := rc.SvcLoc.GetFallback(cfg, rc.Src, []string{hostIP(req.URL.Host)}, rc.Claims)
+	if lerr != nil {
+		logger.WithField("fallback_error", lerr.Error()).Warn("upstream did not answer, no pod to retry on")
+		return nil, nil, err
+	}
+	r := req.Clone(req.Context())
+	r.URL.Host = fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
+	resp, rerr := t.RoundTripper.RoundTrip(r)
+	if rerr != nil {
+		logger.WithField("retry_error", rerr.Error()).Warn("upstream did not answer, retry failed")
+		return nil, nil, rerr
+	}
+	logger.WithField("status", resp.StatusCode).Info("upstream did not answer, retried")
+	return r, resp, nil
 }
 
 // retryBusy sends req once to another pod of its edge. A seeder pod at its
