@@ -72,7 +72,7 @@ pod did not answer at all (refused, or reset or closed before the first
 byte of a response, as a pod being replaced does at the end of its drain)
 goes once more to the pod the hash resolves to without it: at once, or,
 with no other pod, after `--retry-delay` and a second pick. A pod that
-refuses the connection is left out of every request for 30 s.
+refuses the connection is left out of every request through that thp instance for 30 s (each instance keeps its own list).
 `distribution: Hash` is the pod step
 alone. An endpoint address with no node (not backed by a pod) takes no part
 in the node step; when no address names a node, NodeHash is the pod step

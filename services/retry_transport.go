@@ -73,7 +73,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	replayable := rc != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) &&
 		(req.Body == nil || req.Body == http.NoBody)
 	resp, answered, err := t.try(req, rc)
+	// Pods this request already failed on, for retryBusy to leave out: one
+	// that reset the connection is not on the ignore list (only a refusal is).
+	var failed []string
 	if err != nil && replayable && !answered && (isRetryableError(err) || errors.Is(err, io.EOF)) {
+		failed = []string{hostIP(req.URL.Host)}
 		req, resp, err = t.retryUnanswered(req, rc, err)
 	}
 	if err != nil {
@@ -84,7 +88,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("X-Seeder-Reason") == "busy" {
-		if r, re := t.retryBusy(req, rc); re != nil {
+		if r, re := t.retryBusy(req, rc, failed); re != nil {
 			_ = resp.Body.Close()
 			req, resp = r, re
 		}
@@ -297,13 +301,14 @@ func (t *retryTransport) retryUnanswered(req *http.Request, rc *RetryContext, er
 // while the torrent's runner-up may have room. Nil when there is no other
 // pod (an Environment location is one host) or the attempt got no answer:
 // the client then gets the 503 and its Retry-After. Not for the seeder's
-// store_unavailable: every pod asks the same store.
-func (t *retryTransport) retryBusy(req *http.Request, rc *RetryContext) (*http.Request, *http.Response) {
+// store_unavailable: every pod asks the same store. failed: pods this request
+// already failed on, left out too.
+func (t *retryTransport) retryBusy(req *http.Request, rc *RetryContext, failed []string) (*http.Request, *http.Response) {
 	cfg, err := rc.serviceConfig()
 	if err != nil || cfg.EndpointsProvider != Kubernetes {
 		return nil, nil
 	}
-	loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, []string{hostIP(req.URL.Host)}, rc.Claims)
+	loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, append(failed, hostIP(req.URL.Host)), rc.Claims)
 	if err != nil {
 		return nil, nil
 	}

@@ -392,3 +392,37 @@ func TestRetryUnansweredThenBusyNotBackToTheRefusingPod(t *testing.T) {
 		t.Fatalf("ignored: podA %v, podB %v; want podA only", g.sl.ignore.IsIgnored(podA), g.sl.ignore.IsIgnored(podB))
 	}
 }
+
+// A pod that reset the connection is not on the ignore list; the busy
+// runner-up's own retry must still leave it out.
+func TestRetryUnansweredResetThenBusyNotBackToTheResettingPod(t *testing.T) {
+	const podD = "10.233.62.4"
+	g := newRetryRig(t, []string{podA, podB, podD})
+	if rendezvousPick(retryHash, []string{podB, podD}) != podB || rendezvousPick(retryHash, []string{podA, podD}) != podA {
+		t.Fatal("retryHash's order is not podA, podB, podD: the test proves nothing")
+	}
+	d := &retryPod{srv: httptest.NewUnstartedServer(nil)}
+	t.Cleanup(d.srv.Close)
+	g.pods[podD] = d
+	a := g.pods[podA]
+	g.serve(podA, dropBeforeHeaders(a, true, ""))
+	g.serve(podB, seederRefuses(g.pods[podB], "busy"))
+	g.serve(podD, seederHandler(d, false, nil))
+	before := unanswered(t)
+	resp, err := g.roundTrip(podARequest(t, context.Background(), http.MethodGet, nil), 0)
+	if err != nil {
+		t.Fatalf("client got %v, want podD's answer", err)
+	}
+	wantUnanswered(t, before, "success")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("client got %d %q; want podD's 206", resp.StatusCode, resp.Header.Get("X-Seeder-Reason"))
+	}
+	if ha, hd := a.hits.Load(), d.hits.Load(); ha != 1 || hd != 1 {
+		t.Fatalf("podA %d requests, podD %d; want 1 and 1", ha, hd)
+	}
+	if g.sl.ignore.IsIgnored(podA) {
+		t.Fatal("podA ignored after a reset; only a refusal goes on the ignore list")
+	}
+}
