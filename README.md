@@ -70,8 +70,10 @@ endpoint; a retry that then excludes the failed pod lands on the same
 runner-up from every proxy instance. A GET or HEAD without a body that a
 pod did not answer at all (refused, or reset or closed before the first
 byte of a response, as a pod being replaced does at the end of its drain)
-goes once more, after `--retry-delay`, to the pod the hash resolves to
-without it. `distribution: Hash` is the pod step
+goes once more to the pod the hash resolves to without it: at once, or,
+with no other pod, after `--retry-delay` and a second pick. A pod that
+refuses the connection is left out of every request for 30 s.
+`distribution: Hash` is the pod step
 alone. An endpoint address with no node (not backed by a pod) takes no part
 in the node step; when no address names a node, NodeHash is the pod step
 alone over all of them.
