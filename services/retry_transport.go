@@ -5,9 +5,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,10 +26,14 @@ var (
 		Name: "webtor_http_proxy_retry_attempts_total",
 		Help: "Total number of upstream retry attempts; same_pod: the attempt went back to the pod that cut the stream (empty for exhausted, which is no attempt)",
 	}, []string{"outcome", "same_pod"})
+	promRetryUnanswered = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "webtor_http_proxy_retry_unanswered_total",
+		Help: "GET/HEAD requests the upstream did not answer at all, by what their one retry met: success (a response, any status), failure (no response either), no_pod (no pod to retry on), client_gone (the client left first)",
+	}, []string{"outcome"})
 )
 
 func init() {
-	prometheus.MustRegister(promRetryAttempts)
+	prometheus.MustRegister(promRetryAttempts, promRetryUnanswered)
 }
 
 type retryContextKey struct{}
@@ -54,23 +60,35 @@ func WithRetryContext(r *http.Request, rc *RetryContext) *http.Request {
 // resp.Body with a retryingReadCloser that transparently reconnects if the
 // upstream connection breaks mid-transfer: first to the same pod, then to
 // another pod on the same node. A seeder's 503 busy goes once to another pod
-// (retryBusy).
+// (retryBusy), and so does a GET or HEAD that got no answer at all
+// (retryUnanswered).
 type retryTransport struct {
 	http.RoundTripper
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.RoundTripper.RoundTrip(req)
+	rc, _ := req.Context().Value(retryContextKey{}).(*RetryContext)
+	// A GET or HEAD without a body asks the same of any pod, any number of
+	// times.
+	replayable := rc != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) &&
+		(req.Body == nil || req.Body == http.NoBody)
+	resp, answered, err := t.try(req, rc)
+	// Pods this request already failed on, for retryBusy to leave out: one
+	// that reset the connection is not on the ignore list (only a refusal is).
+	var failed []string
+	if err != nil && replayable && !answered && (isRetryableError(err) || errors.Is(err, io.EOF)) {
+		failed = []string{hostIP(req.URL.Host)}
+		req, resp, err = t.retryUnanswered(req, rc, err)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	rc, ok := req.Context().Value(retryContextKey{}).(*RetryContext)
-	if !ok || rc == nil || resp.Body == nil || rc.MaxRetries <= 0 {
+	if rc == nil || resp.Body == nil || rc.MaxRetries <= 0 {
 		return resp, nil
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("X-Seeder-Reason") == "busy" {
-		if r, re := t.retryBusy(req, rc); re != nil {
+		if r, re := t.retryBusy(req, rc, failed); re != nil {
 			_ = resp.Body.Close()
 			req, resp = r, re
 		}
@@ -197,25 +215,106 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// try sends r through t. answered: a byte of a response came back from r's
+// own hop, a 1xx included, which ReverseProxy relays to the client as it
+// arrives. A pod r's hop could not dial goes on the shared ignore list, as
+// in reconnectFn, so that no request, this one's later attempts included,
+// is sent to it for 30 s; an error after the pod answered (a redirect
+// target that refuses) says nothing about the pod.
+func (t *retryTransport) try(r *http.Request, rc *RetryContext) (*http.Response, bool, error) {
+	var answered atomic.Bool
+	r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{
+		GotFirstResponseByte: func() { answered.Store(true) },
+	}))
+	resp, err := t.RoundTripper.RoundTrip(r)
+	if err != nil && rc != nil && !answered.Load() && isDialError(err) {
+		rc.SvcLoc.Ignore(hostIP(r.URL.Host))
+	}
+	return resp, answered.Load(), err
+}
+
+// retryUnanswered sends req once more when the upstream sent nothing back:
+// refused, or reset or closed before the first byte of a response. A seeder
+// pod being replaced closes, at the end of its drain, the connections still
+// waiting for headers, and refuses those that come after; on 2026-11-14 that
+// reached clients as 152 502s in three rollout windows, 1.8-3.8% of the
+// seeder's answers in each. The attempt goes to the pod the edge resolves to
+// now, the failed one left out: the replacement or the torrent's runner-up,
+// at once, a pause not making it a better pick. With no other pod (none
+// left, or an Environment location: the same host), it waits RetryDelay,
+// the pause body retries take (1 s by default), and picks again: the
+// replacement may have become ready, the host may be back. One attempt: an
+// upstream that is down for good costs the client one dial more, and at
+// most one pause, not a series. It returns the attempt's request and
+// response; err when no attempt was made, the attempt's error when it
+// failed too.
+func (t *retryTransport) retryUnanswered(req *http.Request, rc *RetryContext, err error) (*http.Request, *http.Response, error) {
+	logger := logrus.WithFields(logrus.Fields{
+		"component": "retry",
+		"infohash":  rc.Src.InfoHash,
+		"path":      redactURL(rc.Src.Path),
+		"req_id":    req.Header.Get("X-Request-ID"),
+	}).WithError(err)
+	failed := hostIP(req.URL.Host)
+	pick := func() (*Location, error) {
+		cfg, err := rc.serviceConfig()
+		if err != nil {
+			return nil, err
+		}
+		return rc.SvcLoc.GetFallback(cfg, rc.Src, []string{failed}, rc.Claims)
+	}
+	loc, lerr := pick()
+	if lerr != nil || loc.IP.String() == failed {
+		select {
+		case <-time.After(rc.RetryDelay):
+		case <-req.Context().Done():
+			promRetryUnanswered.WithLabelValues("client_gone").Inc()
+			return nil, nil, req.Context().Err()
+		}
+		loc, lerr = pick()
+	}
+	if lerr != nil {
+		logger.WithField("fallback_error", lerr.Error()).Warn("upstream did not answer, no pod to retry on")
+		promRetryUnanswered.WithLabelValues("no_pod").Inc()
+		return nil, nil, err
+	}
+	r := req.Clone(req.Context())
+	r.URL.Host = fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
+	resp, _, rerr := t.try(r, rc)
+	if rerr != nil {
+		outcome := "failure"
+		if errors.Is(rerr, context.Canceled) {
+			outcome = "client_gone"
+		}
+		logger.WithField("retry_error", rerr.Error()).Warn("upstream did not answer, retry failed")
+		promRetryUnanswered.WithLabelValues(outcome).Inc()
+		return nil, nil, rerr
+	}
+	logger.WithField("status", resp.StatusCode).Info("upstream did not answer, retried")
+	promRetryUnanswered.WithLabelValues("success").Inc()
+	return r, resp, nil
+}
+
 // retryBusy sends req once to another pod of its edge. A seeder pod at its
 // cap of account clients answers a new uid 503 with X-Seeder-Reason busy; the
 // pod is picked by infohash, so the client's own retry would come back to it,
 // while the torrent's runner-up may have room. Nil when there is no other
 // pod (an Environment location is one host) or the attempt got no answer:
 // the client then gets the 503 and its Retry-After. Not for the seeder's
-// store_unavailable: every pod asks the same store.
-func (t *retryTransport) retryBusy(req *http.Request, rc *RetryContext) (*http.Request, *http.Response) {
+// store_unavailable: every pod asks the same store. failed: pods this request
+// already failed on, left out too.
+func (t *retryTransport) retryBusy(req *http.Request, rc *RetryContext, failed []string) (*http.Request, *http.Response) {
 	cfg, err := rc.serviceConfig()
 	if err != nil || cfg.EndpointsProvider != Kubernetes {
 		return nil, nil
 	}
-	loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, []string{hostIP(req.URL.Host)}, rc.Claims)
+	loc, err := rc.SvcLoc.GetFallback(cfg, rc.Src, append(failed, hostIP(req.URL.Host)), rc.Claims)
 	if err != nil {
 		return nil, nil
 	}
 	r := req.Clone(req.Context())
 	r.URL.Host = fmt.Sprintf("%s:%d", loc.IP, loc.Ports.HTTP)
-	resp, err := t.RoundTripper.RoundTrip(r)
+	resp, _, err := t.try(r, rc)
 	logger := logrus.WithFields(logrus.Fields{
 		"component": "retry",
 		"infohash":  rc.Src.InfoHash,

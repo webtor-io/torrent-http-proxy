@@ -191,7 +191,8 @@ func seederRefuses(p *retryPod, reason string) http.HandlerFunc {
 // by infohash). The request goes once to the torrent's runner-up, with the
 // token's uid. A second busy, store_unavailable, and a busy with no other pod
 // (none left in the endpoints, or an Environment location) reach the client
-// as they are.
+// as they are, and so does a busy whose runner-up refuses, which goes on the
+// shared ignore list.
 func TestRetryBusyGoesToAnotherPod(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -202,12 +203,14 @@ func TestRetryBusyGoesToAnotherPod(t *testing.T) {
 		wantStatus int
 		wantReason string
 		wantB      int32
+		bDown      bool
 	}{
-		{"runner-up has room", []string{podA, podB}, false, "busy", false, 200, "", 1},
-		{"runner-up busy too", []string{podA, podB}, false, "busy", true, 503, "busy", 1},
-		{"no other pod", []string{podA}, false, "busy", false, 503, "busy", 0},
-		{"environment location", nil, true, "busy", false, 503, "busy", 0},
-		{"store unavailable", []string{podA, podB}, false, "store_unavailable", false, 503, "store_unavailable", 0},
+		{"runner-up has room", []string{podA, podB}, false, "busy", false, 200, "", 1, false},
+		{"runner-up busy too", []string{podA, podB}, false, "busy", true, 503, "busy", 1, false},
+		{"runner-up refuses", []string{podA, podB}, false, "busy", false, 503, "busy", 0, true},
+		{"no other pod", []string{podA}, false, "busy", false, 503, "busy", 0, false},
+		{"environment location", nil, true, "busy", false, 503, "busy", 0, false},
+		{"store unavailable", []string{podA, podB}, false, "store_unavailable", false, 503, "store_unavailable", 0, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := newRetryRig(t, c.listed)
@@ -218,6 +221,7 @@ func TestRetryBusyGoesToAnotherPod(t *testing.T) {
 			}
 			g.serve(podA, seederRefuses(g.pods[podA], c.reasonA))
 			b := g.pods[podB]
+			b.down.Store(c.bDown)
 			var uidB atomic.Value
 			g.serve(podB, func(w http.ResponseWriter, r *http.Request) {
 				uidB.Store(r.Header.Get("X-Uid"))
@@ -242,6 +246,9 @@ func TestRetryBusyGoesToAnotherPod(t *testing.T) {
 			}
 			if got, _ := uidB.Load().(string); c.wantB > 0 && got != harnessUid {
 				t.Errorf("podB got X-Uid %q, want the token's", got)
+			}
+			if g.sl.ignore.IsIgnored(podA) || g.sl.ignore.IsIgnored(podB) != c.bDown {
+				t.Errorf("ignored: podA %v, podB %v; want podB only if it refused", g.sl.ignore.IsIgnored(podA), g.sl.ignore.IsIgnored(podB))
 			}
 		})
 	}
