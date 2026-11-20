@@ -244,3 +244,49 @@ func TestGateUploadServiceWrite(t *testing.T) {
 		t.Errorf("rest-api asked %d times, want 0", n)
 	}
 }
+
+// TestGateUploadPaddedIDRefusedInObserve: a space or a tab at either end of a
+// kind 0 ID makes it 41 characters to the gate, malformed_hash, which observe
+// lets through, and net/http trims a header value, so the upstream would get
+// X-Info-Hash as the upload's ID itself. Observe refuses it like the ID, on
+// any token that names no hash; nothing goes upstream, rest-api is not asked.
+// A torrent's hash spelled so passes observe as before.
+func TestGateUploadPaddedIDRefusedInObserve(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		got []string
+	)
+	h := newThrottleHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Header.Get("X-Info-Hash"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	rest := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
+	h.web.gate = newPrivateGate(rest.URL, false, time.Second, time.Minute) // observe
+	serve := func(id string, claims jwt.MapClaims) (*httptest.ResponseRecorder, []string) {
+		r := h.request(t, claims, true, "")
+		r.URL.Path = "/" + id + "/Name/a.mkv"
+		mu.Lock()
+		before := len(got)
+		mu.Unlock()
+		rec, _, _ := h.serveLogged(t, r)
+		mu.Lock()
+		defer mu.Unlock()
+		return rec, append([]string(nil), got[before:]...)
+	}
+	for _, id := range []string{" " + uploadKind0, uploadKind0 + " ", "\t" + uploadKind0, uploadKind0 + "\t"} {
+		for _, claims := range []jwt.MapClaims{{}, {"uid": "another-user"}} {
+			rec, up := serve(id, claims)
+			if rec.Code != http.StatusForbidden || rec.Body.String() != "private_torrent: malformed_hash\n" || len(up) != 0 {
+				t.Errorf("%q, claims %v: %d %q, upstream got X-Info-Hash %q; want 403 \"private_torrent: malformed_hash\\n\", nothing", id, claims, rec.Code, rec.Body.String(), up)
+			}
+		}
+	}
+	if n := rest.hits.Load(); n != 0 {
+		t.Errorf("rest-api asked %d times, want 0", n)
+	}
+	if rec, up := serve(" "+harnessHash, jwt.MapClaims{}); rec.Code != http.StatusOK || len(up) != 1 {
+		t.Errorf("padded torrent hash: %d, upstream got %q; want 200, one request", rec.Code, up)
+	}
+}

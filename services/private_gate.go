@@ -152,14 +152,16 @@ type gateVerdict struct {
 // In order: a hash that is not 40 hex is malformed_hash; a lookup that failed
 // is lookup_error with its status; a public torrent passes any token. A
 // private one needs a token bound to its hash (unbound) that carries a uid
-// (no_uid): role=vault included, internal too but on an upload of kind 0.
+// (no_uid): role=vault included, internal too, except on an upload of kind 0.
 // Observe passes all but an upload ID: observe keeps private torrents added
-// before the gate readable, and uploads have no such past.
+// before the gate readable, and uploads have no such past. An upload ID with
+// white space around it, malformed_hash, does not pass either: net/http trims
+// a header value, so the seeder would get X-Info-Hash as the ID itself.
 func (g *PrivateGate) check(claims jwt.MapClaims, src *Source) gateVerdict {
 	h := strings.ToLower(src.InfoHash)
 	v := g.decide(claims, h)
 	promPrivateGate.WithLabelValues(v.outcome).Inc()
-	if !g.enforce && !uploads.HomeHosted(h) {
+	if !g.enforce && !uploads.HomeHosted(strings.TrimSpace(h)) {
 		v.status = 0
 	}
 	return v
