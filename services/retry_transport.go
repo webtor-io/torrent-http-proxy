@@ -28,7 +28,7 @@ var (
 	}, []string{"outcome", "same_pod"})
 	promRetryUnanswered = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtor_http_proxy_retry_unanswered_total",
-		Help: "GET/HEAD requests the upstream did not answer at all, by what their one retry met: success (a response, any status), failure (no response either), no_pod (no pod to retry on), client_gone (the client left first); slow: not retried, the attempt failed after over 60 s",
+		Help: "GET/HEAD requests the upstream did not answer at all, by what their one retry met: success (a response, any status), failure (no response either), no_pod (no pod to retry on), client_gone (the client left first); slow: not retried, a seeder attempt failed after over 60 s",
 	}, []string{"outcome"})
 )
 
@@ -250,15 +250,18 @@ func (t *retryTransport) try(r *http.Request, rc *RetryContext) (*http.Response,
 // the pause body retries take (1 s by default), and picks again: the
 // replacement may have become ready, the host may be back. One attempt: an
 // upstream that is down for good costs the client one dial more, and at
-// most one pause, not a series. Only for an attempt that failed within
-// retryUnansweredWithin (60 s) of being sent: a pod being replaced leaves
+// most one pause, not a series. On the seeder's edge ("default"), only for
+// an attempt that failed within retryUnansweredWithin (60 s) of being
+// sent: a pod being replaced leaves
 // the endpoints, sleeps 10 s in preStop, drains 20 s after SIGTERM and then
 // resets, so a request sent to it up to the removal fails within ~32 s, and
 // later than that only if it had already waited ~28 s for headers. The
 // seeder's stall guard closes a request the same way after 10 min without
 // data; a retry then has the other pod load the torrent and wait up to 10 min
 // more. In the first 23 h 50 of 702 retries got an answer, and the 7 failed
-// ones checked against the seeder's log were all its stall guard. It
+// ones checked against the seeder's log were all its stall guard. Other
+// edges have no such guard and may drain longer (nginx-vod: preStop 15 s,
+// then 60 s), so there a late reset is still a pod being replaced. It
 // returns the attempt's request and response; err when no attempt was made,
 // the attempt's error when it failed too.
 func (t *retryTransport) retryUnanswered(req *http.Request, rc *RetryContext, err error, waited time.Duration) (*http.Request, *http.Response, error) {
@@ -269,7 +272,7 @@ func (t *retryTransport) retryUnanswered(req *http.Request, rc *RetryContext, er
 		"req_id":    req.Header.Get("X-Request-ID"),
 		"waited":    waited.Round(100 * time.Millisecond).Seconds(),
 	}).WithError(err)
-	if waited > retryUnansweredWithin {
+	if rc.Src.GetEdgeType() == "default" && waited > retryUnansweredWithin {
 		logger.Info("upstream did not answer, too slow to retry")
 		promRetryUnanswered.WithLabelValues("slow").Inc()
 		return nil, nil, err
