@@ -198,9 +198,9 @@ func TestGateUploadUpperCaseRefusedAtBinding(t *testing.T) {
 	}
 }
 
-// TestGateUploadServiceWrite: web-ui's two calls without a user,
-// delete (W5, W8) and seal (W7), carry the same claims and differ by the method
-// only; both reach the seeder as they came.
+// TestGateUploadServiceWrite: web-ui's two calls without a user, delete and
+// seal, carry the same claims and differ by the method only; both reach the
+// seeder as they came.
 func TestGateUploadServiceWrite(t *testing.T) {
 	type seen struct{ method, path, infoHash string }
 	var (
