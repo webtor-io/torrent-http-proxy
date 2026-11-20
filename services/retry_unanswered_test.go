@@ -75,7 +75,7 @@ func podARequest(t *testing.T, ctx context.Context, method string, body io.Reade
 func unanswered(t *testing.T) map[string]float64 {
 	t.Helper()
 	m := map[string]float64{}
-	for _, o := range []string{"success", "failure", "no_pod", "client_gone"} {
+	for _, o := range []string{"success", "failure", "no_pod", "client_gone", "slow"} {
 		m[o] = counterValue(t, promRetryUnanswered.WithLabelValues(o))
 	}
 	return m
@@ -424,5 +424,50 @@ func TestRetryUnansweredResetThenBusyNotBackToTheResettingPod(t *testing.T) {
 	}
 	if g.sl.ignore.IsIgnored(podA) {
 		t.Fatal("podA ignored after a reset; only a refusal goes on the ignore list")
+	}
+}
+
+// An unanswered attempt is retried only when it failed within
+// retryUnansweredWithin of being sent: one that took longer is the seeder's
+// stall guard, not a pod being replaced, and the client gets its error.
+func TestRetryUnansweredOnlyAFastFailure(t *testing.T) {
+	defer func(d time.Duration) { retryUnansweredWithin = d }(retryUnansweredWithin)
+	retryUnansweredWithin = 300 * time.Millisecond
+	for _, c := range []struct {
+		name    string
+		after   time.Duration
+		outcome string
+		wantB   int32
+	}{
+		{"failed at once", 0, "success", 1},
+		{"failed after the threshold", 500 * time.Millisecond, "slow", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newRetryRig(t, []string{podA, podB})
+			a := g.pods[podA]
+			drop := dropBeforeHeaders(a, false, "")
+			g.serve(podA, func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(c.after)
+				drop(w, r)
+			})
+			b := g.pods[podB]
+			g.serve(podB, seederHandler(b, false, nil))
+			before := unanswered(t)
+			resp, err := g.roundTrip(podARequest(t, context.Background(), http.MethodGet, nil), 0)
+			if c.wantB == 0 {
+				if err == nil {
+					_ = resp.Body.Close()
+					t.Fatal("client got a response, want podA's error")
+				}
+			} else if err != nil {
+				t.Fatalf("client got %v, want podB's answer", err)
+			} else {
+				_ = resp.Body.Close()
+			}
+			wantUnanswered(t, before, c.outcome)
+			if n := b.hits.Load(); n != c.wantB {
+				t.Errorf("podB got %d requests, want %d", n, c.wantB)
+			}
+		})
 	}
 }

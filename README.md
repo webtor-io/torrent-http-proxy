@@ -71,7 +71,10 @@ runner-up from every proxy instance. A GET or HEAD without a body that a
 pod did not answer at all (refused, or reset or closed before the first
 byte of a response, as a pod being replaced does at the end of its drain)
 goes once more to the pod the hash resolves to without it: at once, or,
-with no other pod, after `--retry-delay` and a second pick. A pod that
+with no other pod, after `--retry-delay` and a second pick. Only when the
+attempt failed within 60 s of being sent: the seeder's stall guard closes a
+request the same way after 10 min without data, and another pod would only
+wait as long again. A pod that
 refuses the connection is left out of every request through that thp instance for 30 s (each instance keeps its own list).
 `distribution: Hash` is the pod step
 alone. An endpoint address with no node (not backed by a pod) takes no part
