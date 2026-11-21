@@ -46,10 +46,15 @@ func (g *retryRig) countDials() *atomic.Int32 {
 	return &n
 }
 
-// roundTrip sends req to podA through retryTransport.
+// roundTrip sends req to podA through retryTransport, for a torrent's file.
 func (g *retryRig) roundTrip(req *http.Request, delay time.Duration) (*http.Response, error) {
+	return g.roundTripSrc(req, delay, &Source{Type: "default", InfoHash: retryHash})
+}
+
+// roundTripSrc sends req to podA through retryTransport, for src.
+func (g *retryRig) roundTripSrc(req *http.Request, delay time.Duration, src *Source) (*http.Response, error) {
 	req = WithRetryContext(req, &RetryContext{
-		Src:               &Source{Type: "default", InfoHash: retryHash},
+		Src:               src,
 		SvcLoc:            g.sl,
 		Cfg:               &g.cfg,
 		Transport:         g.tr,
@@ -75,7 +80,7 @@ func podARequest(t *testing.T, ctx context.Context, method string, body io.Reade
 func unanswered(t *testing.T) map[string]float64 {
 	t.Helper()
 	m := map[string]float64{}
-	for _, o := range []string{"success", "failure", "no_pod", "client_gone"} {
+	for _, o := range []string{"success", "failure", "no_pod", "client_gone", "slow"} {
 		m[o] = counterValue(t, promRetryUnanswered.WithLabelValues(o))
 	}
 	return m
@@ -424,5 +429,58 @@ func TestRetryUnansweredResetThenBusyNotBackToTheResettingPod(t *testing.T) {
 	}
 	if g.sl.ignore.IsIgnored(podA) {
 		t.Fatal("podA ignored after a reset; only a refusal goes on the ignore list")
+	}
+}
+
+// On the seeder's edge an unanswered attempt is retried only when it failed
+// within retryUnansweredWithin of being sent: one that took longer is the
+// seeder's stall guard, not a pod being replaced, and the client gets its
+// error. Another edge (nginx-vod drains for 75 s) is retried either way.
+func TestRetryUnansweredOnlyAFastFailure(t *testing.T) {
+	defer func(d time.Duration) { retryUnansweredWithin = d }(retryUnansweredWithin)
+	retryUnansweredWithin = 300 * time.Millisecond
+	for _, c := range []struct {
+		name    string
+		edge    string
+		after   time.Duration
+		outcome string
+		wantB   int32
+	}{
+		{"failed at once", "", 0, "success", 1},
+		{"failed after the threshold", "", 500 * time.Millisecond, "slow", 0},
+		{"another edge, failed after the threshold", "vod", 500 * time.Millisecond, "success", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newRetryRig(t, []string{podA, podB})
+			a := g.pods[podA]
+			drop := dropBeforeHeaders(a, false, "")
+			g.serve(podA, func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(c.after)
+				drop(w, r)
+			})
+			b := g.pods[podB]
+			g.serve(podB, seederHandler(b, false, nil))
+			src := &Source{Type: "default", InfoHash: retryHash}
+			if c.edge != "" {
+				g.cfg[c.edge] = g.cfg["default"]
+				src.Mod = &Mod{Type: c.edge}
+			}
+			before := unanswered(t)
+			resp, err := g.roundTripSrc(podARequest(t, context.Background(), http.MethodGet, nil), 0, src)
+			if c.wantB == 0 {
+				if err == nil {
+					_ = resp.Body.Close()
+					t.Fatal("client got a response, want podA's error")
+				}
+			} else if err != nil {
+				t.Fatalf("client got %v, want podB's answer", err)
+			} else {
+				_ = resp.Body.Close()
+			}
+			wantUnanswered(t, before, c.outcome)
+			if n := b.hits.Load(); n != c.wantB {
+				t.Errorf("podB got %d requests, want %d", n, c.wantB)
+			}
+		})
 	}
 }
