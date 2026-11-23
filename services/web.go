@@ -370,12 +370,11 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 
 	// The private torrent gate, before the limiter, the kept 404s and
 	// routing, so on every edge; /ext/ names no torrent. A refusal is one
-	// line without the token; what it lets through and is not public names
-	// its outcome in the closing line.
-	gateOutcome, gateCause := "", ""
+	// line without the token; allowed is named in the closing line.
+	gateOutcome := ""
 	if s.gate != nil && src.addressesTorrent() {
 		v := s.gate.check(claims, src)
-		gateOutcome, gateCause = v.outcome, v.cause
+		gateOutcome = v.outcome
 		if v.status != 0 {
 			l := logger.WithFields(logrus.Fields{"infohash": src.InfoHash, "outcome": v.outcome})
 			if v.cause != "" {
@@ -556,11 +555,8 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 			// thp answered from a kept 404; the edge never saw the request.
 			fields["missing_source"] = true
 		}
-		if gateOutcome != "" && gateOutcome != gatePublic {
+		if gateOutcome == gateAllowed {
 			fields["private_gate"] = gateOutcome
-			if gateCause != "" {
-				fields["private_gate_cause"] = gateCause
-			}
 		}
 		if tw != nil {
 			waited := tw.Waited()
