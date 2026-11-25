@@ -18,16 +18,21 @@ import (
 // answered 404 file not found and the resume went on to load the torrent on
 // another pod) and one with '%' did not parse or named another file.
 func TestRetryResumesTheSamePath(t *testing.T) {
-	for _, c := range []struct{ name, path, rawPath string }{
-		{"hash", "/dir/S02 - 2008#10#27.mkv", ""},
-		{"question mark", "/dir/what?.mkv", ""},
-		{"percent", "/dir/100%.mkv", ""},
-		{"percent and hex", "/dir/100%41.mkv", ""},
-		{"spaces", "/dir 2/with space.mkv", ""},
-		{"non-ASCII", "/Папка/Привет, мир ü.mkv", ""},
-		{"all of them", "/a #1/b?c 50% ф#.mkv", ""},
-		{"escaped slash", "/dir/a/b.mkv", "/dir/a%2Fb.mkv"},
+	for _, c := range []struct{ name, path, rawPath, query string }{
+		{"hash", "/dir/S02 - 2008#10#27.mkv", "", ""},
+		{"question mark", "/dir/what?.mkv", "", ""},
+		{"percent", "/dir/100%.mkv", "", ""},
+		{"percent and hex", "/dir/100%41.mkv", "", ""},
+		{"spaces", "/dir 2/with space.mkv", "", ""},
+		{"non-ASCII", "/Папка/Привет, мир ü.mkv", "", ""},
+		{"all of them", "/a #1/b?c 50% ф#.mkv", "", ""},
+		{"escaped slash", "/dir/a/b.mkv", "/dir/a%2Fb.mkv", ""},
+		// Go's server keeps a raw '#' of the request line in RawQuery.
+		{"hash in the query", "/dir/a.mkv", "", "token=t#x&download"},
 	} {
+		if c.query == "" {
+			c.query = "token=t&download"
+		}
 		t.Run(c.name, func(t *testing.T) {
 			g := newRetryRig(t, []string{podA, podB})
 			var mu sync.Mutex
@@ -39,7 +44,7 @@ func TestRetryResumesTheSamePath(t *testing.T) {
 				mu.Unlock()
 				h(w, r)
 			})
-			u := &url.URL{Scheme: "http", Host: podA + ":8080", Path: c.path, RawPath: c.rawPath, RawQuery: "token=t&download"}
+			u := &url.URL{Scheme: "http", Host: podA + ":8080", Path: c.path, RawPath: c.rawPath, RawQuery: c.query}
 			req := WithRetryContext(&http.Request{Method: http.MethodGet, URL: u, Header: http.Header{}}, &RetryContext{
 				Src:               &Source{Type: "default", InfoHash: retryHash},
 				SvcLoc:            g.sl,
