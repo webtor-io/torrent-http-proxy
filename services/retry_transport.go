@@ -157,8 +157,13 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		failedHost = targetHost
 
-		// Build a new request to the target.
-		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, fmt.Sprintf("http://%s%s?%s", targetHost, req.URL.Path, req.URL.RawQuery), nil)
+		// Build a new request to the target: the first attempt's URL, its
+		// host swapped, so the path goes out escaped as it did then. Glued
+		// from the decoded Path, a name was cut at '#' or '?' (the seeder
+		// answered 404) and did not parse or named another file at '%'.
+		u := *req.URL
+		u.Host = targetHost
+		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, u.String(), nil)
 		if err != nil {
 			return nil, samePod, err
 		}
