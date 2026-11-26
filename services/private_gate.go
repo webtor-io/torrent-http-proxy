@@ -24,9 +24,8 @@ const (
 )
 
 const (
-	restAPIHostFlag          = "rest-api-host"
-	restAPIPortFlag          = "rest-api-port"
-	privateAccessEnforceFlag = "private-access-enforce"
+	restAPIHostFlag = "rest-api-host"
+	restAPIPortFlag = "rest-api-port"
 )
 
 func RegisterPrivateGateFlags(f []cli.Flag) []cli.Flag {
@@ -41,11 +40,6 @@ func RegisterPrivateGateFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "rest-api port",
 			Value:  80,
 			EnvVar: "REST_API_SERVICE_PORT",
-		},
-		cli.BoolFlag{
-			Name:   privateAccessEnforceFlag,
-			Usage:  "refuse what the private torrent gate does not let through; off only counts it",
-			EnvVar: "PRIVATE_ACCESS_ENFORCE",
 		},
 	)
 }
@@ -62,16 +56,11 @@ func NewPrivateGate(c *cli.Context) (*PrivateGate, error) {
 		log.Info("private torrents gate: off, REST_API_SERVICE_HOST is not set")
 		return nil, nil
 	}
-	enforce := c.Bool(privateAccessEnforceFlag)
-	g := newPrivateGate("http://"+net.JoinHostPort(host, strconv.Itoa(c.Int(restAPIPortFlag))), enforce, privateLookupTimeout, privateLookupErrorTTL)
+	g := newPrivateGate("http://"+net.JoinHostPort(host, strconv.Itoa(c.Int(restAPIPortFlag))), privateLookupTimeout, privateLookupErrorTTL)
 	for _, o := range gateOutcomes {
 		promPrivateGate.WithLabelValues(o)
 	}
-	promPrivateEnforce.Set(0)
-	if enforce {
-		promPrivateEnforce.Set(1)
-	}
-	log.Infof("private torrents gate: on, enforce=%v", enforce)
+	log.Info("private torrents gate: on")
 	return g, nil
 }
 
@@ -88,20 +77,13 @@ const (
 // gateOutcomes lists them all: their series are created at start.
 var gateOutcomes = []string{gatePublic, gateAllowed, gateUnbound, gateNoUid, gateLookupError, gateMalformedHash}
 
-var (
-	promPrivateGate = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "webtor_http_proxy_private_gate_total",
-		Help: "HTTP Proxy requests for a torrent the private torrent gate checked, by outcome",
-	}, []string{"outcome"})
-	promPrivateEnforce = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "webtor_http_proxy_private_enforce",
-		Help: "HTTP Proxy private torrent gate refuses (1) or only observes (0)",
-	})
-)
+var promPrivateGate = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "webtor_http_proxy_private_gate_total",
+	Help: "HTTP Proxy requests for a torrent the private torrent gate checked, by outcome",
+}, []string{"outcome"})
 
 func init() {
 	prometheus.MustRegister(promPrivateGate)
-	prometheus.MustRegister(promPrivateEnforce)
 }
 
 // PrivateGate lets a request for a private torrent through only with a token
@@ -113,15 +95,13 @@ func init() {
 type PrivateGate struct {
 	url     string
 	client  *http.Client
-	enforce bool
 	privacy *lazymap.LazyMap[bool]
 }
 
-func newPrivateGate(restAPIURL string, enforce bool, timeout, errTTL time.Duration) *PrivateGate {
+func newPrivateGate(restAPIURL string, timeout, errTTL time.Duration) *PrivateGate {
 	return &PrivateGate{
-		url:     restAPIURL,
-		client:  &http.Client{Timeout: timeout},
-		enforce: enforce,
+		url:    restAPIURL,
+		client: &http.Client{Timeout: timeout},
 		// Concurrency: lazymap's default is 10 slots over all keys; with
 		// rest-api hanging up to the timeout, new hashes would queue for
 		// the slots longer than that.
@@ -130,8 +110,8 @@ func newPrivateGate(restAPIURL string, enforce bool, timeout, errTTL time.Durati
 }
 
 // lookupError is a lookup that told neither private nor public. status is what
-// the gate answers in enforce: 403 for a ban, 404, else 503. cause is fixed
-// text, never rest-api's body.
+// the gate refuses with: 403 for a ban, 404, else 503. cause is fixed text,
+// never rest-api's body.
 type lookupError struct {
 	status int
 	cause  string
@@ -150,13 +130,10 @@ type gateVerdict struct {
 // In order: a hash that is not 40 hex is malformed_hash; a lookup that failed
 // is lookup_error with its status; a public torrent passes any token. A
 // private one needs a token bound to its hash (unbound) that carries a uid
-// (no_uid): role=vault and internal tokens included. Observe passes all.
+// (no_uid): role=vault and internal tokens included.
 func (g *PrivateGate) check(claims jwt.MapClaims, src *Source) gateVerdict {
 	v := g.decide(claims, strings.ToLower(src.InfoHash))
 	promPrivateGate.WithLabelValues(v.outcome).Inc()
-	if !g.enforce {
-		v.status = 0
-	}
 	return v
 }
 
