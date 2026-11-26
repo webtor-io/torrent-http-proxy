@@ -157,11 +157,16 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		failedHost = targetHost
 
-		// Build a new request to the target.
-		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, fmt.Sprintf("http://%s%s?%s", targetHost, req.URL.Path, req.URL.RawQuery), nil)
-		if err != nil {
-			return nil, samePod, err
-		}
+		// Build a new request to the target: the first attempt's URL, its
+		// host swapped, used as is, so the request-target goes out as it did
+		// then (the transport writes RequestURI: EscapedPath, RawQuery
+		// verbatim). Glued from the decoded Path, a name was cut at '#' or
+		// '?' (the seeder answered 404) and did not parse or named another
+		// file at '%'; printed and parsed again, a raw '#' in the query
+		// would start a fragment.
+		u := *req.URL
+		u.Host = targetHost
+		newReq := (&http.Request{Method: req.Method, URL: &u, Host: targetHost, Header: http.Header{}}).WithContext(req.Context())
 		// Copy relevant headers from original request.
 		for _, h := range []string{"X-Source-Url", "X-Proxy-Url", "X-Info-Hash", "X-Path", "X-Origin-Path", "X-Full-Path", "X-Token", "X-Api-Key", "X-Session-ID", "X-Download-Rate", "X-Mod-Type", "X-Mod-Extra", "X-Role", "X-Uid"} {
 			if v := req.Header.Get(h); v != "" {
