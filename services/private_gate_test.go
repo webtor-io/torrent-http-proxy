@@ -58,7 +58,7 @@ func restAnswer(status int, body string) http.HandlerFunc {
 
 // TestPrivacyLookupClassification: rest-api's answers to an anonymous
 // GET /resource/<h> become private, public or an error with the status the
-// gate answers in enforce. Only 200 with the field and the two private codes
+// gate refuses with. Only 200 with the field and the two private codes
 // of a 403 are answers; a ban, a missing torrent, an outage and anything
 // unparsable are errors, never "public". The cause is fixed text and never
 // carries the body.
@@ -71,7 +71,7 @@ func TestPrivacyLookupClassification(t *testing.T) {
 		body       string
 		wantPriv   bool
 		wantStatus int    // 0: not an error
-		wantCause  string // what G1 reads in private_gate_cause
+		wantCause  string // the refusal line's cause
 	}{
 		{"public", 200, `{"id":"x","private":false}`, false, 0, ""},
 		{"private", 200, `{"private":true}`, true, 0, ""},
@@ -89,7 +89,7 @@ func TestPrivacyLookupClassification(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFakeRestAPI(t, restAnswer(c.status, c.body))
-			got, err := newPrivateGate(f.URL, true, time.Second, time.Minute).lookup(h)
+			got, err := newPrivateGate(f.URL, time.Second, time.Minute).lookup(h)
 			if c.wantStatus == 0 {
 				if err != nil || got != c.wantPriv {
 					t.Errorf("got (%v, %v), want (%v, nil)", got, err, c.wantPriv)
@@ -108,13 +108,13 @@ func TestPrivacyLookupClassification(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 			restAnswer(200, `{"private":false}`)(w, nil)
 		})
-		_, err := newPrivateGate(f.URL, true, 50*time.Millisecond, time.Minute).lookup(h)
+		_, err := newPrivateGate(f.URL, 50*time.Millisecond, time.Minute).lookup(h)
 		checkLookupError(t, err, 503, "rest-api unreachable")
 	})
 	t.Run("closed server", func(t *testing.T) {
 		f := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
 		f.Close()
-		_, err := newPrivateGate(f.URL, true, time.Second, time.Minute).lookup(h)
+		_, err := newPrivateGate(f.URL, time.Second, time.Minute).lookup(h)
 		checkLookupError(t, err, 503, "rest-api unreachable")
 	})
 }
@@ -144,7 +144,7 @@ func TestPrivacyCacheErrorTTL(t *testing.T) {
 		}
 		restAnswer(200, `{"private":false}`)(w, r)
 	})
-	g := newPrivateGate(f.URL, true, time.Second, 100*time.Millisecond)
+	g := newPrivateGate(f.URL, time.Second, 100*time.Millisecond)
 	_, err1 := g.isPrivate(harnessHash)
 	_, err2 := g.isPrivate(harnessHash)
 	if err1 == nil || err2 == nil {
@@ -179,7 +179,7 @@ func TestPrivacyLookupOncePerHash(t *testing.T) {
 		<-release
 		restAnswer(200, `{"private":true}`)(w, r)
 	})
-	g := newPrivateGate(f.URL, true, time.Second, time.Minute)
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
 	const n = 50
 	type result struct {
 		p   bool
@@ -236,13 +236,12 @@ func checkCounted(t *testing.T, before map[string]float64, outcome string) {
 	}
 }
 
-// TestGateMatrix: rest-api's three kinds of answer × tokens on an enforce
-// gate. A private torrent needs a token bound to its hash that carries a uid,
+// TestGateMatrix: rest-api's three kinds of answer × tokens. A private torrent needs a token bound to its hash that carries a uid,
 // with no exception for role=vault or internal; a public one passes any
 // token; a failed lookup refuses every token with the lookup's status. The
 // gate is the same on every edge (edges: TestGateWiring); every answer of
-// rest-api: TestPrivacyLookupClassification; observe:
-// TestGateObservePassesEverything.
+// rest-api: TestPrivacyLookupClassification; every outcome through proxyHTTP:
+// TestGateEveryOutcome.
 func TestGateMatrix(t *testing.T) {
 	const h, uid = harnessHash, harnessUid
 	other := strings.Repeat("ab", 20)
@@ -287,7 +286,7 @@ func TestGateMatrix(t *testing.T) {
 				wantStatus = http.StatusForbidden
 			}
 			before := gateCounts(t)
-			v := newPrivateGate(f.URL, true, time.Second, time.Minute).check(claims, &Source{Type: "default", InfoHash: h})
+			v := newPrivateGate(f.URL, time.Second, time.Minute).check(claims, &Source{Type: "default", InfoHash: h})
 			if v != (gateVerdict{want, resp.cause, wantStatus}) {
 				t.Errorf("%s, %s: %+v, want {%s %q %d}", resp.name, name, v, want, resp.cause, wantStatus)
 			}
@@ -301,7 +300,7 @@ func TestGateMatrix(t *testing.T) {
 // the URL parser lets through, is malformed_hash without asking rest-api.
 func TestGateHashSpelling(t *testing.T) {
 	f := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
-	g := newPrivateGate(f.URL, true, time.Second, time.Minute)
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
 	claims := jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}
 	if v := g.check(claims, &Source{InfoHash: strings.ToUpper(harnessHash)}); v.outcome != gateAllowed {
 		t.Errorf("upper-case hash: %+v, want allowed", v)
@@ -327,7 +326,7 @@ func TestGateHashSpelling(t *testing.T) {
 // PanicError for a panic in the lookup) refuses as an outage does and never
 // reads as public.
 func TestGateLookupPanic(t *testing.T) {
-	g := newPrivateGate("http://rest-api.invalid", true, time.Second, time.Minute)
+	g := newPrivateGate("http://rest-api.invalid", time.Second, time.Minute)
 	g.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { panic("lookup bug") })
 	v := g.check(jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}, &Source{InfoHash: harnessHash})
 	if v != (gateVerdict{gateLookupError, "lookup failed", http.StatusServiceUnavailable}) {
@@ -338,10 +337,10 @@ func TestGateLookupPanic(t *testing.T) {
 // TestNewPrivateGateFromFlags: the gate is on wherever REST_API_SERVICE_HOST
 // is set and asks rest-api there, port 80 unless given; off without it. An
 // API secret without it refuses to start: tokens would be checked and a
-// private torrent served on any of them. enforce reads PRIVATE_ACCESS_ENFORCE
-// and shows on the gauge; the outcome series exist from the start.
+// private torrent served on any of them. The outcome series exist from the
+// start.
 func TestNewPrivateGateFromFlags(t *testing.T) {
-	for _, k := range []string{"REST_API_SERVICE_HOST", "REST_API_SERVICE_PORT", "PRIVATE_ACCESS_ENFORCE", "API_SECRET"} {
+	for _, k := range []string{"REST_API_SERVICE_HOST", "REST_API_SERVICE_PORT", "API_SECRET"} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
@@ -372,18 +371,15 @@ func TestNewPrivateGateFromFlags(t *testing.T) {
 			t.Errorf("got (%v, %v), want an error naming REST_API_SERVICE_HOST", gate, err)
 		}
 	})
-	t.Run("observe", func(t *testing.T) {
+	t.Run("default port", func(t *testing.T) {
 		t.Setenv("REST_API_SERVICE_HOST", "rest-api.invalid")
 		promPrivateGate.Reset()
 		gate, err := newGate(t)
 		if err != nil || gate == nil {
 			t.Fatalf("got (%v, %v), want a gate", gate, err)
 		}
-		if gate.url != "http://rest-api.invalid:80" || gate.enforce {
-			t.Errorf("gate on %q, enforce %v; want http://rest-api.invalid:80, false", gate.url, gate.enforce)
-		}
-		if g := gaugeValue(t, promPrivateEnforce); g != 0 {
-			t.Errorf("private_enforce %v, want 0", g)
+		if gate.url != "http://rest-api.invalid:80" {
+			t.Errorf("gate on %q, want http://rest-api.invalid:80", gate.url)
 		}
 		mfs, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -406,20 +402,16 @@ func TestNewPrivateGateFromFlags(t *testing.T) {
 			}
 		}
 	})
-	t.Run("enforce", func(t *testing.T) {
+	t.Run("prod", func(t *testing.T) {
 		t.Setenv("REST_API_SERVICE_HOST", "rest-api.invalid")
 		t.Setenv("REST_API_SERVICE_PORT", "8096")
-		t.Setenv("PRIVATE_ACCESS_ENFORCE", "true")
 		// With an API secret, as on prod: a host set, the secret refuses nothing.
 		gate, err := newGate(t, "--api-secret", "s")
 		if err != nil || gate == nil {
 			t.Fatalf("got (%v, %v), want a gate", gate, err)
 		}
-		if gate.url != "http://rest-api.invalid:8096" || !gate.enforce {
-			t.Errorf("gate on %q, enforce %v; want http://rest-api.invalid:8096, true", gate.url, gate.enforce)
-		}
-		if g := gaugeValue(t, promPrivateEnforce); g != 1 {
-			t.Errorf("private_enforce %v, want 1", g)
+		if gate.url != "http://rest-api.invalid:8096" {
+			t.Errorf("gate on %q, want http://rest-api.invalid:8096", gate.url)
 		}
 	})
 }
@@ -432,7 +424,7 @@ const (
 )
 
 // TestGateUploads: a class ID is decided by the ID, rest-api never asked;
-// kind 0 is private in both modes, internal stands for uid on kind 0 only.
+// kind 0 is private, internal stands for uid on kind 0 only.
 func TestGateUploads(t *testing.T) {
 	// Asked, rest-api would make every class ID public: a wrong outcome and a hit.
 	f := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
@@ -443,58 +435,52 @@ func TestGateUploads(t *testing.T) {
 		}
 		return c
 	}
-	for _, enforce := range []bool{true, false} {
-		g := newPrivateGate(f.URL, enforce, time.Second, time.Minute)
-		for _, c := range []struct {
-			name, id, outcome string
-			claims            jwt.MapClaims
-			status            int
-		}{
-			{"kind 0, no hash", uploadKind0, gateUnbound, jwt.MapClaims{"uid": harnessUid}, 403},
-			{"kind 0, internal unbound", uploadKind0, gateUnbound, jwt.MapClaims{"internal": true}, 403},
-			{"kind 0, bound, no uid", uploadKind0, gateNoUid, b0(), 403},
-			{"kind 0, bound+uid", uploadKind0, gateAllowed, b0("uid", harnessUid), 0},
-			{"kind 0, rest-api manifest", uploadKind0, gateAllowed, b0("internal", true), 0},
-			{"kind 0, web-ui delete", uploadKind0, gateAllowed, b0("internal", true, "up", "add", "lim", 1.0), 0},
-			{"kind 0, web-ui write", uploadKind0, gateAllowed, b0("uid", harnessUid, "up", "new", "lim", 1.0), 0},
-			{"vault+uid", uploadKind0, gateAllowed, b0("role", "vault", "uid", harnessUid), 0},
-			{"vault, no uid", uploadKind0, gateNoUid, b0("role", "vault"), 403},
-			{"kind 0 upper", strings.ToUpper(uploadKind0), gateAllowed, b0("uid", harnessUid), 0},
-			{"kind 1, any", uploadKind1, gatePublic, jwt.MapClaims{}, 0},
-			{"kind f, other hash", uploadKindF, gatePublic, b0(), 0},
-			{"kind A", "9c5db5752b7cA123456789abcdef0123456789ab", gatePublic, jwt.MapClaims{}, 0},
-		} {
-			before := gateCounts(t)
-			if v := g.check(c.claims, &Source{InfoHash: c.id}); v != (gateVerdict{outcome: c.outcome, status: c.status}) {
-				t.Errorf("enforce %v, %s: %+v, want {%s  %d}", enforce, c.name, v, c.outcome, c.status)
-			}
-			checkCounted(t, before, c.outcome)
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
+	for _, c := range []struct {
+		name, id, outcome string
+		claims            jwt.MapClaims
+		status            int
+	}{
+		{"kind 0, no hash", uploadKind0, gateUnbound, jwt.MapClaims{"uid": harnessUid}, 403},
+		{"kind 0, internal unbound", uploadKind0, gateUnbound, jwt.MapClaims{"internal": true}, 403},
+		{"kind 0, bound, no uid", uploadKind0, gateNoUid, b0(), 403},
+		{"kind 0, bound+uid", uploadKind0, gateAllowed, b0("uid", harnessUid), 0},
+		{"kind 0, rest-api manifest", uploadKind0, gateAllowed, b0("internal", true), 0},
+		{"kind 0, web-ui delete", uploadKind0, gateAllowed, b0("internal", true, "up", "add", "lim", 1.0), 0},
+		{"kind 0, web-ui write", uploadKind0, gateAllowed, b0("uid", harnessUid, "up", "new", "lim", 1.0), 0},
+		{"vault+uid", uploadKind0, gateAllowed, b0("role", "vault", "uid", harnessUid), 0},
+		{"vault, no uid", uploadKind0, gateNoUid, b0("role", "vault"), 403},
+		{"kind 0 upper", strings.ToUpper(uploadKind0), gateAllowed, b0("uid", harnessUid), 0},
+		{"kind 1, any", uploadKind1, gatePublic, jwt.MapClaims{}, 0},
+		{"kind f, other hash", uploadKindF, gatePublic, b0(), 0},
+		{"kind A", "9c5db5752b7cA123456789abcdef0123456789ab", gatePublic, jwt.MapClaims{}, 0},
+	} {
+		before := gateCounts(t)
+		if v := g.check(c.claims, &Source{InfoHash: c.id}); v != (gateVerdict{outcome: c.outcome, status: c.status}) {
+			t.Errorf("%s: %+v, want {%s  %d}", c.name, v, c.outcome, c.status)
 		}
+		checkCounted(t, before, c.outcome)
 	}
 	if n := f.hits.Load(); n != 0 {
 		t.Errorf("rest-api asked %d times, want 0", n)
 	}
-	// Private torrent, internal without uid: no_uid as now; observe lets it through.
+	// Private torrent, internal without uid: no_uid as before.
 	p := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
-	for enforce, status := range map[bool]int{true: 403, false: 0} {
-		v := newPrivateGate(p.URL, enforce, time.Second, time.Minute).check(jwt.MapClaims{"hash": harnessHash, "internal": true}, &Source{InfoHash: harnessHash})
-		if v != (gateVerdict{gateNoUid, "", status}) {
-			t.Errorf("private torrent, internal, enforce %v: %+v, want {no_uid  %d}", enforce, v, status)
-		}
+	v := newPrivateGate(p.URL, time.Second, time.Minute).check(jwt.MapClaims{"hash": harnessHash, "internal": true}, &Source{InfoHash: harnessHash})
+	if v != (gateVerdict{gateNoUid, "", http.StatusForbidden}) {
+		t.Errorf("private torrent, internal: %+v, want {no_uid  403}", v)
 	}
 }
 
 // TestGateUploadInternalMustBeBool: only a JSON true stands for a uid; any
-// other value of internal is no_uid on kind 0, in both modes.
+// other value of internal is no_uid on kind 0.
 func TestGateUploadInternalMustBeBool(t *testing.T) {
 	f := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
-	for _, enforce := range []bool{true, false} {
-		g := newPrivateGate(f.URL, enforce, time.Second, time.Minute)
-		for _, internal := range []any{"true", 1.0} {
-			v := g.check(jwt.MapClaims{"hash": uploadKind0, "internal": internal}, &Source{InfoHash: uploadKind0})
-			if v != (gateVerdict{gateNoUid, "", http.StatusForbidden}) {
-				t.Errorf("enforce %v, internal %#v: %+v, want {no_uid  403}", enforce, internal, v)
-			}
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
+	for _, internal := range []any{"true", 1.0} {
+		v := g.check(jwt.MapClaims{"hash": uploadKind0, "internal": internal}, &Source{InfoHash: uploadKind0})
+		if v != (gateVerdict{gateNoUid, "", http.StatusForbidden}) {
+			t.Errorf("internal %#v: %+v, want {no_uid  403}", internal, v)
 		}
 	}
 }
@@ -503,7 +489,7 @@ func TestGateUploadInternalMustBeBool(t *testing.T) {
 // is; a torrent is lookup_error as before.
 func TestGateUploadIgnoresRestAPIOutage(t *testing.T) {
 	f := newFakeRestAPI(t, restAnswer(500, `{}`))
-	g := newPrivateGate(f.URL, true, time.Second, time.Minute)
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
 	for _, c := range []struct {
 		name   string
 		id     string

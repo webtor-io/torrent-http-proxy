@@ -63,7 +63,7 @@ func gated(t *testing.T, status int, body string) *throttleHarness {
 	t.Helper()
 	h := newThrottleHarness(t, fixedBody(http.StatusOK, 3))
 	rest := newFakeRestAPI(t, restAnswer(status, body))
-	h.web.gate = newPrivateGate(rest.URL, true, time.Second, time.Minute)
+	h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 	return h
 }
 

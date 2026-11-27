@@ -56,7 +56,7 @@ func TestGateWiring(t *testing.T) {
 	h, upstream := countingUpstream(t)
 	withVodEdge(t, h)
 	rest := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
-	h.web.gate = newPrivateGate(rest.URL, true, time.Second, time.Minute)
+	h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 	bound, boundUid := jwt.MapClaims{"hash": harnessHash}, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}
 	// base64 of https://example.org/sub.srt, as in TestHashBindingCoversTorrentsOnly.
 	const ext = "/ext/aHR0cHM6Ly9leGFtcGxlLm9yZy9zdWIuc3J0/sub.srt"
@@ -88,8 +88,8 @@ func TestGateWiring(t *testing.T) {
 	}
 
 	rec, entries, _, up := serve("", boundUid)
-	if f := closingFields(entries); rec.Code != http.StatusOK || up != 1 || f["private_gate"] != gateAllowed || !fieldIs(f, "private_gate_cause", "") {
-		t.Errorf("bound with uid: %d, upstream %d, closing line %v; want 200, 1, private_gate=allowed without a cause", rec.Code, up, f)
+	if f := closingFields(entries); rec.Code != http.StatusOK || up != 1 || f["private_gate"] != gateAllowed {
+		t.Errorf("bound with uid: %d, upstream %d, closing line %v; want 200, 1, private_gate=allowed", rec.Code, up, f)
 	}
 
 	rec, entries, token, up := serve("", bound)
@@ -109,7 +109,7 @@ func TestGateWiring(t *testing.T) {
 	}
 
 	down := newFakeRestAPI(t, restAnswer(500, `{}`))
-	h.web.gate = newPrivateGate(down.URL, true, time.Second, time.Minute)
+	h.web.gate = newPrivateGate(down.URL, time.Second, time.Minute)
 	rec, entries, token, up = serve("", boundUid)
 	if rec.Code != http.StatusServiceUnavailable || rec.Body.Len() != 0 || up != 0 {
 		t.Errorf("rest-api down: %d %q, upstream %d; want 503 without a body, 0", rec.Code, rec.Body.String(), up)
@@ -122,41 +122,47 @@ func TestGateWiring(t *testing.T) {
 	}
 }
 
-// TestGateObservePassesEverything: in observe the gate never changes the
-// answer, whatever the outcome, an outage and a malformed hash included: the
-// request goes to the service, nothing is refused, and the closing line and
-// the counter carry the outcome. The closing line names no public outcome:
-// that would be almost every request.
-func TestGateObservePassesEverything(t *testing.T) {
+// TestGateEveryOutcome: each outcome through proxyHTTP, counted once. Only
+// public and allowed reach the service, and the closing line names allowed but
+// not public, which would be almost every request. Every other outcome is
+// refused before the service: the refusal line and no closing line. Bodies and
+// pages: TestRefusalPagesOnlyForNavigation.
+func TestGateEveryOutcome(t *testing.T) {
 	h, upstream := countingUpstream(t)
 	for _, c := range []struct {
-		name, body, path, outcome, cause string
-		status                           int
-		claims                           jwt.MapClaims
+		name, body, path, outcome string
+		restStatus, want          int
+		claims                    jwt.MapClaims
 	}{
-		{"lookup error", `{}`, "", gateLookupError, "rest-api 500", 500, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}},
-		{"no uid", `{"private":true}`, "", gateNoUid, "", 200, jwt.MapClaims{"hash": harnessHash}},
-		{"malformed hash", `{"private":true}`, "/" + harnessHash[:39] + "/f", gateMalformedHash, "", 200, jwt.MapClaims{}},
-		{"public", `{"private":false}`, "", gatePublic, "", 200, jwt.MapClaims{}},
+		{"public", `{"private":false}`, "", gatePublic, 200, 200, jwt.MapClaims{}},
+		{"allowed", `{"private":true}`, "", gateAllowed, 200, 200, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}},
+		{"unbound", `{"private":true}`, "", gateUnbound, 200, 403, jwt.MapClaims{"uid": harnessUid}},
+		{"no uid", `{"private":true}`, "", gateNoUid, 200, 403, jwt.MapClaims{"hash": harnessHash}},
+		{"malformed hash", `{"private":true}`, "/" + harnessHash[:39] + "/f", gateMalformedHash, 200, 403, jwt.MapClaims{}},
+		{"lookup error", `{}`, "", gateLookupError, 500, 503, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}},
 	} {
-		rest := newFakeRestAPI(t, restAnswer(c.status, c.body))
-		h.web.gate = newPrivateGate(rest.URL, false, time.Second, time.Minute)
+		rest := newFakeRestAPI(t, restAnswer(c.restStatus, c.body))
+		h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 		r := h.request(t, c.claims, true, "")
 		if c.path != "" {
 			r.URL.Path = c.path
 		}
 		before, up := gateCounts(t), upstream.Load()
 		rec, entries, _ := h.serveLogged(t, r)
-		if rec.Code != http.StatusOK || upstream.Load() != up+1 || len(gateRefusals(entries)) != 0 {
-			t.Errorf("%s: %d, upstream %d, %d refusals; want 200, 1, 0", c.name, rec.Code, upstream.Load()-up, len(gateRefusals(entries)))
+		passes := c.want == http.StatusOK
+		wantUp, wantRefusals := int32(0), 1
+		if passes {
+			wantUp, wantRefusals = 1, 0
+		}
+		if rec.Code != c.want || upstream.Load()-up != wantUp || len(gateRefusals(entries)) != wantRefusals {
+			t.Errorf("%s: %d, upstream %d, %d refusals; want %d, %d, %d", c.name, rec.Code, upstream.Load()-up, len(gateRefusals(entries)), c.want, wantUp, wantRefusals)
 		}
 		logged := c.outcome
 		if logged == gatePublic {
 			logged = ""
 		}
-		f := closingFields(entries)
-		if f == nil || !fieldIs(f, "private_gate", logged) || !fieldIs(f, "private_gate_cause", c.cause) {
-			t.Errorf("%s: closing line %v, want private_gate %q, private_gate_cause %q", c.name, f, logged, c.cause)
+		if f := closingFields(entries); passes && (f == nil || !fieldIs(f, "private_gate", logged)) || !passes && f != nil {
+			t.Errorf("%s: closing line %v, want private_gate %q, none when refused", c.name, f, logged)
 		}
 		checkCounted(t, before, c.outcome)
 	}
@@ -165,11 +171,11 @@ func TestGateObservePassesEverything(t *testing.T) {
 // TestGateUploadUpperCaseRefusedAtBinding: kind 0 in upper case with the
 // owner's token (hash in lower case, as web-ui mints it) is refused at the
 // byte-wise hash binding before the gate: a bare 403, nothing upstream, and
-// rest-api never asked. Observe does not let kind 0 through.
+// rest-api never asked.
 func TestGateUploadUpperCaseRefusedAtBinding(t *testing.T) {
 	h, upstream := countingUpstream(t)
 	rest := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
-	h.web.gate = newPrivateGate(rest.URL, false, time.Second, time.Minute) // observe
+	h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 	serve := func(id string, claims jwt.MapClaims) (*httptest.ResponseRecorder, []*logrus.Entry, int32) {
 		r := h.request(t, claims, true, "")
 		r.URL.Path = "/" + id + "/Name/a.mkv"
@@ -219,7 +225,7 @@ func TestGateUploadServiceWrite(t *testing.T) {
 		return append([]seen(nil), got...)
 	}
 	rest := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
-	h.web.gate = newPrivateGate(rest.URL, true, time.Second, time.Minute) // enforce
+	h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 	send := func(method string, claims jwt.MapClaims) (*httptest.ResponseRecorder, []seen) {
 		r := h.request(t, claims, true, "")
 		r.Method = method
@@ -245,13 +251,12 @@ func TestGateUploadServiceWrite(t *testing.T) {
 	}
 }
 
-// TestGateUploadPaddedIDRefusedInObserve: a space or a tab at either end of a
-// kind 0 ID makes it 41 characters to the gate, malformed_hash, which observe
-// lets through, and net/http trims a header value, so the upstream would get
-// X-Info-Hash as the upload's ID itself. Observe refuses it like the ID, on
-// any token that names no hash; nothing goes upstream, rest-api is not asked.
-// A torrent's hash spelled so passes observe as before.
-func TestGateUploadPaddedIDRefusedInObserve(t *testing.T) {
+// TestGateUploadPaddedIDRefused: a space or a tab at either end of a kind 0
+// ID makes it 41 characters to the gate, malformed_hash, and refused on any
+// token that names no hash: net/http trims a header value, so the upstream
+// would get X-Info-Hash as the upload's ID itself. Nothing goes upstream,
+// rest-api is not asked. A torrent's hash spelled so is refused the same way.
+func TestGateUploadPaddedIDRefused(t *testing.T) {
 	var (
 		mu  sync.Mutex
 		got []string
@@ -263,7 +268,7 @@ func TestGateUploadPaddedIDRefusedInObserve(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	rest := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
-	h.web.gate = newPrivateGate(rest.URL, false, time.Second, time.Minute) // observe
+	h.web.gate = newPrivateGate(rest.URL, time.Second, time.Minute)
 	serve := func(id string, claims jwt.MapClaims) (*httptest.ResponseRecorder, []string) {
 		r := h.request(t, claims, true, "")
 		r.URL.Path = "/" + id + "/Name/a.mkv"
@@ -275,7 +280,7 @@ func TestGateUploadPaddedIDRefusedInObserve(t *testing.T) {
 		defer mu.Unlock()
 		return rec, append([]string(nil), got[before:]...)
 	}
-	for _, id := range []string{" " + uploadKind0, uploadKind0 + " ", "\t" + uploadKind0, uploadKind0 + "\t"} {
+	for _, id := range []string{" " + uploadKind0, uploadKind0 + " ", "\t" + uploadKind0, uploadKind0 + "\t", " " + harnessHash} {
 		for _, claims := range []jwt.MapClaims{{}, {"uid": "another-user"}} {
 			rec, up := serve(id, claims)
 			if rec.Code != http.StatusForbidden || rec.Body.String() != "private_torrent: malformed_hash\n" || len(up) != 0 {
@@ -285,8 +290,5 @@ func TestGateUploadPaddedIDRefusedInObserve(t *testing.T) {
 	}
 	if n := rest.hits.Load(); n != 0 {
 		t.Errorf("rest-api asked %d times, want 0", n)
-	}
-	if rec, up := serve(" "+harnessHash, jwt.MapClaims{}); rec.Code != http.StatusOK || len(up) != 1 {
-		t.Errorf("padded torrent hash: %d, upstream got %q; want 200, one request", rec.Code, up)
 	}
 }
