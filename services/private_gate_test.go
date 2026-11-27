@@ -415,3 +415,96 @@ func TestNewPrivateGateFromFlags(t *testing.T) {
 		}
 	})
 }
+
+// Upload IDs: kind 0 (a user's upload), kind 1 and kind f.
+const (
+	uploadKind0 = "9c5db5752b7c0123456789abcdef0123456789ab"
+	uploadKind1 = "9c5db5752b7c1123456789abcdef0123456789ab"
+	uploadKindF = "9c5db5752b7cf123456789abcdef0123456789ab"
+)
+
+// TestGateUploads: a class ID is decided by the ID, rest-api never asked;
+// kind 0 is private, internal stands for uid on kind 0 only.
+func TestGateUploads(t *testing.T) {
+	// Asked, rest-api would make every class ID public: a wrong outcome and a hit.
+	f := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
+	b0 := func(kv ...any) jwt.MapClaims {
+		c := jwt.MapClaims{"hash": uploadKind0}
+		for i := 0; i < len(kv); i += 2 {
+			c[kv[i].(string)] = kv[i+1]
+		}
+		return c
+	}
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
+	for _, c := range []struct {
+		name, id, outcome string
+		claims            jwt.MapClaims
+		status            int
+	}{
+		{"kind 0, no hash", uploadKind0, gateUnbound, jwt.MapClaims{"uid": harnessUid}, 403},
+		{"kind 0, internal unbound", uploadKind0, gateUnbound, jwt.MapClaims{"internal": true}, 403},
+		{"kind 0, bound, no uid", uploadKind0, gateNoUid, b0(), 403},
+		{"kind 0, bound+uid", uploadKind0, gateAllowed, b0("uid", harnessUid), 0},
+		{"kind 0, rest-api manifest", uploadKind0, gateAllowed, b0("internal", true), 0},
+		{"kind 0, web-ui delete", uploadKind0, gateAllowed, b0("internal", true, "up", "add", "lim", 1.0), 0},
+		{"kind 0, web-ui write", uploadKind0, gateAllowed, b0("uid", harnessUid, "up", "new", "lim", 1.0), 0},
+		{"vault+uid", uploadKind0, gateAllowed, b0("role", "vault", "uid", harnessUid), 0},
+		{"vault, no uid", uploadKind0, gateNoUid, b0("role", "vault"), 403},
+		{"kind 0 upper", strings.ToUpper(uploadKind0), gateAllowed, b0("uid", harnessUid), 0},
+		{"kind 1, any", uploadKind1, gatePublic, jwt.MapClaims{}, 0},
+		{"kind f, other hash", uploadKindF, gatePublic, b0(), 0},
+		{"kind A", "9c5db5752b7cA123456789abcdef0123456789ab", gatePublic, jwt.MapClaims{}, 0},
+	} {
+		before := gateCounts(t)
+		if v := g.check(c.claims, &Source{InfoHash: c.id}); v != (gateVerdict{outcome: c.outcome, status: c.status}) {
+			t.Errorf("%s: %+v, want {%s  %d}", c.name, v, c.outcome, c.status)
+		}
+		checkCounted(t, before, c.outcome)
+	}
+	if n := f.hits.Load(); n != 0 {
+		t.Errorf("rest-api asked %d times, want 0", n)
+	}
+	// Private torrent, internal without uid: no_uid as before.
+	p := newFakeRestAPI(t, restAnswer(200, `{"private":true}`))
+	v := newPrivateGate(p.URL, time.Second, time.Minute).check(jwt.MapClaims{"hash": harnessHash, "internal": true}, &Source{InfoHash: harnessHash})
+	if v != (gateVerdict{gateNoUid, "", http.StatusForbidden}) {
+		t.Errorf("private torrent, internal: %+v, want {no_uid  403}", v)
+	}
+}
+
+// TestGateUploadInternalMustBeBool: only a JSON true stands for a uid; any
+// other value of internal is no_uid on kind 0.
+func TestGateUploadInternalMustBeBool(t *testing.T) {
+	f := newFakeRestAPI(t, restAnswer(200, `{"private":false}`))
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
+	for _, internal := range []any{"true", 1.0} {
+		v := g.check(jwt.MapClaims{"hash": uploadKind0, "internal": internal}, &Source{InfoHash: uploadKind0})
+		if v != (gateVerdict{gateNoUid, "", http.StatusForbidden}) {
+			t.Errorf("internal %#v: %+v, want {no_uid  403}", internal, v)
+		}
+	}
+}
+
+// TestGateUploadIgnoresRestAPIOutage: rest-api down leaves the class as it
+// is; a torrent is lookup_error as before.
+func TestGateUploadIgnoresRestAPIOutage(t *testing.T) {
+	f := newFakeRestAPI(t, restAnswer(500, `{}`))
+	g := newPrivateGate(f.URL, time.Second, time.Minute)
+	for _, c := range []struct {
+		name   string
+		id     string
+		claims jwt.MapClaims
+		want   gateVerdict
+	}{
+		{"kind 0", uploadKind0, jwt.MapClaims{"hash": uploadKind0, "uid": harnessUid}, gateVerdict{outcome: gateAllowed}},
+		{"kind 1", uploadKind1, jwt.MapClaims{}, gateVerdict{outcome: gatePublic}},
+		{"torrent", harnessHash, jwt.MapClaims{"hash": harnessHash, "uid": harnessUid}, gateVerdict{gateLookupError, "rest-api 500", http.StatusServiceUnavailable}},
+	} {
+		if v := g.check(c.claims, &Source{InfoHash: c.id}); v != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, v, c.want)
+		}
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Errorf("rest-api asked %d times, want 1: the torrent only", n)
+	}
+}

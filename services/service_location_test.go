@@ -215,3 +215,44 @@ func TestPreferLocalNodeIsForExternalCallersOnly(t *testing.T) {
 		t.Fatalf("internal caller must keep the rendezvous pod %s, got %v", picked.IP, in)
 	}
 }
+
+// TestPreferLocalKeepsUploadsHome: an upload lives on its home node only, so a
+// viewer sent to another node is not moved to that node's pod.
+func TestPreferLocalKeepsUploadsHome(t *testing.T) {
+	var as []corev1.EndpointAddress
+	as = append(as, fakePods("worker62", 30, 62)...)
+	as = append(as, fakePods("worker63", 30, 63)...)
+	cfg := &ServiceConfig{PreferLocalNode: true}
+	for _, c := range []struct {
+		name, id string
+		home     bool
+	}{
+		{"kind 0", uploadKind0, true},
+		{"kind 1", uploadKind1, true},
+		{"kind 0 upper", strings.ToUpper(uploadKind0), true},
+		{"kind A", "9c5db5752b7cA123456789abcdef0123456789ab", true},
+		{"39 chars", uploadKind0[:39], false},
+		{"torrent", rendezvousVector[0].hash, false},
+	} {
+		s := &ServiceLocation{}
+		picked, err := s.distributeByNodeHash(&Source{InfoHash: c.id}, as, nil)
+		if err != nil || picked == nil {
+			t.Fatalf("%s: no rendezvous pick: %v", c.name, err)
+		}
+		// This proxy is on the other node, so a local override has something to do.
+		s.nn = "worker62"
+		if *picked.NodeName == "worker62" {
+			s.nn = "worker63"
+		}
+		got, err := s.preferLocal(cfg, &Source{InfoHash: c.id}, picked, as) // external: Internal false
+		if err != nil || got == nil {
+			t.Fatalf("%s: preferLocal: %v, %v", c.name, got, err)
+		}
+		if c.home && got.IP != picked.IP {
+			t.Errorf("%s: moved to %s, want the rendezvous pod %s", c.name, *got.NodeName, picked.IP)
+		}
+		if !c.home && *got.NodeName != s.nn {
+			t.Errorf("%s: kept on %s, want the local node %s", c.name, *got.NodeName, s.nn)
+		}
+	}
+}

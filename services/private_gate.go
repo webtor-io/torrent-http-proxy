@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/webtor-io/lazymap"
+	"github.com/webtor-io/torrent-http-proxy/services/uploads"
 )
 
 const (
@@ -91,7 +92,8 @@ func init() {
 // token, and keeps the answer for good: a torrent does not change privacy. An
 // error is kept errTTL, so an outage asks rest-api once per hash per errTTL,
 // not on every viewer request, and a hash is not refused until the pod
-// restarts.
+// restarts. An upload ID is decided by the ID, without rest-api: kind 0 is
+// private, the other kinds public.
 type PrivateGate struct {
 	url     string
 	client  *http.Client
@@ -130,7 +132,7 @@ type gateVerdict struct {
 // In order: a hash that is not 40 hex is malformed_hash; a lookup that failed
 // is lookup_error with its status; a public torrent passes any token. A
 // private one needs a token bound to its hash (unbound) that carries a uid
-// (no_uid): role=vault and internal tokens included.
+// (no_uid): role=vault included, internal too, except on an upload of kind 0.
 func (g *PrivateGate) check(claims jwt.MapClaims, src *Source) gateVerdict {
 	v := g.decide(claims, strings.ToLower(src.InfoHash))
 	promPrivateGate.WithLabelValues(v.outcome).Inc()
@@ -141,7 +143,10 @@ func (g *PrivateGate) decide(claims jwt.MapClaims, h string) gateVerdict {
 	if !isInfoHash(h) {
 		return gateVerdict{gateMalformedHash, "", http.StatusForbidden}
 	}
-	private, err := g.isPrivate(h)
+	private, err := uploads.Owned(h), error(nil) // kind 0 private, kinds 1–f public; no rest-api, no cache
+	if !uploads.HomeHosted(h) {
+		private, err = g.isPrivate(h)
+	}
 	if err != nil {
 		// Not only rest-api's answers: lazymap returns a panic in the
 		// lookup as a PanicError. Refused as an outage, never public.
@@ -155,7 +160,10 @@ func (g *PrivateGate) decide(claims jwt.MapClaims, h string) gateVerdict {
 	if bound, _ := claims["hash"].(string); bound != h {
 		return gateVerdict{gateUnbound, "", http.StatusForbidden}
 	}
-	if uid, _ := claims["uid"].(string); uid == "" {
+	// Server calls without a user carry internal instead: rest-api's manifest,
+	// web-ui's delete and its seal of an upload before a pledge. Uploads only:
+	// on a private torrent internal is still no_uid.
+	if uid, _ := claims["uid"].(string); uid == "" && !(uploads.Owned(h) && claims["internal"] == true) {
 		return gateVerdict{gateNoUid, "", http.StatusForbidden}
 	}
 	return gateVerdict{outcome: gateAllowed}

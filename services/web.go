@@ -631,6 +631,23 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 	// the account a private torrent downloads under by it. Named apart from
 	// the unsigned X-User-Id that rest-api copies from its callers.
 	uid, _ := claims["uid"].(string)
+	// What a write token allows, for the seeder's uploads, which do not read
+	// the token: set like X-Uid, empty unless granted. Only from a token
+	// verified under the API secret (without one Get takes any token, and an
+	// empty key is one anyone signs with) that carries exp: golang-jwt checks
+	// exp only when it is there, and a write token must not live for good.
+	uploadUp, uploadLim, internalCall := "", "", ""
+	if s.claims.apiSecret != "" && claims.VerifyExpiresAt(time.Now().Unix(), true) {
+		uploadUp, _ = claims["up"].(string)
+		// A JSON number is a float64 here, exact up to 2^53; only a whole
+		// one is the decimal integer the header carries.
+		if lim, ok := claims["lim"].(float64); ok && lim == math.Trunc(lim) {
+			uploadLim = strconv.FormatFloat(lim, 'f', -1, 64)
+		}
+		if claims["internal"] == true {
+			internalCall = "true"
+		}
+	}
 
 	headers := map[string]string{
 		"X-Source-Url":  s.baseURL + "/" + src.InfoHash + escapePathSegments(src.Path) + "?" + src.Query,
@@ -644,6 +661,9 @@ func (s *Web) proxyHTTP(w http.ResponseWriter, r *http.Request, src *Source, log
 		"X-Session-ID":  sessionID,
 		"X-Role":        tokenRole,
 		"X-Uid":         uid,
+		"X-Upload-Up":   uploadUp,
+		"X-Upload-Lim":  uploadLim,
+		"X-Internal":    internalCall,
 	}
 
 	// Set unconditionally, like every other X-* header above: the mod

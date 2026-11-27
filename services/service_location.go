@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/webtor-io/lazymap"
 	"github.com/webtor-io/torrent-http-proxy/services/k8s"
+	"github.com/webtor-io/torrent-http-proxy/services/uploads"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	"math/rand"
@@ -211,10 +212,13 @@ func (s *ServiceLocation) getKubernetes(cfg *ServiceConfig, src *Source, claims 
 // one the viewer's own requests reached. Overriding sent the 2026-09-16
 // live-subtitle poll to a pod that had never seen the session: 404.
 //
+// Never for an upload either. An upload lives on its home node only, so its
+// requests go there from whichever node they reached.
+//
 // An address without a NodeName (Endpoints not backed by a pod) is on no
 // node: never local, so a pick of one is swapped like any remote pick.
 func (s *ServiceLocation) preferLocal(cfg *ServiceConfig, src *Source, a *corev1.EndpointAddress, as []corev1.EndpointAddress) (*corev1.EndpointAddress, error) {
-	if a == nil || s.nn == "" || nodeName(*a) == s.nn || !cfg.PreferLocalNode || src.Internal {
+	if a == nil || s.nn == "" || nodeName(*a) == s.nn || !cfg.PreferLocalNode || src.Internal || uploads.HomeHosted(strings.ToLower(src.InfoHash)) {
 		return a, nil
 	}
 	var las []corev1.EndpointAddress
